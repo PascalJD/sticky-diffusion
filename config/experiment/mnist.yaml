@@ -1,0 +1,16 @@
+train:
+  epochs: 2
+  batch_size: 128
+  lr: 3e-4
+  M_events: 200000
+  
+logging:
+  name: mnist-sticky
+
+sampling:
+  steps: 50
+  eps: 1e-4
+
+logging:
+  sample_every: 500
+  n_samples: 16
