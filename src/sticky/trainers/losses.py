@@ -8,6 +8,8 @@ def dsm_loss(rng, x0, t, beta_fn, score_fn):
     xt, target = vp_perturb(rng, x0, t, beta_fn)
     pred = score_fn(xt, t, True)
     w = jnp.ones_like(t) 
+    pred   = pred.reshape(pred.shape[0], -1)
+    target = target.reshape(target.shape[0], -1)
     err = jnp.mean((pred - target)**2, axis=tuple(range(1, pred.ndim)))
     return jnp.mean(w * err), (xt, target, pred)
 

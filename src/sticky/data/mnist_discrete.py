@@ -1,37 +1,56 @@
 # src/sticky/data/mnist_discrete.py
 from __future__ import annotations
-import jax, jax.numpy as jnp
-import tensorflow_datasets as tfds
 from typing import Tuple
+import jax.numpy as jnp
 
-def _prep(example):
-    x = example['image']  # uint8 [28,28,1]
-    x = jnp.array(x, dtype=jnp.float32) / 255.0
-    x = x.reshape(-1)  # vectorize to (784,)
-    return x
+def _import_tfds_cpu_only():
+    import os
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    import tensorflow as tf  # noqa: F401
+    try:
+        tf.config.set_visible_devices([], 'GPU')
+    except Exception:
+        pass
+    import tensorflow_datasets as tfds
+    return tf, tfds
 
-def load_mnist_split(split='train', batch_size=128, shuffle=True, seed=0):
+def load_mnist_split(
+    split: str = 'train',
+    batch_size: int = 128,
+    shuffle: bool = True,
+    seed: int = 0,
+    drop_remainder: bool = True,
+):
+    tf, tfds = _import_tfds_cpu_only()
+
+    def _prep_tf(example):
+        x = example['image']
+        x = tf.cast(x, tf.float32) / 255.0
+        x = tf.reshape(x, [28 * 28]) 
+        return x
+
     ds = tfds.load('mnist', split=split, as_supervised=False)
     if shuffle:
         ds = ds.shuffle(10_000, seed=seed)
-    ds = ds.map(_prep).batch(batch_size).prefetch(1)
+    ds = ds.map(_prep_tf, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.batch(batch_size, drop_remainder=drop_remainder).prefetch(1)
     return tfds.as_numpy(ds)
 
 def make_bins(L: int):
-    # e.g., L=2 -> [0.0, 1.0]; L=4 -> quartiles
     if L == 2:
         return jnp.array([0.0, 1.0], dtype=jnp.float32)
     else:
-        return jnp.linspace(0.0, 1.0, L)
+        return jnp.linspace(0.0, 1.0, L, dtype=jnp.float32)
 
-def dataset_stats(train_iter, n_batches=200):
-    # estimate mean/cov (vectorized)
+def dataset_stats(train_iter, n_batches: int = 200):
     import numpy as np
     xs = []
     for i, batch in enumerate(train_iter):
-        xs.append(np.array(batch))
-        if i+1 >= n_batches: break
-    X = jnp.array(jnp.concatenate(xs, axis=0))
+        xs.append(np.asarray(batch))
+        if i + 1 >= n_batches:
+            break
+    import jax.numpy as jnp
+    X = jnp.array(np.concatenate(xs, axis=0))
     mu = jnp.mean(X, axis=0)
     Xc = X - mu
     Sig = (Xc.T @ Xc) / X.shape[0]

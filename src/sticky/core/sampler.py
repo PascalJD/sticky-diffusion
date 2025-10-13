@@ -53,7 +53,7 @@ def sticky_sample_coord(
 ) -> Tuple[Array, Array, Array]:
     """Deterministic ODE sampling with sticky jumps (reverse time).
     Returns:
-      x_T0:  (n_samples, d) final samples in the *current* space
+      x_T0: (n_samples, d) final samples in the *current* space
       t_hist: (steps,) times for trajectory plotting
       v_hist: (steps,) values of a tracked coordinate (first sample), if track_index is not None
     """

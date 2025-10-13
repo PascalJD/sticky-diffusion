@@ -1,0 +1,21 @@
+name: sticky
+channels: [conda-forge, defaults]
+dependencies:
+  - python=3.10
+  - pip>=23.3
+  - numpy=1.26.*
+  - pip:
+      - --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+      - jaxlib==0.4.28+cuda12.cudnn89
+      - jax==0.4.28
+      - flax==0.8.3
+      - optax==0.2.4
+      - numpyro==0.15.0
+      - hydra-core==1.3.2
+      - hydra-joblib-launcher==1.2.0
+      - hydra-submitit-launcher==1.2.0
+      - wandb>=0.16.4
+      - matplotlib==3.8.4
+      - tensorflow==2.16.1  
+      - tensorflow-datasets==4.9.*
+      - etils[epath]>=1.5.1

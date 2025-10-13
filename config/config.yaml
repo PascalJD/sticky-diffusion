@@ -19,19 +19,7 @@ precond:
 anchors:
   sigma_R: 0.2
 
-train:
-  epochs: 1
-  batch_size: 256
-  lr: 1e-3
-  eps: 1e-3
-  M_events: 100000
 loss:
   alpha_s: 1.0
   alpha_c: 1.0
   alpha_l: 1.0
-
-logging:
-  project: sticky-diffusion
-  name: debug
-  mode: online   # or 'disabled'
-  log_every: 50

@@ -23,6 +23,6 @@ class Affine:
         self.mu = mu
         self.Pinv = jnp.linalg.inv(P)
     def fwd(self, x: Array) -> Array:
-        return self.P @ (x - self.mu)
+        return (x - self.mu) @ self.P.T
     def inv(self, xw: Array) -> Array:
-        return self.Pinv @ xw + self.mu
+        return xw @ self.Pinv.T + self.mu
