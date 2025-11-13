@@ -1,0 +1,8 @@
+# config/dataset/mnist_numpy.yaml
+name: mnist_numpy
+batch_size: 128
+shuffle: true
+drop_remainder: true
+L: 16
+gray_code: false
+data_dir: null  # or set a custom cache dir

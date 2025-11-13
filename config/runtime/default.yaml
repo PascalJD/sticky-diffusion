@@ -1,0 +1,4 @@
+# config/runtime/default.yaml
+device: auto  # one of: auto | cpu | gpu
+xla_preallocate: false
+xla_mem_fraction: 0.85  # 0..1 or null to omit

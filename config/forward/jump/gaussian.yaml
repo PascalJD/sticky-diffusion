@@ -1,0 +1,3 @@
+# config/forward/jump/gaussian.yaml
+std: 0.05
+clip: null

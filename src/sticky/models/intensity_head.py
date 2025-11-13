@@ -1,20 +1,26 @@
-# src/sticky/models/intensity_head.py
 from __future__ import annotations
 import jax.numpy as jnp
-from flax import linen as nn
-from ..utils.time_embed import timestep_embedding
+import flax.linen as nn
+from sticky.models.common import ConvFiLMTrunk
 
-class IntensityNet(nn.Module):
-    hidden: int = 128
-    tdim: int = 64
+class IntensityHead(nn.Module):
+    """
+    Per-pixel non-negative hazard
+    Input:  y (B,H,W,d), t (B,) or (B,H,W)
+    Output: lambda (B,H,W) via softplus
+    """
+    ch: int = 64
+    depth: int = 3
+    num_groups: int = 8
+    temb_dim: int = 64
+    tfeat_dim: int = 128
+    min_lambda: float = 1e-6
+
     @nn.compact
-    def __call__(
-        self, x: jnp.ndarray, t: jnp.ndarray, train: bool
-    ) -> jnp.ndarray:
-        # x:(B,d) or (B,d_image). Return (B,1) nonnegative.
-        temb = timestep_embedding(t, self.tdim)
-        h = jnp.concatenate([x, temb], axis=-1)
-        h = nn.relu(nn.Dense(self.hidden)(h))
-        h = nn.relu(nn.Dense(self.hidden)(h))
-        out = nn.Dense(1)(h)
-        return nn.softplus(out) + 1e-6
+    def __call__(self, y: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+        trunk = ConvFiLMTrunk(
+            self.ch, self.depth, self.num_groups, self.temb_dim, self.tfeat_dim
+        )
+        feats = trunk(y, t)
+        lam = nn.Conv(1, kernel_size=(1, 1), padding="SAME")(feats)[..., 0]
+        return nn.softplus(lam) + self.min_lambda

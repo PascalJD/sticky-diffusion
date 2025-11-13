@@ -2,6 +2,8 @@
 from __future__ import annotations
 from typing import Tuple
 import jax.numpy as jnp
+import tensorflow as tf
+import tensorflow_datasets as tfds
 
 def _import_tfds_cpu_only():
     import os
@@ -15,25 +17,30 @@ def _import_tfds_cpu_only():
     return tf, tfds
 
 def load_mnist_split(
-    split: str = 'train',
+    split: str = "train",
     batch_size: int = 128,
     shuffle: bool = True,
     seed: int = 0,
     drop_remainder: bool = True,
-):
-    tf, tfds = _import_tfds_cpu_only()
-
-    def _prep_tf(example):
-        x = example['image']
-        x = tf.cast(x, tf.float32) / 255.0
-        x = tf.reshape(x, [28 * 28]) 
+    num_workers: int = 0,
+) -> Iterator:
+    ds = tfds.load(
+        "mnist",
+        split=split,
+        shuffle_files=shuffle,
+        as_supervised=False,
+    )
+    def _map(ex):
+        x = tf.cast(ex["image"], tf.float32) / 255.0
+        x = tf.reshape(x, [28 * 28])
         return x
-
-    ds = tfds.load('mnist', split=split, as_supervised=False)
+    num_calls = tf.data.AUTOTUNE if num_workers != 0 else 1
+    ds = ds.map(_map, num_parallel_calls=num_calls)
     if shuffle:
-        ds = ds.shuffle(10_000, seed=seed)
-    ds = ds.map(_prep_tf, num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.batch(batch_size, drop_remainder=drop_remainder).prefetch(1)
+        ds = ds.shuffle(10_000, seed=seed, reshuffle_each_iteration=True)
+    ds = ds.repeat() 
+    ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    ds = ds.prefetch(tf.data.AUTOTUNE)
     return tfds.as_numpy(ds)
 
 def make_bins(L: int):

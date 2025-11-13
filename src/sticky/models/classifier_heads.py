@@ -1,25 +1,26 @@
-# src/sticky/models/classifier_heads.py
 from __future__ import annotations
 import jax.numpy as jnp
-from flax import linen as nn
-from ..utils.time_embed import timestep_embedding
+import flax.linen as nn
+from sticky.models.common import ConvFiLMTrunk
 
-
-class CoordClassifier(nn.Module):
-    d: int
+class AllocatorHead(nn.Module):
+    """
+    Per-pixel classifier over L anchors.
+    Input:  y (B,H,W,d), t (B,) or (B,H,W)
+    Output: logits (B,H,W,L)
+    """
     L: int
-    channels: int = 64
-    tdim: int = 64
+    ch: int = 64
+    depth: int = 3
+    num_groups: int = 8
+    temb_dim: int = 64
+    tfeat_dim: int = 128
+
     @nn.compact
-    def __call__(
-        self, x: jnp.ndarray, t: jnp.ndarray, train: bool
-    ) -> jnp.ndarray:
-        # x:(B,H,W,1) or (B,d).
-        B, D = x.shape
-        temb = timestep_embedding(t, self.tdim)
-        temb = nn.Dense(D)(temb)
-        h = jnp.concatenate([x, temb], axis=-1)
-        h = nn.relu(nn.Dense(2*self.channels)(h))
-        h = nn.relu(nn.Dense(2*self.channels)(h))
-        logits = nn.Dense(self.d * self.L)(h).reshape((B, self.d, self.L))
+    def __call__(self, y: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+        trunk = ConvFiLMTrunk(
+            self.ch, self.depth, self.num_groups, self.temb_dim, self.tfeat_dim
+        )
+        feats = trunk(y, t)
+        logits = nn.Conv(self.L, kernel_size=(1, 1), padding="SAME")(feats)
         return logits

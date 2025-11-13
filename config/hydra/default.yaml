@@ -1,0 +1,7 @@
+# config/hydra/default.yaml
+# @package _group_
+run:
+  dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+job:
+  name: train_mnist
+output_subdir: .hydra

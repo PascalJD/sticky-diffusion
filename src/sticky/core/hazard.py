@@ -1,53 +1,62 @@
+# src/sticky/core/hazard.py
 from __future__ import annotations
+from dataclasses import dataclass
+from typing import Callable
 import jax, jax.numpy as jnp
-from typing import Callable, Tuple
+from .sde_vp import B_of_t, alpha_sigma
 
 Array = jnp.ndarray
 
-def make_lambda(
-    beta_fn: Callable[[Array], Array], c: float = 2.0
-) -> Callable[[Array], Array]:
-    return lambda t: c * beta_fn(t)
+@dataclass(frozen=True)
+class HazardSchedule:
+    """Container for a 1D time-dependent hazard lambda(t) on [0, T]."""
+    T: float
+    lam: Callable[[Array], Array] 
+    cum: Callable[[Array], Array]  # cum(t) = \int_0^t lambda(t)
+    surv: Callable[[Array], Array]  # S(t) = exp(-cum(t))
+    cdf: Callable[[Array], Array]  # F(t) = 1 - S(t)
+    inv_cdf: Callable[[Array], Array]  # F^{-1}(u), u in [0, F(T)]
 
-def integrated_lambda(
-    beta_fn: Callable[[Array], Array], c: float, t: Array
-) -> Array:
-    from .sde_vp import B_of_t
-    return c * B_of_t(beta_fn, t)
+    def first_event_time(self, key: jax.random.PRNGKey, shape=()) -> Array:
+        """Inverse-transform sample of the first event time on [0, T]"""
+        u = jax.random.uniform(key, shape=shape, minval=0.0, maxval=1.0)
+        FT = self.cdf(jnp.asarray(self.T, dtype=jnp.float32))
+        # If u > F(T), no event occurs by T -> return +inf 
+        # (caller can clamp to T)
+        return jnp.where(u <= FT, self.inv_cdf(u), jnp.inf)
 
-def survival_prob(
-    beta_fn: Callable[[Array], Array], c: float, T: float
-) -> Array:
-    H_T = integrated_lambda(beta_fn, c, jnp.asarray(T))
-    return jnp.exp(-H_T)
+def _invert_B_linear(beta, B_star: Array) -> Array:
+    bmin, bdiff, TT = beta.beta_min, beta.beta_diff, beta.T
+    B_star = jnp.asarray(B_star, dtype=jnp.float32)
+    if abs(bdiff) < 1e-12:
+        return B_star / max(bmin, 1e-12)
+    A = (bdiff / TT) * 0.5
+    disc = jnp.sqrt(jnp.maximum(bmin * bmin + 4.0 * A * B_star, 0.0))
+    return (-bmin + disc) / (2.0 * A)
 
-def _invert_cumhazard_linear(
-    y: Array, beta_min: float, beta_diff: float, T: float, c: float
-) -> Array:
-    """Solve y = c * (beta_min t + 0.5 * (beta_diff/T) t^2) for t in [0, T]."""
-    eps = 1e-12
-    if abs(beta_diff) < 1e-12:
-        return y / (c * (beta_min + eps))
-    a = 0.5 * c * (beta_diff / T)
-    b = c * beta_min
-    disc = jnp.maximum(0.0, b * b + 4.0 * a * y)
-    t = (-b + jnp.sqrt(disc)) / (2.0 * a + 1e-18)
-    return t
+def make_hazard_early(beta, kappa: float = 5.0) -> HazardSchedule:
+    """lambda(t)= k beta(t) alpha(t)^2 with alpha^2 = exp(-B)."""
+    T = float(beta.T)
 
-def sample_unstick_time(
-    key: jax.random.PRNGKey,
-    beta_fn: Callable[[Array], Array],
-    c: float,
-    T: float = 1.0
-) -> Tuple[Array, Array]:
-    from .sde_vp import B_of_t
-    T_arr = jnp.asarray(T)
-    H_T = c * B_of_t(beta_fn, jnp.asarray(T_arr))
-    S_T = jnp.exp(-H_T)
-    u = jax.random.uniform(key, ())
-    y = -jnp.log1p(-u * (1.0 - jnp.exp(-H_T)))
-    t = _invert_cumhazard_linear(
-        y, beta_fn.beta_min, beta_fn.beta_diff, beta_fn.T, c
+    def lam(t):
+        B = B_of_t(beta, t)
+        return kappa * beta(t) * jnp.exp(-B)
+
+    def cum(t):
+        B = B_of_t(beta, t)
+        return kappa * (1.0 - jnp.exp(-B))
+
+    def surv(t): return jnp.exp(-cum(t))
+    def cdf(t):  return 1.0 - surv(t)
+
+    def inv_cdf(u):
+        u = jnp.asarray(u, dtype=jnp.float32)
+        F_T = cdf(jnp.asarray(T, jnp.float32))
+        u_eff = jnp.clip(u, 0.0, F_T)
+        alpha2 = 1.0 + (1.0 / kappa) * jnp.log1p(-u_eff)
+        B_star = -jnp.log(jnp.clip(alpha2, a_min=1e-12))
+        return _invert_B_linear(beta, B_star)
+
+    return HazardSchedule(
+        T=T, lam=lam, cum=cum, surv=surv, cdf=cdf, inv_cdf=inv_cdf
     )
-    t = jnp.minimum(t, jnp.nextafter(jnp.asarray(T_arr), 0.0))
-    return t, jnp.array(True)

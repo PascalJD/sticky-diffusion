@@ -1,0 +1,7 @@
+# config/model/intensity/mnist_small.yaml
+ch: 64
+depth: 3
+num_groups: 8
+temb_dim: 64
+tfeat_dim: 128
+min_lambda: 1e-6

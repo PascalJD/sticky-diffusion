@@ -1,119 +1,212 @@
 # src/sticky/core/sampler.py
 from __future__ import annotations
-import jax, jax.numpy as jnp
-import jax.random as jr
-from typing import Callable, Optional, Tuple
+from dataclasses import dataclass
+from typing import Callable, Dict, Tuple
 
+import jax
+import jax.numpy as jnp
+
+from .sde_vp import alpha_sigma, B_of_t
 Array = jnp.ndarray
 
-def _reverse_vp_drift(
-    score: Callable[[Array, Array, bool], Array],
-    x: Array, 
-    t: Array, beta_fn
+
+@dataclass(frozen=True)
+class SamplerConfig:
+    T: float = 1.0
+    n_steps: int = 250
+    alloc_mode: str = "argmax"  # "argmax" | "sample"
+    score_from_classifier: bool = True
+    score_scale: float = 1.0
+    force_classify_at_end: bool = True
+    init_std: float = 1.0 
+    eps_denom: float = 1e-12
+    rng_fold: int = 4 
+
+
+@dataclass(frozen=True)
+class SampleResult:
+    y: Array
+    k: Array 
+    stuck_mask: Array 
+    forced_mask: Array
+    t_stick: Array
+    metrics: Dict[str, Array]
+
+
+def classifier_induced_score(
+    logits: Array, 
+    y: Array, 
+    t: Array,  
+    beta, 
+    anchor_table: Array,
+    eps: float = 1e-12,
 ) -> Array:
-    beta_t = beta_fn(t)[..., None]
-    s = score(x, t, False)
-    return -0.5 * beta_t * (x + s)
+    # probs over anchors
+    probs = jax.nn.softmax(logits, axis=-1)
+    # expected anchor vector \hat{z0}
+    z0 = jnp.tensordot(probs, anchor_table, axes=[(-1,), (0,)])
 
-def _heun_step(score, x, ti, ti1, beta_fn):
-    h = (ti1 - ti)  # negative
-    d1 = _reverse_vp_drift(score, x, jnp.full((x.shape[0],), ti), beta_fn)
-    xe = x + h * d1
-    d2 = _reverse_vp_drift(score, xe, jnp.full((x.shape[0],), ti1), beta_fn)
-    return x + 0.5 * h * (d1 + d2)
+    # time scalars -> broadcast
+    alpha, sigma = alpha_sigma(beta, t)  # (B,)
+    while alpha.ndim < y.ndim:
+        alpha = alpha[..., None]
+        sigma = sigma[..., None]
 
-def _flatten_marks(logits: Array, stuck_mask: Array) -> Tuple[Array, Array]:
-    """Flatten (B,d,L) logits to (B, d*L) while masking already-stuck dims with -inf."""
-    B, d, L = logits.shape
-    # very negative where stuck
-    bigneg = -1e9
-    mask = jnp.where(stuck_mask[..., None], bigneg, 0.0)
-    flat = (logits + mask).reshape(B, d * L)
-    return flat, jnp.array([d, L])
+    inv_sigma2 = 1.0 / jnp.maximum(sigma * sigma, eps)
+    s = (alpha * inv_sigma2) * z0 - inv_sigma2 * y
+    return s
 
-def _apply_stick(x: Array, i: int, ell: int, bins: Array) -> Array:
-    return x.at[:, i].set(bins[ell])
 
-def sticky_sample_coord(
-    key: jr.PRNGKey,
-    n_samples: int,
-    d: int,
-    T: float,
-    beta_fn,
-    score_apply: Callable,
-    cls_apply: Callable,
-    int_apply: Callable,
-    params_score,
+def _apply_classifier(alloc_apply: Callable, params_cls, y: Array, t: Array) -> Array:
+    """Helper: (B,H,W,d),(B,) -> (B,H,W,L)"""
+    return alloc_apply(params_cls, y, t)
+
+
+def _apply_intensity(haz_apply: Callable, params_haz, y: Array, t: Array) -> Array:
+    """Helper: (B,H,W,d),(B,) -> (B,H,W)"""
+    return haz_apply(params_haz, y, t)
+
+
+def _argmax_or_sample(
+    key: jax.random.PRNGKey, logits: Array, mode: str = "argmax"
+) -> Array:
+    """Return indices (B,H,W) from (B,H,W,L) logits."""
+    if mode == "sample":
+        u = jax.random.uniform(key, shape=logits.shape, minval=1e-6, maxval=1.0 - 1e-6)
+        g = -jnp.log(-jnp.log(u))
+        k = jnp.argmax(logits + g, axis=-1)
+    else:
+        k = jnp.argmax(logits, axis=-1)
+    return k
+
+
+def reverse_sample(
+    key: jax.random.PRNGKey,
     params_cls,
-    params_int,
-    anchors,
-    steps: int = 50,
-    eps: float = 1e-4,
-    track_index: Optional[int] = None,
-) -> Tuple[Array, Array, Array]:
-    """Deterministic ODE sampling with sticky jumps (reverse time).
-    Returns:
-      x_T0: (n_samples, d) final samples in the *current* space
-      t_hist: (steps,) times for trajectory plotting
-      v_hist: (steps,) values of a tracked coordinate (first sample), if track_index is not None
-    """
-    key_s, key_e, key_m = jr.split(key, 3)
+    params_haz,
+    apply_classifier: Callable[[object, Array, Array], Array], 
+    apply_intensity: Callable[[object, Array, Array], Array],
+    anchors,  # AnalogBitsAnchors (has .table_float (L,d), .d, .L)
+    beta,
+    shape_hw: Tuple[int, int],
+    B: int = 16,
+    cfg: SamplerConfig = SamplerConfig(),
+) -> SampleResult:
+    H, W = shape_hw
+    d, L = int(anchors.d), int(anchors.L)
+    table = anchors.table_float  # (L,d), jnp
 
-    # time grid, reverse direction
-    tgrid = jnp.linspace(T, eps, steps)
-    dt = jnp.abs(tgrid[:-1] - tgrid[1:])  # size (steps-1,)
+    T = float(cfg.T)
+    n = int(cfg.n_steps)
+    h = T / n
+    t_grid = jnp.linspace(T, 0.0, n + 1, dtype=jnp.float32)  # [t0=T, ..., tn=0]
 
-    # initialize from standard normal
-    x = jr.normal(key_s, (n_samples, d))
-    stuck = jnp.zeros((n_samples, d), dtype=bool)
+    # Init y_T ~ N(0, init_std^2 I)
+    key, k0 = jax.random.split(key)
+    y = cfg.init_std * jax.random.normal(
+        k0, shape=(B, H, W, d), dtype=jnp.float32
+    )
 
-    v_hist = []
-    t_hist = []
+    # Book-keeping
+    stuck = jnp.zeros((B, H, W), dtype=bool)
+    forced = jnp.zeros_like(stuck)
+    t_stick = jnp.full((B, H, W), jnp.inf, dtype=jnp.float32)
+    k_idx = jnp.full((B, H, W), -1, dtype=jnp.int32)
 
-    def score(x, t, train: bool):
-        # pass-through wrapper to your Flax module
-        return score_apply({'params': params_score}, x, t, False)
+    # metrics accumulators
+    total_sites = B * H * W
+    acc_events = jnp.array(0, dtype=jnp.int32)
 
-    for k in range(steps - 1):
-        ti, ti1 = tgrid[k], tgrid[k + 1]
+    def one_step(carry, step_idx):
+        y, stuck, t_stick, k_idx, acc_events, key = carry
+        key, k1, k2, k3, k4 = jax.random.split(key, 5)
 
-        # ODE step
-        x = _heun_step(score, x, ti, ti1, beta_fn)
+        t_curr = t_grid[step_idx]
+        t_next = t_grid[step_idx + 1]
+        t_b = jnp.full((y.shape[0],), t_curr, dtype=jnp.float32)
 
-        # total reverse stickiness
-        lam = int_apply({'params': params_int}, x, jnp.full((x.shape[0],), ti), False).reshape(-1)
-        lam = jnp.maximum(0.0, lam)  # safety
+        # Evaluate allocator logits once (we reuse both for score and allocation)
+        logits = _apply_classifier(apply_classifier, params_cls, y, t_b)
 
-        # Poisson thinning: P(event in [ti1, ti]) ~ 1 - exp(-lambda delta t)
-        p_evt = 1.0 - jnp.exp(-lam * (ti - ti1))
-        key_e, kval, ksel = jr.split(key_e, 3)
-        u = jr.uniform(kval, (n_samples,))
-        happened = (u < p_evt)
+        # Score on XA
+        if cfg.score_from_classifier:
+            s = classifier_induced_score(
+                logits=logits,
+                y=y,
+                t=t_b,
+                beta=beta,
+                anchor_table=table,
+                eps=cfg.eps_denom,
+            ) * cfg.score_scale
+        else:
+            s = jnp.zeros_like(y)
 
-        if happened.any():
-            # logits over anchors for each sample
-            logits = cls_apply({'params': params_cls}, x, jnp.full((x.shape[0],), ti), False)  # (B,d,L)
-            flat_logits, shape = _flatten_marks(logits, stuck)  # (B, d*L)
-            # sample a single anchor (i,ell) per event sample
-            sel = jr.categorical(ksel, flat_logits)
-            di, L = int(shape[0]), int(shape[1])
-            idx_i = (sel // L).astype(jnp.int32)
-            idx_l = (sel %  L).astype(jnp.int32)
+        beta_t = beta(t_curr).astype(jnp.float32)  # scalar
+        f = -0.5 * beta_t * y
+        drift = f - beta_t * s
 
-            # apply sticks only to rows where happened=True
-            # broadcast bins
-            def stick_row(xrow, do, i, ell):
-                return jnp.where(do, xrow.at[i].set(anchors.bins[ell]), xrow)
+        # Propose event via piecewise-constant hazard for not-stuck sites
+        lam = _apply_intensity(apply_intensity, params_haz, y, t_b) 
+        lam = jnp.where(stuck, 0.0, lam)  # no hazard once stuck
+        p_evt = 1.0 - jnp.exp(-jnp.clip(lam * h, a_min=0.0))
+        u_evt = jax.random.uniform(k1, shape=p_evt.shape)
+        will_stick = (u_evt < p_evt) & (~stuck)
 
-            x = jax.vmap(stick_row)(x, happened, idx_i, idx_l)
-            # freeze those coordinates
-            stuck = stuck.at[jnp.arange(n_samples), idx_i].set(stuck[jnp.arange(n_samples), idx_i] | happened)
+        # Reverse Euler-M (advance to t_next)
+        noise = jax.random.normal(k2, shape=y.shape)
+        y_next = y + drift * (t_next - t_curr) + jnp.sqrt(jnp.maximum(beta_t * h, 0.0)) * noise
 
-        if track_index is not None and n_samples > 0:
-            v_hist.append(float(x[0, track_index]))
-            t_hist.append(float(ti1))
+        # Allocate anchors for the ones that stick this step
+        k_new = _argmax_or_sample(k3, logits, mode=cfg.alloc_mode)
+        y_anchor = jnp.take(table, k_new, axis=0)
 
-    t_hist = jnp.array(t_hist) if track_index is not None else jnp.array([])
-    v_hist = jnp.array(v_hist) if track_index is not None else jnp.array([])
+        # Replace only where will_stick:
+        # - gather anchor vectors for chosen k_new
+        k_new_flat = k_new.reshape(-1)
+        table_g = table[k_new_flat]
+        y_anchor = table_g.reshape((B, H, W, d))
 
-    return x, t_hist, v_hist
+        y_final = jnp.where(will_stick[..., None], y_anchor, y_next)
+        stuck_next = stuck | will_stick
+        t_stick_next = jnp.where(will_stick, t_next, t_stick)
+        k_idx_next = jnp.where(will_stick, k_new, k_idx)
+        acc_events_next = acc_events + jnp.sum(will_stick, dtype=jnp.int32)
+
+        return (y_final, stuck_next, t_stick_next, k_idx_next, acc_events_next, k4), (y_final, stuck_next)
+
+    # Scan over all steps (n steps from T->0)
+    carry0 = (y, stuck, t_stick, k_idx, acc_events, key)
+    carryT, _ = jax.lax.scan(one_step, carry0, jnp.arange(0, n))
+    y, stuck, t_stick, k_idx, acc_events, key = carryT
+
+    # Optional: force classification at the end for sites that never stuck
+    if cfg.force_classify_at_end:
+        key, kf = jax.random.split(key)
+        t0 = jnp.zeros((B,), dtype=jnp.float32)
+        logits_0 = _apply_classifier(apply_classifier, params_cls, y, t0)
+        k_force = _argmax_or_sample(kf, logits_0, mode="argmax")
+        # gather anchor vectors and apply only where not stuck
+        y_force = jnp.take(table, k_force, axis=0)
+        y = jnp.where(stuck[..., None], y, y_force)
+        k_idx = jnp.where(stuck, k_idx, k_force)
+        forced = ~stuck
+
+    # Final metrics
+    num_stuck = jnp.sum(stuck, dtype=jnp.int32)
+    num_forced = jnp.sum(forced, dtype=jnp.int32)
+    metrics = dict(
+        ratio_stuck_hazard=num_stuck / total_sites,
+        ratio_forced_end=num_forced / total_sites,
+        mean_t_stick=jnp.where(num_stuck > 0, jnp.mean(t_stick[stuck]), jnp.array(jnp.inf)),
+        num_events=acc_events,
+        total_sites=jnp.array(total_sites, dtype=jnp.int32),
+    )
+
+    return SampleResult(
+        y=y, 
+        k=k_idx, 
+        stuck_mask=stuck, 
+        forced_mask=forced, 
+        t_stick=t_stick, 
+        metrics=metrics
+    )

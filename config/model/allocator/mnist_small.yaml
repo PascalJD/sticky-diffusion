@@ -1,0 +1,7 @@
+# config/model/allocator/mnist_small.yaml
+L: ${dataset.L}  # classifier vocabulary size per pixel
+ch: 64
+depth: 3
+num_groups: 8
+temb_dim: 64
+tfeat_dim: 128

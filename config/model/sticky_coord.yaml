@@ -1,5 +1,0 @@
-score_arch: conv   # 'conv' or 'mlp'
-score_ch: 64
-score_hidden: 256
-cls_ch: 64
-int_hidden: 256

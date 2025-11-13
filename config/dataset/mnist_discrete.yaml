@@ -1,2 +1,7 @@
+# config/dataset/mnist_discrete.yaml
 name: mnist_discrete
-L_bins: 2  # 2 (binary), 4 (quartiles)
+batch_size: 128
+shuffle: true
+drop_remainder: true
+L: 2  # number of discrete bins per pixel
+gray_code: false

@@ -1,25 +1,17 @@
+# config/config.yaml
 defaults:
   - dataset: mnist_discrete
-  - model: sticky_coord
-  - experiment: mnist
+  - model/allocator: mnist_small
+  - model/intensity: mnist_small
+  - forward/beta: vp_linear
+  - forward/hazard: early
+  - forward/jump: gaussian
+  - optim: adamw
+  - training: mnist
+  - wandb: default
+  - hydra: default
+  - runtime: default
+  - _self_
 
-seed: 42
-
-sde:
-  T: 1.0
-  beta_min: 0.1
-  beta_max: 30.0
-
-hazard:
-  c: 2.0
-
-precond:
-  omega: 0.2
-
-anchors:
-  sigma_R: 0.2
-
-loss:
-  alpha_s: 1.0
-  alpha_c: 1.0
-  alpha_l: 1.0
+# Global seed for reproducibility
+seed: 0

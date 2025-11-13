@@ -1,59 +1,79 @@
 # src/sticky/core/anchors.py
 from __future__ import annotations
-import jax, jax.numpy as jnp
-from typing import Tuple, Dict, Any
+from dataclasses import dataclass
+import jax.numpy as jnp
 
 Array = jnp.ndarray
 
-
-class CoordAnchors:
+@dataclass(frozen=True)
+class AnalogBitsAnchors:
     """
-    Factorized per-coordinate anchors:
-    A mark is (i, ell). Reverse jump sets y[i] <- b[ell].
-    R_{i,ell} is Gaussian around that partially snapped vector.
+    Encode discrete bins {0,...,L-1} into analog bits in {-1, +1}^d.
     """
-    def __init__(
-        self, 
-        d: int, 
-        bins: Array, 
-        log_m0: Array, 
-        sigma_R: float, 
-        mu_rest: Array|None=None
-    ):
-        self.d = d
-        self.bins = bins
-        self.L = bins.shape[0]
-        self.log_m0 = log_m0  # (d,L)
-        self.sigma_R = sigma_R
-        self.mu_rest = jnp.zeros((d,)) if mu_rest is None else mu_rest
+    L: int
+    d: int | None = None
+    gray: bool = False
 
-    def make_mean(self, i: int, ell: int) -> Array:
-        m = self.mu_rest.copy()
-        m = m.at[i].set(self.bins[ell])
-        return m
+    def __post_init__(self):
+        d = int(self.d) if self.d is not None else int(jnp.ceil(jnp.log2(self.L)))
+        object.__setattr__(self, "d", d)
+        table = self._build_code_table(self.L, d, self.gray)
+        object.__setattr__(self, "table", table)
 
-    def log_r_mark(self, y: Array, i: int, ell: int) -> Array:
-        m = self.make_mean(i, ell)
-        diff = y - m
-        q = jnp.sum(diff**2)
-        d = y.shape[0]
-        const = -0.5 * d * jnp.log(2*jnp.pi*self.sigma_R**2 + 1e-12)
-        return const - 0.5 * q / (self.sigma_R**2 + 1e-12)
+    @staticmethod
+    def _build_code_table(L: int, d: int, gray: bool) -> Array:
+        idx = jnp.arange(L, dtype=jnp.int32)
+        code = idx ^ (idx >> 1) if gray else idx  # Gray vs. binary
+        bits = ((code[:, None] >> jnp.arange(d)) & 1).astype(jnp.float32)
+        bits = jnp.flip(bits, axis=1)
+        # analog mapping: {0,1} -> {-1,+1}
+        return 2.0 * bits - 1.0
 
-    def posterior_logits(self, y: Array, log_m_t: Array) -> Array:
+    def discretize_pixels(self, x: Array, L: int | None = None) -> Array:
         """
-        Returns per-pixel logits over bins: 
-        logits[i, ell] \propto log m_t[i,ell] + log r_{i,ell}(y).
+        x: (B, H, W) or (B, H*W) in [0,1]; 
+        returns int indices in {0,...,L-1} with shape (B, H, W).
+        We use uniform bins on [0,1]: k = floor(L * x), clipped to L-1.
         """
-        def logits_i(i):
-            m = jnp.stack(
-                [self.log_r_mark(y, i, ell) for ell in range(self.L)], 
-                axis=0
-            )
-            return log_m_t[i] + m  # (L,)
-        return jax.vmap(logits_i)(jnp.arange(self.d))  # (d,L)
+        L = L or self.L
+        if x.ndim == 2:
+            # assume (B, H*W) -> reshape to (B, 28, 28) by default
+            B, N = x.shape
+            H = W = int(jnp.sqrt(N))
+            x = x.reshape(B, H, W)
+        k = jnp.floor(x * L).astype(jnp.int32)
+        k = jnp.clip(k, 0, L - 1)
+        return k  # (B,H,W)
 
-    def sample_R(self, key: jax.random.PRNGKey, i: int, ell: int) -> Array:
-        m = self.make_mean(i, ell)
-        z = jax.random.normal(key, m.shape)
-        return m + self.sigma_R * z
+    def indices_to_vectors(self, k: Array) -> Array:
+        """
+        k: (B,H,W) integer indices -> analog bits (B,H,W,d) in {-1,1}.
+        """
+        flat = k.reshape(-1)
+        vec_flat = self.table[flat]
+        return vec_flat.reshape((*k.shape, self.d))
+
+    def encode_from_pixels(self, x: Array) -> tuple[Array, Array]:
+        k = self.discretize_pixels(x, L=self.L)
+        a = self.indices_to_vectors(k)
+        return k, a
+
+    def vectors_to_indices(self, v: Array) -> Array:
+        B, H, W, d = v.shape
+        table_T = self.table.T  # (d, L)
+        sims = jnp.tensordot(v, table_T, axes=[-1, 0])  # (B,H,W,L)
+        return jnp.argmax(sims, axis=-1).astype(jnp.int32)
+
+    @property
+    def table_float(self) -> Array:
+        """(L,d) analog code table in {-1,1}."""
+        return self.table
+
+    def indices_to_pixels(self, k: Array) -> Array:
+        """Bin centers in [0,1] for integer indices k."""
+        return (k.astype(jnp.float32) + 0.5) / float(self.L)
+
+    def vectors_to_pixels(self, v: Array) -> Array:
+        """Map analog bits to nearest anchor index, then to bin centers [0,1]."""
+        k = self.vectors_to_indices(v)  # (B,H,W)
+        return self.indices_to_pixels(k)

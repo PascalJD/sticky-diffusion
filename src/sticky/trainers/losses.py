@@ -1,33 +1,52 @@
 # src/sticky/trainers/losses.py
 from __future__ import annotations
+from typing import Callable
 import jax, jax.numpy as jnp
-from typing import Dict, Tuple
-from ..core.sde_vp import vp_perturb
 
-def dsm_loss(rng, x0, t, beta_fn, score_fn):
-    xt, target = vp_perturb(rng, x0, t, beta_fn)
-    pred = score_fn(xt, t, True)
-    w = jnp.ones_like(t) 
-    pred   = pred.reshape(pred.shape[0], -1)
-    target = target.reshape(target.shape[0], -1)
-    err = jnp.mean((pred - target)**2, axis=tuple(range(1, pred.ndim)))
-    return jnp.mean(w * err), (xt, target, pred)
+from sticky.core.sde_vp import vp_perturb, vp_logpdf
+from sticky.core.hazard import HazardSchedule
+from sticky.core.jump import GaussianJump
 
-def cls_loss_coord(logits, marks):
-    # logits: (B,d,L); marks: (B,2) with (i, ell) indices per event
-    B, d, L = logits.shape
-    i = marks[:, 0]
-    ell = marks[:, 1]
-    logits_i = logits[jnp.arange(B), i]  # (B,L)
-    logp = logits_i - jax.scipy.special.logsumexp(
-        logits_i, axis=-1, keepdims=True
-    )
-    nll = -jnp.take_along_axis(logp, ell[:, None], axis=-1).squeeze(-1)
-    return jnp.mean(nll)
+Array = jnp.ndarray
 
-def intensity_nll(events_lambda, exposure_lambdas):
-    # events_lambda: (M,1); exposure_lambdas: (B,1) used with factor T/B outside
-    return (
-        -jnp.mean(jnp.log(events_lambda + 1e-12)), 
-        jnp.mean(exposure_lambdas)
-    )
+def ce_allocation_loss(
+    params,
+    apply_classifier: Callable[[object, Array, Array], Array],
+    y_event: Array,
+    t_event: Array,
+    anchor_idx: Array,  # ground-truth anchor id for each sample
+    mask_has_event: Array,  # ignore items with no event by T
+) -> Array:
+    logits = apply_classifier(params, y_event, t_event)
+    logp = jax.nn.log_softmax(logits, axis=-1)
+    nll = -jnp.take_along_axis(logp, anchor_idx[:, None], axis=-1).squeeze(-1)
+    nll = jnp.where(mask_has_event, nll, 0.0)
+    denom = jnp.maximum(jnp.sum(mask_has_event), 1.0)
+    return jnp.sum(nll) / denom
+
+def dhm_loss(
+    key: jax.random.PRNGKey,
+    params,
+    apply_intensity: Callable[[object, Array, Array], Array],
+    x0_anchor: Array,
+    t: Array,
+    beta,
+    hazard: HazardSchedule,
+    jump: GaussianJump,
+    weight_fn: Callable[[Array], Array] | None = None,
+) -> Array:
+    # sample X_t using closed-form VP
+    xt, _ = vp_perturb(key, x0_anchor, t, beta)
+
+    # compute target
+    log_r = jump.logpdf(xt, x0_anchor)
+    log_q = vp_logpdf(xt, x0_anchor, t, beta)
+    lam_fwd = hazard.lam(t)
+    surv = hazard.surv(t)
+    lam_hat = lam_fwd * surv * jnp.exp(jnp.clip(log_r - log_q, -50.0, 50.0))
+
+    lam_pred = apply_intensity(params, xt, t)
+
+    w = weight_fn(t) if weight_fn is not None else jnp.ones_like(t)
+    mse = jnp.square(lam_pred - lam_hat)
+    return jnp.mean(w * mse)

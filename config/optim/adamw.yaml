@@ -1,0 +1,5 @@
+# config/optim/adamw.yaml
+lr_cls: 1.0e-3
+lr_haz: 1.0e-3
+weight_decay: 5.0e-5
+grad_clip: 1.0
