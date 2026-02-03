@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Tuple
 import jax.numpy as jnp
 import tensorflow as tf
-import tensorflow_datasets as tfds
 
 def _import_tfds_cpu_only():
     import os
@@ -24,6 +23,7 @@ def load_mnist_split(
     drop_remainder: bool = True,
     num_workers: int = 0,
 ) -> Iterator:
+    tf, tfds = _import_tfds_cpu_only()
     ds = tfds.load(
         "mnist",
         split=split,

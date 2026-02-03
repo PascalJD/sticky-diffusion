@@ -60,3 +60,15 @@ def make_hazard_early(beta, kappa: float = 5.0) -> HazardSchedule:
     return HazardSchedule(
         T=T, lam=lam, cum=cum, surv=surv, cdf=cdf, inv_cdf=inv_cdf
     )
+
+def lam_time_star(h: HazardSchedule, t: Array) -> Array:
+    """See proposition 5.3"""
+    t = jnp.asarray(t, dtype=jnp.float32)
+    M = h.surv(t)
+    return h.lam(t) * M
+
+def lam_off_star(h: HazardSchedule, t: Array, eps: float = 1e-12) -> Array:
+    """See proposition 5.3"""
+    t = jnp.asarray(t, dtype=jnp.float32)
+    M = h.surv(t)
+    return (h.lam(t) * M) / jnp.maximum(1.0 - M, eps)

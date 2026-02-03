@@ -3,5 +3,6 @@ name: mnist_discrete
 batch_size: 128
 shuffle: true
 drop_remainder: true
-L: 2  # number of discrete bins per pixel
-gray_code: false
+L: 256  # number of discrete bins per pixel
+gray_code: true
+dhm_weight: 0.05

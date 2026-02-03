@@ -94,7 +94,6 @@ class ConvFiLMTrunk(nn.Module):
         t: (B,) or (B,H,W)
         returns: (B,H,W,ch)
         """
-        B = y.shape[0]
         t_vec = _reduce_time(t)
         tfeat = TimeConditioner(self.temb_dim, 4, self.tfeat_dim)(t_vec)
 

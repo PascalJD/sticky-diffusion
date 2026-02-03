@@ -1,3 +1,4 @@
 # config/forward/jump/gaussian.yaml
-std: 0.05
+_target_: sticky.core.jump.GaussianJump
+std: 1.0
 clip: null

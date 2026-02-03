@@ -1,0 +1,4 @@
+_target_: sticky.core.jump.VPMatchedGaussianJump
+eta: 0.8
+std_floor: 1e-3
+clip: null

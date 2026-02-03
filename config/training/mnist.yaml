@@ -1,8 +1,13 @@
 # config/training/mnist.yaml
 max_steps: 20000
 log_every: 50
+should_save_ckpt: false
 ckpt_every: 1000
 eval_every: 500
 num_samples: 36
 grid_cols: 6
 num_workers: 0
+
+ce_weight: 1.0
+use_dhm: false  # CE only
+dhm_weight: 0.05

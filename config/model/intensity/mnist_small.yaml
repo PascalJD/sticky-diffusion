@@ -4,4 +4,6 @@ depth: 3
 num_groups: 8
 temb_dim: 64
 tfeat_dim: 128
-min_lambda: 1e-6
+min_rho: 0.1
+max_rho: 10
+use_confidence: false

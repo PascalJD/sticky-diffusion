@@ -1,10 +1,16 @@
 # config/sampler/default.yaml
 T: ${forward.beta.T}
 n_steps: 250
-alloc_mode: "argmax"
-score_from_classifier: true
+
+alloc_mode: argmax
+score_from_classifier: true  # Only implemented so far
 score_scale: 1.0
-force_classify_at_end: true
+
+hazard_mode: plugin
+log_ratio_clip: 10.0
+
 init_std: 1.0
 eps_denom: 1e-12
 rng_fold: 4
+
+force_classify_at_end: true

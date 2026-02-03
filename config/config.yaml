@@ -5,7 +5,7 @@ defaults:
   - model/intensity: mnist_small
   - forward/beta: vp_linear
   - forward/hazard: early
-  - forward/jump: gaussian
+  - forward/jump: vp_matched
   - optim: adamw
   - training: mnist
   - wandb: default

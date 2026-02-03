@@ -1,2 +1,3 @@
 # config/forward/hazard/early.yaml
-kappa: 5.0 
+_target_: sticky.core.hazard.make_hazard_early
+kappa: 5.0
