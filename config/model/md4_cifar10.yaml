@@ -1,0 +1,37 @@
+# config/model/md4_cifar10.yaml
+name: md4
+
+# MD4 core
+cont_time: true
+timesteps: 256
+noise_schedule_type: linear
+time_features: t
+
+# classifier backbone
+feature_dim: 128
+n_layers: 32
+n_dit_layers: 0
+dit_num_heads: 12
+dit_hidden_size: 768
+ch_mult: [1]
+
+dropout_rate: 0.1
+use_attn_dropout: true
+
+# transformer-only fields (unused for the UNet path)
+num_heads: 12
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false
+
+# conditioning
+classes: -1  # set to 11 if you want CIFAR10 + null class for CFG-style unconditional drop
+
+# sampling
+antithetic_time_sampling: false
+sampler: ancestral
+sampling_grid: cosine
+topp: 0.98
+

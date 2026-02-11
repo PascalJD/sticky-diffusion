@@ -1,17 +1,7 @@
 # config/config.yaml
 defaults:
-  - dataset: mnist_discrete
-  - model/allocator: mnist_small
-  - model/intensity: mnist_small
-  - forward/beta: vp_linear
-  - forward/hazard: early
-  - forward/jump: vp_matched
-  - optim: adamw
-  - training: mnist
+  - experiment: sjd_cifar10 
   - wandb: default
-  - hydra: default
-  - runtime: default
   - _self_
 
-# Global seed for reproducibility
 seed: 0

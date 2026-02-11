@@ -1,5 +1,5 @@
 # config/sampler/default.yaml
-T: ${forward.beta.T}
+T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 250
 
 alloc_mode: argmax

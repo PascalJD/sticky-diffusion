@@ -1,0 +1,7 @@
+# config/optim/adamw_md4.yaml
+name: adamw
+
+learning_rate: 2.0e-4
+warmup_steps: 100
+weight_decay: 0.01
+b2: 0.99

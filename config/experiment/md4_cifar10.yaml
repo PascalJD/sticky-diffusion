@@ -1,0 +1,12 @@
+# config/experiment/md4_cifar10.yaml
+defaults:
+  - /dataset: cifar10_discrete
+  - /model: md4_cifar10
+  - /optim: adamw_md4
+  - /training: md4_cifar10
+  - /runtime: default
+  - /hydra: default
+  - _self_
+
+task:
+  name: md4_cifar10

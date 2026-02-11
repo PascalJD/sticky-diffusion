@@ -1,0 +1,229 @@
+"""Reverse-time sampler for Sticky Jump Diffusion.
+
+This is the SJD analogue of MD4 sampling, but in *continuous* anchor-embedding
+space. The sampler evolves a VP reverse SDE between jumps and uses a
+plug-in reverse hazard to "stick" to anchors.
+
+The implementation is adapted to the I/O contract of
+`sticky.models.sjd.backward.ContinuousClassifier`:
+
+    apply_model(params, y, t_img) -> (logits, aux)
+
+where:
+    y      : (B, ..., d) continuous state
+    t_img  : (B,)        per-example continuous time in [0, T]
+    logits : (B, ..., L) logits over L anchors
+
+We only implement the plug-in hazard branch (no learned hazard head).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Tuple
+
+import jax
+import jax.numpy as jnp
+from flax import struct
+
+from .hazard import HazardSchedule
+from .jump import VPMatchedGaussianJump
+from .plugin_intensity import plugin_per_anchor_intensity
+from .sdes import alpha_sigma
+
+
+Array = jnp.ndarray
+
+
+@dataclass(frozen=True)
+class SamplerConfig:
+    """Configuration for the reverse-time SJD sampler."""
+    T: float = 1.0
+    n_steps: int = 250
+    score_from_classifier: bool = True
+    score_scale: float = 1.0
+    alloc_mode: str = "argmax"  # "argmax" | "sample"
+    hazard_mode: str = "plugin"
+    log_ratio_clip: float = 10.0
+    init_std: float = 1.0
+    eps_denom: float = 1e-12
+    force_classify_at_end: bool = True
+
+
+@struct.dataclass
+class ReverseSampleResult:
+    # k: committed anchor indices, -1 for uncommitted if force_classify_at_end=False
+    k: Array
+    k_filled: Array
+    committed: Array
+    metrics: Dict[str, Array]
+
+
+def _choose_anchor(*, key: jax.random.PRNGKey, scores: Array, mode: str, eps: float = 1e-20) -> Array:
+    """Choose anchor indices from per-anchor nonnegative scores.
+
+    Args:
+        key: PRNGKey.
+        scores: (B, ..., L) nonnegative per-anchor weights.
+        mode: "argmax" or "sample".
+    """
+    if mode == "argmax":
+        return jnp.argmax(scores, axis=-1).astype(jnp.int32)
+    if mode == "sample":
+        return jax.random.categorical(key, jnp.log(scores + eps), axis=-1).astype(jnp.int32)
+    raise ValueError(f"Unknown alloc_mode={mode!r}")
+
+
+def _broadcast_time_to_batch(t_scalar: Array, batch_size: int) -> Array:
+    """Convert a scalar time to a (B,) vector."""
+    return jnp.full((batch_size,), jnp.asarray(t_scalar, dtype=jnp.float32), dtype=jnp.float32)
+
+
+def _expand_like(v: Array, like: Array) -> Array:
+    """Broadcast (B,) vector to match `like` by adding trailing singleton dims."""
+    while v.ndim < like.ndim:
+        v = v[..., None]
+    return v
+
+
+def reverse_sample(
+    key: jax.random.PRNGKey,
+    *,
+    params: Any,
+    apply_model: Callable[[Any, Array, Array], Tuple[Array, Any]],
+    anchors: Any,
+    beta: Any,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    shape: Tuple[int, ...],
+    batch_size: int,
+    cfg: SamplerConfig,
+) -> ReverseSampleResult:
+    """
+    This is a splitting scheme:
+        1) Euler-Maruyama reverse VP diffusion step (only on uncommitted sites)
+        2) Bernoulli jump step to commit sites to anchors
+
+    Returns:
+        ReverseSampleResult with indices and sampling metrics.
+    """
+    a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    L = int(a_table.shape[0])
+    d = int(a_table.shape[1])
+
+    dt = float(cfg.T) / float(cfg.n_steps)
+
+    k0, k_loop = jax.random.split(key, 2)
+    y = cfg.init_std * jax.random.normal(k0, shape=(batch_size,) + tuple(shape) + (d,), dtype=jnp.float32)
+
+    committed = jnp.zeros((batch_size,) + tuple(shape), dtype=bool)
+    k_idx = -jnp.ones((batch_size,) + tuple(shape), dtype=jnp.int32)
+
+    jump_count = jnp.asarray(0.0, jnp.float32)
+
+    def step_fn(i: int, carry):
+        key, y, committed, k_idx, jump_count = carry
+
+        # Forward-time parameter for this reverse-time slice: t = T - i·dt.
+        t_scalar = jnp.asarray(cfg.T - dt * i, dtype=jnp.float32)
+        t_img = _broadcast_time_to_batch(t_scalar, batch_size)
+
+        # Diffusion step (Euler-Maruyama)
+        if not cfg.score_from_classifier:
+            raise NotImplementedError("Only classifier-induced score is implemented.")
+
+        key, k_eps = jax.random.split(key, 2)
+        logits, _ = apply_model(params, y, t_img)
+        probs = jax.nn.softmax(logits, axis=-1)
+
+        mu = jnp.tensordot(probs, a_table, axes=[-1, 0])
+
+        alpha, sigma = alpha_sigma(beta, t_img)
+        alpha = _expand_like(alpha, y)
+        sigma = _expand_like(sigma, y)
+        sigma2 = sigma * sigma
+        denom = jnp.maximum(sigma2, cfg.eps_denom)
+
+        score = -(y - alpha * mu) / denom
+        score = score * float(cfg.score_scale)
+
+        bt = beta(t_img)
+        bt = _expand_like(bt, y)
+
+        drift = (+0.5 * bt) * y + bt * score
+
+        # Update only uncommitted sites.
+        m = (~committed)[..., None].astype(jnp.float32)
+        noise = jax.random.normal(k_eps, shape=y.shape, dtype=jnp.float32)
+        y = y + m * (drift * dt + jnp.sqrt(bt * dt) * noise)
+
+        # Jump step (plugin hazard)
+        logits2, _ = apply_model(params, y, t_img)
+        lam_total, Lam = plugin_per_anchor_intensity(
+            logits=logits2,
+            y=y,
+            t_img=t_img,
+            anchors=anchors,
+            beta=beta,
+            hazard=hazard,
+            jump=jump,
+            log_ratio_clip=float(cfg.log_ratio_clip),
+        )
+
+        # No jumps once committed.
+        lam_total = jnp.where(committed, 0.0, lam_total)
+        Lam = jnp.where(committed[..., None], 0.0, Lam)
+
+        p_jump = 1.0 - jnp.exp(-lam_total * dt)
+
+        key, k_u, k_a = jax.random.split(key, 3)
+        u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
+        jump_mask = (~committed) & (u < p_jump)
+
+        a_idx = _choose_anchor(key=k_a, scores=Lam, mode=cfg.alloc_mode)
+
+        # Commit: set discrete index + snap y to the chosen anchor vector.
+        k_idx = jnp.where(jump_mask, a_idx, k_idx)
+        a_vec = a_table[a_idx]  # (..., d)
+        y = jnp.where(jump_mask[..., None], a_vec, y)
+        committed = committed | jump_mask
+
+        jump_count = jump_count + jnp.sum(jump_mask.astype(jnp.float32))
+        return (key, y, committed, k_idx, jump_count)
+
+    carry = (k_loop, y, committed, k_idx, jump_count)
+    carry = jax.lax.fori_loop(0, int(cfg.n_steps), step_fn, carry)
+    key, y, committed, k_idx, jump_count = carry
+
+    # Fraction of sites that jumped at least once.
+    n_sites = jnp.asarray(committed.size, dtype=jnp.float32)
+    jump_frac = jump_count / jnp.maximum(n_sites, 1.0)
+
+    # Always compute a filled k for convenience/visualization.
+    t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
+    logits_end, _ = apply_model(params, y, t0)
+    probs_end = jax.nn.softmax(logits_end, axis=-1)
+    key, k_end = jax.random.split(key)
+    if cfg.alloc_mode == "sample":
+        k_fill = jax.random.categorical(k_end, jnp.log(probs_end + 1e-20), axis=-1).astype(jnp.int32)
+    else:
+        k_fill = jnp.argmax(probs_end, axis=-1).astype(jnp.int32)
+
+    k_filled = jnp.where(committed, k_idx, k_fill)
+
+    frac_committed_pre_force = jnp.mean(committed.astype(jnp.float32))
+
+    if cfg.force_classify_at_end:
+        a_vec_end = a_table[k_fill]
+        y = jnp.where(committed[..., None], y, a_vec_end)
+        committed = jnp.ones_like(committed, dtype=bool)
+        k_idx = k_filled
+
+    metrics = {
+        "sampling/frac_committed_pre_force": frac_committed_pre_force,
+        "sampling/frac_committed_final": jnp.mean(committed.astype(jnp.float32)),
+        "sampling/jump_count": jump_count,
+        "sampling/jump_frac_total": jump_frac,
+    }
+
+    return ReverseSampleResult(k=k_idx, k_filled=k_filled, committed=committed, metrics=metrics)
