@@ -3,16 +3,14 @@ from __future__ import annotations
 
 from omegaconf import DictConfig
 
-from sticky.models.md4.md4_model import MD4
-from sticky.models.sjd.sjd_model import SJD
-
-
 def build_model(
     cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 ):
     name = cfg.model.name
 
     if name == "md4":
+        from sticky.models.md4.md4_model import MD4
+
         return MD4(
             data_shape=data_shape,
             cont_time=bool(cfg.model.cont_time),
@@ -42,6 +40,8 @@ def build_model(
         )
 
     if name == "sjd":
+        from sticky.models.sjd.sjd_model import SJD
+
         return SJD(
             vocab_size=vocab_size,
             anchor_dim=int(cfg.model.anchor_dim),

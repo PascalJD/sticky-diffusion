@@ -6,9 +6,6 @@ import hydra
 import jax
 from omegaconf import DictConfig
 
-from sticky.models.md4 import sampling as md4_sampling
-
-
 def build_sampling_fns(
     *,
     cfg: DictConfig,
@@ -23,6 +20,7 @@ def build_sampling_fns(
     sample_images_fid_jit = None
 
     if str(cfg.model.name) == "md4":
+        from sticky.models.md4 import sampling as md4_sampling
 
         def _sample_images_md4(params, rng, batch_size: int):
             sample_state = {"params": params, "ema_params": None}
