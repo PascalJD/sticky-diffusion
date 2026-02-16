@@ -1,0 +1,21 @@
+# SJD experiment bundle aligned with CADD CIFAR settings.
+
+defaults:
+  # Core components.
+  - /dataset: cifar10_discrete
+  - /model: sjd_cifar10
+  - /optim: adamw_cadd
+  - /training: sjd_cifar10_cadd
+  - /runtime: default
+  - /hydra: default
+
+  # SJD-specific sampling and forward-process pieces.
+  - /sampler: cadd_cifar10
+  - /forward/beta: vp_linear
+  - /forward/hazard: early
+  - /forward/jump: vp_matched
+
+  - _self_
+
+task:
+  name: sjd_cifar10

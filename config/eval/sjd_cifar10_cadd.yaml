@@ -1,4 +1,4 @@
-# Evaluation settings (shared by CIFAR-10 experiments).
+# CADD-style CIFAR-10 evaluation setup.
 
 # Global toggles.
 enabled: true
@@ -7,8 +7,8 @@ log_at_step_zero: false
 
 # FID scheduling and sample counts.
 fid_enabled: true
-fid_every: 10000
-fid_num_samples: 5000
+fid_every: 50000
+fid_num_samples: 50000
 fid_batch_size: 128
 
 # Reference dataset and cache setup.

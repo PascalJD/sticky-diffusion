@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import hydra
 import jax
@@ -44,7 +44,106 @@ def sample_for_logging(
     return samples, None
 
 
-def build_fid_logger(
+def _should_run_eval(*, step_i: int, every: int, log_at_step_zero: bool) -> bool:
+    if every <= 0:
+        return False
+    if step_i == 0:
+        return bool(log_at_step_zero)
+    return (step_i % every) == 0
+
+
+def _extract_images(cfg: DictConfig, out):
+    if str(cfg.model.name) == "sjd":
+        imgs = out.k_filled
+    else:
+        imgs = out
+    imgs = jax.block_until_ready(imgs)
+    return np.clip(to_numpy(imgs), 0, 255).astype(np.uint8)
+
+
+def _compute_joint_fid_is(
+    *,
+    fid_calc,
+    is_calc,
+    sample_fn,
+    num_samples: int,
+    batch_size: int,
+):
+    from sticky.eval.fid import _OnlineMeanCov, fid_from_stats
+    from sticky.eval.iscore import _is_from_moments
+
+    ref_mu, ref_sigma = fid_calc.ref_stats
+    fid_acc = _OnlineMeanCov(dim=2048)
+
+    n_classes = 1000
+    num_splits = int(is_calc.num_splits)
+    split_sizes = np.full((num_splits,), num_samples // num_splits, dtype=np.int32)
+    split_sizes[: (num_samples % num_splits)] += 1
+    split_ends = np.cumsum(split_sizes)
+
+    split_sum_p = np.zeros((num_splits, n_classes), dtype=np.float64)
+    split_sum_p_log_p = np.zeros((num_splits, n_classes), dtype=np.float64)
+    split_counts = np.zeros((num_splits,), dtype=np.int32)
+
+    n_seen = 0
+    split_i = 0
+
+    while n_seen < num_samples:
+        cur = min(batch_size, num_samples - n_seen)
+        imgs = sample_fn(cur)
+
+        feats = fid_calc.extractor(imgs)
+        fid_acc.update(feats)
+
+        probs = np.asarray(is_calc.predictor(imgs), dtype=np.float64)
+        if probs.ndim != 2 or probs.shape[1] != n_classes:
+            raise ValueError(f"Expected Inception probs [B,{n_classes}], got {probs.shape}")
+
+        start = 0
+        while start < cur:
+            end_of_split = int(split_ends[split_i])
+            take = min(cur - start, end_of_split - n_seen)
+            if take <= 0:
+                if split_i < num_splits - 1:
+                    split_i += 1
+                continue
+
+            chunk = np.clip(probs[start : start + take], is_calc.eps, 1.0)
+            split_sum_p[split_i] += np.sum(chunk, axis=0)
+            split_sum_p_log_p[split_i] += np.sum(chunk * np.log(chunk), axis=0)
+            split_counts[split_i] += take
+            n_seen += take
+            start += take
+
+            if (split_i < num_splits - 1) and (n_seen >= split_ends[split_i]):
+                split_i += 1
+
+    mu, sigma = fid_acc.finalize()
+    fid_val = fid_from_stats(ref_mu, ref_sigma, mu, sigma)
+
+    split_scores = []
+    for i in range(num_splits):
+        if int(split_counts[i]) <= 0:
+            continue
+        split_scores.append(
+            _is_from_moments(
+                split_sum_p[i],
+                split_sum_p_log_p[i],
+                int(split_counts[i]),
+                is_calc.eps,
+            )
+        )
+
+    if not split_scores:
+        raise RuntimeError("No split scores computed for Inception Score.")
+
+    split_scores_np = np.asarray(split_scores, dtype=np.float64)
+    is_mean = float(np.mean(split_scores_np))
+    is_std = float(np.std(split_scores_np))
+    return float(fid_val), is_mean, is_std
+
+
+def build_eval_logger(
     *,
     cfg: DictConfig,
     eval_cfg: DictConfig,
@@ -58,56 +157,127 @@ def build_fid_logger(
     fid_cache_dir: Optional[str],
     fid_tfds_data_dir: Optional[str],
 ):
-    if (fid_every <= 0) or (sample_images_fid_jit is None):
+    if sample_images_fid_jit is None:
         return None
     if not numpy_available():
-        raise RuntimeError("NumPy is required for FID logging.")
+        raise RuntimeError("NumPy is required for FID/IS logging.")
 
     from sticky.eval.fid import FIDCalculator
+    from sticky.eval.iscore import InceptionScoreCalculator
 
-    fid_calc = FIDCalculator(
-        dataset_name=str(eval_cfg.get("fid_dataset_name", "cifar10")),
-        split=str(eval_cfg.get("fid_split", "train")),
-        tfds_data_dir=fid_tfds_data_dir,
-        cache_dir=fid_cache_dir,
-        inception_batch_size=int(eval_cfg.get("fid_inception_batch_size", 128)),
-        inception_device=eval_cfg.get("fid_inception_device", None),
-    )
+    fid_enabled = bool(eval_cfg.get("fid_enabled", True))
+    is_enabled = bool(eval_cfg.get("is_enabled", True))
 
-    def maybe_log_fid(step_i: int, params_for_sampling):
-        if wandb_mod is None:
-            return
-        if (step_i == 0) and (not fid_log_at_step_zero):
-            return
-        if (step_i > 0) and (step_i % fid_every != 0):
-            return
+    is_every = int(eval_cfg.get("is_every", fid_every))
+    is_num_samples = int(eval_cfg.get("is_num_samples", fid_num_samples))
+    is_batch_size = int(eval_cfg.get("is_batch_size", fid_batch_size))
+    is_splits = int(eval_cfg.get("is_splits", 10))
 
-        fid_calc.ensure_reference_stats()
+    do_fid = fid_enabled and (fid_every > 0)
+    do_is = is_enabled and (is_every > 0)
+    if (not do_fid) and (not do_is):
+        return None
+
+    fid_calc = None
+    if do_fid:
+        fid_calc = FIDCalculator(
+            dataset_name=str(eval_cfg.get("fid_dataset_name", "cifar10")),
+            split=str(eval_cfg.get("fid_split", "train")),
+            tfds_data_dir=fid_tfds_data_dir,
+            cache_dir=fid_cache_dir,
+            inception_batch_size=int(eval_cfg.get("fid_inception_batch_size", 128)),
+            inception_device=eval_cfg.get("fid_inception_device", None),
+        )
+
+    is_calc = None
+    if do_is:
+        is_calc = InceptionScoreCalculator(
+            num_splits=is_splits,
+            inception_batch_size=int(
+                eval_cfg.get("is_inception_batch_size", eval_cfg.get("fid_inception_batch_size", 128))
+            ),
+            inception_device=eval_cfg.get("is_inception_device", eval_cfg.get("fid_inception_device", None)),
+        )
+
+    def maybe_eval(step_i: int, params_for_sampling) -> Dict[str, float]:
+        run_fid = do_fid and _should_run_eval(
+            step_i=step_i, every=fid_every, log_at_step_zero=fid_log_at_step_zero
+        )
+        run_is = do_is and _should_run_eval(
+            step_i=step_i, every=is_every, log_at_step_zero=fid_log_at_step_zero
+        )
+        if (not run_fid) and (not run_is):
+            return {}
+
+        if run_fid and fid_calc is not None:
+            fid_calc.ensure_reference_stats()
+
         base_rng = jax.random.fold_in(
             jax.random.PRNGKey(int(cfg.training.seed) + 12345), step_i
         )
-        ctr = {"i": 0}
 
-        def sample_fn(n: int):
-            i = ctr["i"]
-            ctr["i"] = i + 1
-            rng = jax.random.fold_in(base_rng, i)
+        def make_sample_fn(seed_offset: int):
+            ctr = {"i": 0}
+            rng_key = jax.random.fold_in(base_rng, seed_offset)
 
-            out = sample_images_fid_jit(params_for_sampling, rng)
-            if str(cfg.model.name) == "sjd":
-                imgs = out.k_filled
-            else:
-                imgs = out
+            def _sample_fn(n: int):
+                i = ctr["i"]
+                ctr["i"] = i + 1
+                rng = jax.random.fold_in(rng_key, i)
+                out = sample_images_fid_jit(params_for_sampling, rng)
+                imgs = _extract_images(cfg, out)
+                return imgs[:n]
 
-            imgs = jax.block_until_ready(imgs)
-            imgs_np = np.clip(to_numpy(imgs), 0, 255).astype(np.uint8)
-            return imgs_np[:n]
+            return _sample_fn
 
-        fid_val = fid_calc.compute_from_sample_fn(
-            sample_fn,
-            num_samples=fid_num_samples,
-            batch_size=fid_batch_size,
+        metrics: Dict[str, float] = {}
+
+        can_compute_joint = (
+            run_fid
+            and run_is
+            and (fid_num_samples == is_num_samples)
+            and (fid_batch_size == is_batch_size)
+            and (fid_calc is not None)
+            and (is_calc is not None)
         )
-        wandb_mod.log({f"{fid_prefix}/fid": float(fid_val)}, step=step_i)
 
-    return maybe_log_fid
+        if can_compute_joint:
+            sample_fn = make_sample_fn(seed_offset=0)
+            fid_val, is_mean, is_std = _compute_joint_fid_is(
+                fid_calc=fid_calc,
+                is_calc=is_calc,
+                sample_fn=sample_fn,
+                num_samples=fid_num_samples,
+                batch_size=fid_batch_size,
+            )
+            metrics[f"{fid_prefix}/fid"] = float(fid_val)
+            metrics[f"{fid_prefix}/is"] = float(is_mean)
+            metrics[f"{fid_prefix}/is_std"] = float(is_std)
+        else:
+            if run_fid and fid_calc is not None:
+                fid_val = fid_calc.compute_from_sample_fn(
+                    make_sample_fn(seed_offset=1),
+                    num_samples=fid_num_samples,
+                    batch_size=fid_batch_size,
+                )
+                metrics[f"{fid_prefix}/fid"] = float(fid_val)
+
+            if run_is and is_calc is not None:
+                is_mean, is_std = is_calc.compute_from_sample_fn(
+                    make_sample_fn(seed_offset=2),
+                    num_samples=is_num_samples,
+                    batch_size=is_batch_size,
+                )
+                metrics[f"{fid_prefix}/is"] = float(is_mean)
+                metrics[f"{fid_prefix}/is_std"] = float(is_std)
+
+        if (wandb_mod is not None) and metrics:
+            wandb_mod.log(metrics, step=step_i)
+        return metrics
+
+    return maybe_eval
+
+
+def build_fid_logger(**kwargs):
+    """Backward-compatible alias for older call sites."""
+    return build_eval_logger(**kwargs)

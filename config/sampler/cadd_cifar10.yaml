@@ -1,0 +1,23 @@
+# SJD reverse sampler setup to mirror CADD CIFAR NFE=512 reporting.
+
+# Time discretization.
+T: ${oc.select:forward.beta.T, 1.0}
+n_steps: 512
+
+# Score + anchor-allocation mode.
+alloc_mode: argmax
+score_from_classifier: true
+score_scale: 1.0
+
+# Plug-in hazard/intensity controls.
+hazard_mode: plugin
+log_ratio_clip: 10.0
+intensity_chunk_size: 256
+
+# Numerical/stochastic controls.
+init_std: 1.0
+eps_denom: 1e-12
+rng_fold: 4
+
+# Output behavior.
+force_classify_at_end: true

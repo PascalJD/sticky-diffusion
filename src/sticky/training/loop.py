@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from sticky.models.factory import build_model
 from sticky.tasks.factory import build_task
 from sticky.training.eval import (
-    build_fid_logger,
+    build_eval_logger,
     resolve_from_original_cwd,
     sample_for_logging,
 )
@@ -18,6 +18,11 @@ from sticky.training.logging import (
     log_images_to_wandb,
     sanitize_metrics,
     to_py_scalar,
+)
+from sticky.training.persistence import (
+    CheckpointWriter,
+    MetricsWriter,
+    resolve_run_path,
 )
 from sticky.training.sampling import build_sampling_fns
 from sticky.training.state import init_state, make_lr_schedule, shard_batch
@@ -38,6 +43,29 @@ def main_train_loop(
     num_train_steps = int(cfg.training.num_train_steps)
     log_images_every_steps = int(cfg.training.log_images_every_steps)
     log_every_steps = int(cfg.training.log_every_steps)
+    eval_every_steps = int(cfg.training.get("eval_every_steps", 0))
+
+    metrics_every_steps = int(cfg.training.get("metrics_every_steps", 0))
+    save_final_metrics = bool(cfg.training.get("save_final_metrics", True))
+    metrics_dir = resolve_run_path(cfg.training.get("metrics_dir", "metrics"), "metrics")
+    metrics_writer = None
+    if (metrics_every_steps > 0) or save_final_metrics:
+        metrics_writer = MetricsWriter(root_dir=metrics_dir, every_steps=metrics_every_steps)
+
+    checkpoint_every_steps = int(cfg.training.get("checkpoint_every_steps", 0))
+    checkpoint_keep = int(cfg.training.get("checkpoint_keep", 5))
+    save_final_checkpoint = bool(cfg.training.get("save_final_checkpoint", True))
+    checkpoint_dir = resolve_run_path(cfg.training.get("checkpoint_dir", "checkpoints"), "checkpoints")
+    checkpoint_writer = None
+    if (checkpoint_every_steps > 0) or save_final_checkpoint:
+        checkpoint_writer = CheckpointWriter(
+            root_dir=checkpoint_dir,
+            every_steps=checkpoint_every_steps,
+            keep=checkpoint_keep,
+            save_final=save_final_checkpoint,
+            best_metric_key=str(cfg.training.get("best_checkpoint_metric", "eval/fid")),
+            best_mode=str(cfg.training.get("best_checkpoint_mode", "min")),
+        )
 
     rng = jax.random.PRNGKey(int(cfg.training.seed))
     state, tx = init_state(cfg, model, rng)
@@ -55,13 +83,17 @@ def main_train_loop(
     ema_rate = float(cfg.training.ema_rate)
 
     eval_cfg = eval_cfg or {}
-    eval_enabled = (wandb_mod is not None) and bool(eval_cfg.get("enabled", False))
+    eval_enabled = bool(eval_cfg.get("enabled", False))
 
-    fid_every = int(eval_cfg.get("fid_every", 0)) if eval_enabled else 0
+    fid_every = int(eval_cfg.get("fid_every", eval_every_steps)) if eval_enabled else 0
+    is_every = int(eval_cfg.get("is_every", fid_every)) if eval_enabled else 0
     fid_num_samples = int(eval_cfg.get("fid_num_samples", 50_000))
     fid_batch_size = int(eval_cfg.get("fid_batch_size", 256))
+    is_batch_size = int(eval_cfg.get("is_batch_size", fid_batch_size))
     fid_prefix = str(eval_cfg.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg.get("log_at_step_zero", False))
+    eval_sample_every = max(fid_every, is_every)
+    eval_sample_batch_size = max(fid_batch_size, is_batch_size)
 
     fid_cache_dir = resolve_from_original_cwd(str(eval_cfg.get("fid_cache_dir", "data/fid_stats")))
     fid_tfds_data_dir = resolve_from_original_cwd(eval_cfg.get("fid_tfds_data_dir", None))
@@ -72,11 +104,11 @@ def main_train_loop(
         model=model,
         num_log_images=num_log_images,
         sample_timesteps=sample_timesteps,
-        fid_every=fid_every,
-        fid_batch_size=fid_batch_size,
+        fid_every=eval_sample_every,
+        fid_batch_size=eval_sample_batch_size,
     )
 
-    maybe_log_fid = build_fid_logger(
+    maybe_log_eval = build_eval_logger(
         cfg=cfg,
         eval_cfg=eval_cfg,
         wandb_mod=wandb_mod,
@@ -91,6 +123,8 @@ def main_train_loop(
     )
 
     train_step_fn = make_train_step_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
+    last_train_metrics = {}
+    last_eval_metrics = {}
 
     if use_pmap:
         p_train_step = jax.pmap(
@@ -110,16 +144,35 @@ def main_train_loop(
             state, metrics = p_train_step(state, batch)
             _ = jax.block_until_ready(metrics["train/loss"])
 
-            if (step + 1) % log_every_steps == 0:
-                metrics = unreplicate(metrics)
-                print(f"[step {step+1}] loss={float(metrics['train/loss']):.4f}")
+            step_i = step + 1
+            need_train_host_metrics = (
+                (step_i % log_every_steps == 0)
+                or (
+                    (metrics_writer is not None)
+                    and metrics_writer.should_write(step_i)
+                )
+            )
+            train_log = None
+            if need_train_host_metrics:
+                metrics_host = unreplicate(metrics)
+                train_log = sanitize_metrics(metrics_host)
+                train_log["lr"] = float(
+                    to_py_scalar(lr_schedule(step)) or lr_schedule(step)
+                )
+                train_log["step"] = step_i
+                last_train_metrics = dict(train_log)
+
+            if step_i % log_every_steps == 0 and train_log is not None:
+                print(f"[step {step_i}] loss={float(train_log['train/loss']):.4f}")
                 if wandb_mod is not None:
-                    log_dict = sanitize_metrics(metrics)
-                    log_dict["lr"] = float(
-                        to_py_scalar(lr_schedule(step)) or lr_schedule(step)
-                    )
-                    log_dict["step"] = step + 1
-                    wandb_mod.log(log_dict, step=step + 1)
+                    wandb_mod.log(train_log, step=step_i)
+
+            if (
+                (metrics_writer is not None)
+                and metrics_writer.should_write(step_i)
+                and (train_log is not None)
+            ):
+                metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
             if (wandb_mod is not None) and (log_images_every_steps > 0) and (
                 step % log_images_every_steps == 0
@@ -143,9 +196,38 @@ def main_train_loop(
                 if sjd_sample_metrics is not None:
                     wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step)
 
-            if maybe_log_fid is not None:
+            eval_due = (
+                eval_enabled
+                and (maybe_log_eval is not None)
+                and (
+                    ((fid_every > 0) and (step_i % fid_every == 0))
+                    or ((is_every > 0) and (step_i % is_every == 0))
+                )
+            )
+            checkpoint_due = (
+                (checkpoint_writer is not None)
+                and (checkpoint_every_steps > 0)
+                and (step_i % checkpoint_every_steps == 0)
+            )
+
+            if eval_due or checkpoint_due:
                 state_s = unreplicate(state)
-                maybe_log_fid(step + 1, params_for_sampling(state_s))
+
+                if eval_due and maybe_log_eval is not None:
+                    eval_metrics = maybe_log_eval(step_i, params_for_sampling(state_s))
+                    if eval_metrics:
+                        last_eval_metrics = dict(eval_metrics)
+                        if metrics_writer is not None:
+                            metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
+                        if checkpoint_writer is not None:
+                            checkpoint_writer.maybe_save_best(
+                                target=state_s,
+                                step_i=step_i,
+                                metrics=eval_metrics,
+                            )
+
+                if checkpoint_due and checkpoint_writer is not None:
+                    checkpoint_writer.maybe_save_periodic(target=state_s, step_i=step_i)
 
     else:
         train_step_jit = jax.jit(lambda st, b: train_step_fn(st, b, axis_name=None))
@@ -155,15 +237,21 @@ def main_train_loop(
             gt_images = batch["image"][:num_log_images]
             state, metrics = train_step_jit(state, batch)
 
-            if (step + 1) % log_every_steps == 0:
-                print(f"[step {step+1}] loss={float(metrics['train/loss']):.4f}")
+            step_i = step + 1
+            train_log = sanitize_metrics(metrics)
+            train_log["lr"] = float(
+                to_py_scalar(lr_schedule(step)) or lr_schedule(step)
+            )
+            train_log["step"] = step_i
+            last_train_metrics = dict(train_log)
+
+            if step_i % log_every_steps == 0:
+                print(f"[step {step_i}] loss={float(train_log['train/loss']):.4f}")
                 if wandb_mod is not None:
-                    log_dict = sanitize_metrics(metrics)
-                    log_dict["lr"] = float(
-                        to_py_scalar(lr_schedule(step)) or lr_schedule(step)
-                    )
-                    log_dict["step"] = step + 1
-                    wandb_mod.log(log_dict, step=step + 1)
+                    wandb_mod.log(train_log, step=step_i)
+
+            if (metrics_writer is not None) and metrics_writer.should_write(step_i):
+                metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
             if (wandb_mod is not None) and (log_images_every_steps > 0) and (
                 step % log_images_every_steps == 0
@@ -186,5 +274,36 @@ def main_train_loop(
                 if sjd_sample_metrics is not None:
                     wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step)
 
-            if maybe_log_fid is not None:
-                maybe_log_fid(step + 1, params_for_sampling(state))
+            eval_due = (
+                eval_enabled
+                and (maybe_log_eval is not None)
+                and (
+                    ((fid_every > 0) and (step_i % fid_every == 0))
+                    or ((is_every > 0) and (step_i % is_every == 0))
+                )
+            )
+            if eval_due and maybe_log_eval is not None:
+                eval_metrics = maybe_log_eval(step_i, params_for_sampling(state))
+                if eval_metrics:
+                    last_eval_metrics = dict(eval_metrics)
+                    if metrics_writer is not None:
+                        metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
+                    if checkpoint_writer is not None:
+                        checkpoint_writer.maybe_save_best(
+                            target=state,
+                            step_i=step_i,
+                            metrics=eval_metrics,
+                        )
+
+            if (checkpoint_writer is not None) and (checkpoint_every_steps > 0):
+                checkpoint_writer.maybe_save_periodic(target=state, step_i=step_i)
+
+    final_state = unreplicate(state) if use_pmap else state
+    if checkpoint_writer is not None:
+        checkpoint_writer.save_final_checkpoint(target=final_state, step_i=num_train_steps)
+
+    if metrics_writer is not None and save_final_metrics:
+        final_metrics = {}
+        final_metrics.update(last_train_metrics)
+        final_metrics.update(last_eval_metrics)
+        metrics_writer.write_final(step_i=num_train_steps, metrics=final_metrics)
