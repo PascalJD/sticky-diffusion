@@ -136,7 +136,9 @@ def reverse_sample(
         logits, _ = apply_model(params, y, t_img)
         probs = jax.nn.softmax(logits, axis=-1)
 
-        mu = jnp.tensordot(probs, a_table, axes=[-1, 0])
+        probs2 = probs.reshape((-1, L)).astype(jnp.float32)
+        mu2 = probs2 @ a_table
+        mu = mu2.reshape(y.shape)
 
         alpha, sigma = alpha_sigma(beta, t_img)
         alpha = _expand_like(alpha, y)

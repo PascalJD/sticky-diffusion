@@ -4,6 +4,7 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
+from pathlib import Path
 
 import hydra
 import jax
@@ -278,7 +279,9 @@ def _init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
     ), tx
 
 
-def main_train_loop(cfg: DictConfig, wandb_mod=None):
+def main_train_loop(
+    cfg: DictConfig, wandb_mod=None, eval_cfg: Optional[DictConfig] = None
+):
     task = build_task(cfg)
     model = build_model(
         cfg, 
@@ -306,26 +309,54 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
 
     ema_rate = float(cfg.training.ema_rate)
 
+    # Eval
+    eval_cfg = eval_cfg or {}
+    eval_enabled = (wandb_mod is not None) and bool(eval_cfg.get("enabled", False))
+
+    fid_every = int(eval_cfg.get("fid_every", 0)) if eval_enabled else 0
+    fid_num_samples = int(eval_cfg.get("fid_num_samples", 50_000))
+    fid_batch_size = int(eval_cfg.get("fid_batch_size", 256))
+    fid_prefix = str(eval_cfg.get("prefix", "eval"))
+    fid_log_at_step_zero = bool(eval_cfg.get("log_at_step_zero", False))
+
+    # Make FID cache dir absolute (Hydra changes cwd)
+    fid_cache_dir = str(eval_cfg.get("fid_cache_dir", "data/fid_stats"))
+    if not Path(fid_cache_dir).is_absolute():
+        fid_cache_dir = str(Path(hydra.utils.get_original_cwd()) / fid_cache_dir)
+
+    fid_tfds_data_dir = eval_cfg.get("fid_tfds_data_dir", None)
+    if fid_tfds_data_dir is not None:
+        fid_tfds_data_dir = str(fid_tfds_data_dir)
+        if not Path(fid_tfds_data_dir).is_absolute():
+            fid_tfds_data_dir = str(Path(hydra.utils.get_original_cwd()) / fid_tfds_data_dir)
+    
     # Image sampling is model-specific.
-    sample_images_jit = None
+    sample_images_jit = None  # W&B grid sampler
+    sample_images_fid_jit = None  # FID sampler (optional)
 
     if str(cfg.model.name) == "md4":
-        def _sample_images_md4(params, rng):
+        def _sample_images_md4(params, rng, batch_size: int):
             sample_state = {"params": params, "ema_params": None}
             return md4_sampling.simple_generate(
                 rng,
                 sample_state,
                 model=model,
-                batch_size=num_log_images,
+                batch_size=batch_size,
                 timesteps=sample_timesteps,
                 conditioning=None,
                 use_ema=False,
             )
 
-        sample_images_jit = jax.jit(_sample_images_md4)
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_md4(p, r, num_log_images))
+
+        if fid_every > 0:
+            # Compile a separate sampler for larger FID batches if desired.
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(lambda p, r: _sample_images_md4(p, r, fid_batch_size))
 
     elif str(cfg.model.name) == "sjd":
-        # lazy imports
         from sticky.models.sjd import sampling as sjd_sampling
         from sticky.models.sjd.anchors import AnchorTable
         from sticky.models.sjd.sampler import SamplerConfig
@@ -347,7 +378,7 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
             force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
         )
 
-        def _sample_images_sjd(params, rng):
+        def _sample_images_sjd(params, rng, batch_size: int):
             a_table = model.apply({"params": params}, method=model.anchor_table)
             anchors = AnchorTable(table_float=a_table)
             return sjd_sampling.simple_generate(
@@ -359,11 +390,22 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
                 hazard=hazard,
                 jump=jump,
                 cfg=sampler_cfg,
-                batch_size=num_log_images,
+                batch_size=batch_size,
                 shape=tuple(task.spec.data_shape),
             )
 
-        sample_images_jit = jax.jit(_sample_images_sjd)
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_sjd(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(lambda p, r: _sample_images_sjd(p, r, fid_batch_size))
+
+    else:
+        sample_images_jit = None
+        sample_images_fid_jit = None
+
 
     def _log_images_to_wandb(step_i: int, gt_images, samples=None):
         if wandb_mod is None:
@@ -381,6 +423,63 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
             log_payload["images/samples"] = wandb_mod.Image(samp_grid, caption="Samples")
 
         wandb_mod.log(log_payload, step=step_i)
+
+
+    fid_calc = None
+    if fid_every > 0:
+        if np is None:
+            raise RuntimeError("NumPy is required for FID logging.")
+        # Lazy import so training still works without TF/TFDS when eval is disabled.
+        from sticky.eval.fid import FIDCalculator
+
+        fid_calc = FIDCalculator(
+            dataset_name=str(eval_cfg.get("fid_dataset_name", "cifar10")),
+            split=str(eval_cfg.get("fid_split", "train")),
+            tfds_data_dir=fid_tfds_data_dir,
+            cache_dir=fid_cache_dir,
+            inception_batch_size=int(eval_cfg.get("fid_inception_batch_size", 128)),
+            inception_device=eval_cfg.get("fid_inception_device", None),
+        )
+
+    def _maybe_log_fid(step_i: int, params_for_sampling):
+        """Compute FID and log to W&B if this step triggers."""
+        if (wandb_mod is None) or (fid_calc is None) or (sample_images_fid_jit is None):
+            return
+        if (step_i == 0) and (not fid_log_at_step_zero):
+            return
+        if (step_i > 0) and (fid_every <= 0 or (step_i % fid_every != 0)):
+            return
+
+        # Ensure TFDS reference stats exist (cached on disk).
+        fid_calc.ensure_reference_stats()
+
+        # Deterministic RNG for FID at this training step
+        base_rng = jax.random.fold_in(jax.random.PRNGKey(int(cfg.training.seed) + 12345), step_i)
+        ctr = {"i": 0}
+
+        def sample_fn(n: int):
+            # compute_from_sample_fn may request a smaller last batch
+            i = ctr["i"]
+            ctr["i"] = i + 1
+            r = jax.random.fold_in(base_rng, i)
+
+            out = sample_images_fid_jit(params_for_sampling, r)
+            if str(cfg.model.name) == "sjd":
+                imgs = out.k_filled
+            else:
+                imgs = out
+
+            imgs = jax.block_until_ready(imgs)
+            imgs_np = np.clip(_to_numpy(imgs), 0, 255).astype(np.uint8)
+            return imgs_np[:n]
+
+        fid_val = fid_calc.compute_from_sample_fn(
+            sample_fn,
+            num_samples=fid_num_samples,
+            batch_size=fid_batch_size,
+        )
+        wandb_mod.log({f"{fid_prefix}/fid": float(fid_val)}, step=step_i)
+
 
     def loss_and_metrics(params, rng, batch, train: bool):
         loss, metrics = task.loss_fn(
@@ -422,6 +521,7 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
         metrics = dict(metrics)
         metrics["train/loss"] = loss
         return new_state, metrics
+
 
     if use_pmap:
         p_train_step = jax.pmap(
@@ -466,9 +566,7 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
                         # SJD sampler returns a structured result.
                         sjd_sample_metrics = out.metrics
                         samples = out.k_filled
-                        print("about to sample", step)
                         samples = jax.block_until_ready(samples)
-                        print("done sampling", step)
                     else:
                         # MD4 sampler returns the image tokens directly.
                         samples = jax.block_until_ready(out)
@@ -480,6 +578,11 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
                 # Also log sampling diagnostics (jump statistics, etc.) for SJD.
                 if (wandb_mod is not None) and (sjd_sample_metrics is not None):
                     wandb_mod.log(_sanitize_metrics(sjd_sample_metrics), step=step)
+            
+            if fid_calc is not None:
+                state_s = unreplicate(state)
+                params_for_sampling = state_s.ema_params if state_s.ema_params is not None else state_s.params
+                _maybe_log_fid(step + 1, params_for_sampling)
 
     else:
         train_step_jit = jax.jit(
@@ -525,13 +628,19 @@ def main_train_loop(cfg: DictConfig, wandb_mod=None):
                 if (wandb_mod is not None) and (sjd_sample_metrics is not None):
                     wandb_mod.log(_sanitize_metrics(sjd_sample_metrics), step=step)
 
+            if fid_calc is not None:
+                params_for_sampling = state.ema_params if state.ema_params is not None else state.params
+                _maybe_log_fid(step + 1, params_for_sampling)
+
 
 @hydra.main(version_base=None, config_path="../../../config", config_name="config.yaml")
 def main(cfg: DictConfig):
     print("Resolved config:\n", OmegaConf.to_yaml(cfg))
     wandb_mod = _maybe_init_wandb(cfg)
     try:
-        main_train_loop(cfg.experiment, wandb_mod=wandb_mod)
+        main_train_loop(
+            cfg.experiment, wandb_mod=wandb_mod, eval_cfg=cfg.get("eval", None)
+        )
     finally:
         if wandb_mod is not None:
             wandb_mod.finish()

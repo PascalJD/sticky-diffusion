@@ -40,7 +40,9 @@ def plugin_per_anchor_intensity(
     a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
     d = int(a.shape[-1])
 
-    dot = jnp.einsum("bnd,ld->bnl", y_flat, a)
+    y2 = y_flat.reshape((-1, d)).astype(jnp.float32)
+    dot2 = y2 @ a.T
+    dot = dot2.reshape((B, -1, L))
     y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)   
     a_norm2 = jnp.sum(a * a, axis=-1)[None, None, :]
 

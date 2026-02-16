@@ -13,4 +13,4 @@ eval_every_steps: 5000
 checkpoint_every_steps: 5000
 log_images_every_steps: 2500
 num_log_images: 16
-sample_timesteps: 250
+sample_timesteps: ${..sampler.n_steps}

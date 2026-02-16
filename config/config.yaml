@@ -1,6 +1,7 @@
 # config/config.yaml
 defaults:
   - experiment: sjd_cifar10 
+  - eval: sjd_cifar10
   - wandb: default
   - _self_
 
