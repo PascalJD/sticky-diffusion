@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -37,6 +37,7 @@ class CIFAR10SJDTask(Task):
 
     # VP forward schedule
     beta: Callable[[Array], Array]
+    hazard: Optional[Any] = None
     T: float = 1.0
 
     def __post_init__(self):
@@ -96,6 +97,7 @@ class CIFAR10SJDTask(Task):
             x0_anchor=x0_anchor,
             x0_idx=x0_idx,
             beta=self.beta,
+            hazard=self.hazard,
             T=float(self.T),
         )
 

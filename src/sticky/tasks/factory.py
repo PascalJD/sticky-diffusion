@@ -21,6 +21,8 @@ def build_task(cfg: DictConfig):
 
     if name == "sjd_cifar10":
         beta = hydra.utils.instantiate(cfg.forward.beta)
+        hazard_cfg = cfg.forward.get("hazard", None)
+        hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
         T = float(cfg.sampler.get("T", getattr(beta, "T", 1.0)))
 
         return CIFAR10SJDTask(
@@ -31,6 +33,7 @@ def build_task(cfg: DictConfig):
             vocab_size=int(cfg.dataset.get("vocab_size", 256)),
             num_classes=int(cfg.dataset.get("num_classes", -1)),
             beta=beta,
+            hazard=hazard,
             T=T,
         )
 
