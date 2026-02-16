@@ -4,13 +4,12 @@ from __future__ import annotations
 import hydra
 from omegaconf import DictConfig
 
-from sticky.tasks.cifar10_md4 import CIFAR10MD4Task
-from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
-
 
 def build_task(cfg: DictConfig):
     name = cfg.task.name
     if name == "md4_cifar10":
+        from sticky.tasks.cifar10_md4 import CIFAR10MD4Task
+
         return CIFAR10MD4Task(
             data_dir=str(cfg.dataset.get("data_dir", None)),
             batch_size=int(cfg.dataset.get("batch_size")),
@@ -20,6 +19,8 @@ def build_task(cfg: DictConfig):
         )
 
     if name == "sjd_cifar10":
+        from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
+
         beta = hydra.utils.instantiate(cfg.forward.beta)
         hazard_cfg = cfg.forward.get("hazard", None)
         hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
