@@ -8,12 +8,10 @@ dependencies:
   - omegaconf=2.3.0
   - pyyaml
   - pip:
-      # Use the CUDA12 plugin packaging to vendor CUDA user-space libs
-      # (cuDNN/cuPTI/etc.) inside the environment.
-      - jax==0.4.38
-      - jaxlib==0.4.38
-      - jax-cuda12-plugin[with-cuda]==0.4.38
-      - flax==0.8.3
+      # Install JAX with bundled CUDA12 userspace deps (cuDNN/cuPTI/NVCC/PTXAS).
+      - jax[cuda12]==0.4.38
+      # flax 0.8.x is incompatible with jax 0.4.38 (EvalTrace.level error).
+      - flax==0.10.2
       - optax==0.2.4
       - numpyro==0.15.0
       - hydra-joblib-launcher==1.2.0
