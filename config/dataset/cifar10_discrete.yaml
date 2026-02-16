@@ -1,13 +1,15 @@
-# config/dataset/cifar10_discrete.yaml
+# CIFAR-10 discrete-token dataset settings.
 name: cifar10_discrete
-data_dir: "data/cifar10"
+data_dir: data/cifar10
 
-# global batch size for pmap path
+# Global batch sizes (for single-device and pmap paths).
 batch_size: 128
 eval_batch_size: 128
 
+# Optional per-device override used for parameter initialization.
 per_device_batch_size: -1
 
+# Token/image geometry.
 data_shape: [32, 32, 3]
 vocab_size: 256
 num_classes: -1  # unconditional by default (set to 10 for class-conditional)

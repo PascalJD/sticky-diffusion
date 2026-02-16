@@ -1,11 +1,12 @@
-# config/model/sjd_cifar10.yaml
-
+# SJD model config for CIFAR-10.
 name: sjd
 
+# Anchor table.
 anchor_dim: 64
 learnable_anchors: false
 anchors_init_std: 1.0
 
+# Classifier backbone.
 feature_dim: 128
 num_heads: 12
 n_layers: 32
@@ -14,6 +15,7 @@ dit_num_heads: 12
 dit_hidden_size: 768
 ch_mult: [1]
 
+# Regularization / architectural options.
 dropout_rate: 0.0
 use_attn_dropout: true
 mlp_type: swiglu
@@ -22,4 +24,5 @@ cond_type: adaln
 outside_embed: false
 time_features: t
 
+# Parallelization.
 model_sharding: false

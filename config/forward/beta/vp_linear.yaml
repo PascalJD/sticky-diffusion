@@ -1,5 +1,6 @@
-# config/forward/beta/vp_linear.yaml
+# Linear VP beta schedule.
 _target_: sticky.models.sjd.sdes.make_beta
+
 beta_min: 0.1
 beta_max: 20.0
 T: 1.0

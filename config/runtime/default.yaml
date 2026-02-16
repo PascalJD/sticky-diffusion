@@ -1,9 +1,12 @@
-# config/runtime/default.yaml
-device: auto  # auto | cpu | gpu
-platform: auto  # auto | single | pmap  
+# Runtime selection and XLA behavior.
 
-# XLA memory behavior (GPU mainly)
+# Backend preference (currently informational in training loop).
+device: auto  # auto | cpu | gpu
+platform: auto  # auto | single | pmap
+
+# pmap axis label.
+pmap_axis_name: batch
+
+# XLA memory behavior (GPU mainly).
 xla_preallocate: false
 xla_mem_fraction: 0.85  # 0..1 or null to omit
-
-pmap_axis_name: batch

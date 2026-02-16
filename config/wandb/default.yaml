@@ -1,0 +1,16 @@
+# Weights & Biases logging defaults.
+
+# Global switch.
+enabled: false
+
+# Run metadata.
+project: sticky-diffusion
+entity: null
+run_name: null
+tags: []
+
+# Logging backend:
+#   online   -> sync immediately
+#   offline  -> store locally for later sync
+#   disabled -> no-op even if enabled=true
+mode: online

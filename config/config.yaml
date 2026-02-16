@@ -1,8 +1,9 @@
-# config/config.yaml
+# Root Hydra config used by the training entrypoint.
 defaults:
-  - experiment: sjd_cifar10 
+  - experiment: sjd_cifar10
   - eval: sjd_cifar10
   - wandb: default
   - _self_
 
+# Top-level seed placeholder (training uses experiment.training.seed).
 seed: 0

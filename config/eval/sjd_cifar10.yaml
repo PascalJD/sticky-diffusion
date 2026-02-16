@@ -1,14 +1,21 @@
+# Evaluation settings (shared by CIFAR-10 experiments).
+
+# Global toggles.
 enabled: true
 prefix: eval
 log_at_step_zero: false
 
+# FID scheduling and sample counts.
 fid_every: 10000
 fid_num_samples: 5000  # 50000
 fid_batch_size: 128  # 128–512 is typical depending on memory
 
+# Reference dataset and cache setup.
 fid_dataset_name: cifar10
 fid_split: train
 fid_tfds_data_dir: null
 fid_cache_dir: data/fid_stats
+
+# Inception extraction.
 fid_inception_batch_size: 128
 fid_inception_device: null

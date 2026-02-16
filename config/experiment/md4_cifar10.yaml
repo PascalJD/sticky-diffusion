@@ -1,11 +1,14 @@
-# config/experiment/md4_cifar10.yaml
+# MD4 experiment bundle for CIFAR-10.
+
 defaults:
+  # Core components.
   - /dataset: cifar10_discrete
   - /model: md4_cifar10
   - /optim: adamw_md4
   - /training: md4_cifar10
   - /runtime: default
   - /hydra: default
+
   - _self_
 
 task:
