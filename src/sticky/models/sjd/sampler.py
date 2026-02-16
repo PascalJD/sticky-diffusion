@@ -87,8 +87,9 @@ def reverse_sample(
 ) -> ReverseSampleResult:
     """
     This is a splitting scheme:
-        1) Euler-Maruyama reverse VP diffusion step (only on uncommitted sites)
-        2) Bernoulli jump step to commit sites to anchors
+        1) Evaluate classifier once at current state y_t.
+        2) Euler-Maruyama reverse VP diffusion step (only on uncommitted sites).
+        3) Bernoulli jump step to commit sites to anchors, using the same logits.
 
     Returns:
         ReverseSampleResult with indices and sampling metrics.
@@ -118,8 +119,9 @@ def reverse_sample(
         if not cfg.score_from_classifier:
             raise NotImplementedError("Only classifier-induced score is implemented.")
 
-        key, k_eps = jax.random.split(key, 2)
-        logits, _ = apply_model(params, y, t_img)
+        y_for_model = y
+        key, k_eps, k_u, k_a = jax.random.split(key, 4)
+        logits, _ = apply_model(params, y_for_model, t_img)
         probs = jax.nn.softmax(logits, axis=-1)
 
         probs2 = probs.reshape((-1, L)).astype(jnp.float32)
@@ -145,13 +147,11 @@ def reverse_sample(
         noise = jax.random.normal(k_eps, shape=y.shape, dtype=jnp.float32)
         y = y + m * (drift * dt + jnp.sqrt(bt * dt) * noise)
 
-        # Jump step (plugin hazard)
-        logits2, _ = apply_model(params, y, t_img)
-        key, k_u, k_a = jax.random.split(key, 3)
+        # Jump step (plugin hazard), reusing the single classifier call above.
         lam_total, a_idx = plugin_intensity_and_choice(
             key=k_a,
-            logits=logits2,
-            y=y,
+            logits=logits,
+            y=y_for_model,
             t_img=t_img,
             anchors=anchors,
             beta=beta,
