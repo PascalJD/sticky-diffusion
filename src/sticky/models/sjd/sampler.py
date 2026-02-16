@@ -28,7 +28,7 @@ from flax import struct
 
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
-from .plugin_intensity import plugin_per_anchor_intensity
+from .plugin_intensity import plugin_intensity_and_choice
 from .sdes import alpha_sigma
 
 
@@ -45,6 +45,7 @@ class SamplerConfig:
     alloc_mode: str = "argmax"  # "argmax" | "sample"
     hazard_mode: str = "plugin"
     log_ratio_clip: float = 10.0
+    intensity_chunk_size: int = 256
     init_std: float = 1.0
     eps_denom: float = 1e-12
     force_classify_at_end: bool = True
@@ -57,21 +58,6 @@ class ReverseSampleResult:
     k_filled: Array
     committed: Array
     metrics: Dict[str, Array]
-
-
-def _choose_anchor(*, key: jax.random.PRNGKey, scores: Array, mode: str, eps: float = 1e-20) -> Array:
-    """Choose anchor indices from per-anchor nonnegative scores.
-
-    Args:
-        key: PRNGKey.
-        scores: (B, ..., L) nonnegative per-anchor weights.
-        mode: "argmax" or "sample".
-    """
-    if mode == "argmax":
-        return jnp.argmax(scores, axis=-1).astype(jnp.int32)
-    if mode == "sample":
-        return jax.random.categorical(key, jnp.log(scores + eps), axis=-1).astype(jnp.int32)
-    raise ValueError(f"Unknown alloc_mode={mode!r}")
 
 
 def _broadcast_time_to_batch(t_scalar: Array, batch_size: int) -> Array:
@@ -161,7 +147,9 @@ def reverse_sample(
 
         # Jump step (plugin hazard)
         logits2, _ = apply_model(params, y, t_img)
-        lam_total, Lam = plugin_per_anchor_intensity(
+        key, k_u, k_a = jax.random.split(key, 3)
+        lam_total, a_idx = plugin_intensity_and_choice(
+            key=k_a,
             logits=logits2,
             y=y,
             t_img=t_img,
@@ -169,20 +157,18 @@ def reverse_sample(
             beta=beta,
             hazard=hazard,
             jump=jump,
+            alloc_mode=cfg.alloc_mode,
             log_ratio_clip=float(cfg.log_ratio_clip),
+            chunk_size=int(cfg.intensity_chunk_size),
         )
 
         # No jumps once committed.
         lam_total = jnp.where(committed, 0.0, lam_total)
-        Lam = jnp.where(committed[..., None], 0.0, Lam)
 
         p_jump = 1.0 - jnp.exp(-lam_total * dt)
 
-        key, k_u, k_a = jax.random.split(key, 3)
         u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
         jump_mask = (~committed) & (u < p_jump)
-
-        a_idx = _choose_anchor(key=k_a, scores=Lam, mode=cfg.alloc_mode)
 
         # Commit: set discrete index + snap y to the chosen anchor vector.
         k_idx = jnp.where(jump_mask, a_idx, k_idx)

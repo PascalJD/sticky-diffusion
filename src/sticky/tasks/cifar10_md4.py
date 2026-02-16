@@ -66,9 +66,14 @@ class CIFAR10MD4Task(Task):
             cond = batch["label"].astype(jnp.int32)
         else:
             cond = None
-        return model(
-            key=rng, params=params, model=model, x=x, cond=cond, train=train
+        stats = model.apply(
+            {"params": params},
+            x,
+            cond=cond,
+            train=train,
+            rngs={"sample": rng},
         )
+        return stats["loss"], stats
 
     def decode(self, x: jnp.ndarray) -> jnp.ndarray:
         # x is int32 tokens in [0..255]. Convert to uint8 for saving/visualization.

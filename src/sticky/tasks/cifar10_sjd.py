@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -54,25 +53,21 @@ class CIFAR10SJDTask(Task):
         return self._spec
 
     def make_dataloaders(self, seed: int):
-        train_it = itertools.cycle(
-            make_cifar10_iterator(
-                data_dir=self.data_dir,
-                batch_size=self.batch_size,
-                split="train",
-                shuffle=True,
-                seed=seed,
-                repeat=True,
-            )
+        train_it = make_cifar10_iterator(
+            data_dir=self.data_dir,
+            batch_size=self.batch_size,
+            split="train",
+            shuffle=True,
+            seed=seed,
+            repeat=True,
         )
-        eval_it = itertools.cycle(
-            make_cifar10_iterator(
-                data_dir=self.data_dir,
-                batch_size=self.eval_batch_size,
-                split="test",
-                shuffle=False,
-                seed=seed,
-                repeat=True,
-            )
+        eval_it = make_cifar10_iterator(
+            data_dir=self.data_dir,
+            batch_size=self.eval_batch_size,
+            split="test",
+            shuffle=False,
+            seed=seed,
+            repeat=False,
         )
         return train_it, eval_it
 

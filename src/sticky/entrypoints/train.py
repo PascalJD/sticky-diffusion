@@ -25,14 +25,14 @@ tf.config.set_visible_devices([], "GPU")
 try:
     import numpy as np
 except Exception:
-    np = None 
+    np = None
 
 Array = jnp.ndarray
 
 
 def _shard(batch: Dict[str, Array]) -> Dict[str, Array]:
     """(B, ...) -> (n_devices, B//n_devices, ...)"""
-    n = jax.device_count()
+    n = jax.local_device_count()
     out = {}
     for k, v in batch.items():
         assert v.shape[0] % n == 0, f"Batch dim for {k} must be divisible by device_count."
@@ -284,8 +284,8 @@ def main_train_loop(
 ):
     task = build_task(cfg)
     model = build_model(
-        cfg, 
-        data_shape=task.spec.data_shape, 
+        cfg,
+        data_shape=task.spec.data_shape,
         vocab_size=task.spec.vocab_size
     )
     num_log_images = int(cfg.training.num_log_images)
@@ -329,7 +329,7 @@ def main_train_loop(
         fid_tfds_data_dir = str(fid_tfds_data_dir)
         if not Path(fid_tfds_data_dir).is_absolute():
             fid_tfds_data_dir = str(Path(hydra.utils.get_original_cwd()) / fid_tfds_data_dir)
-    
+
     # Image sampling is model-specific.
     sample_images_jit = None  # W&B grid sampler
     sample_images_fid_jit = None  # FID sampler (optional)
@@ -374,6 +374,7 @@ def main_train_loop(
             hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
             alloc_mode=str(cfg.sampler.get("alloc_mode", "argmax")),
             log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
+            intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
             init_std=float(cfg.sampler.get("init_std", 1.0)),
             force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
         )
@@ -498,6 +499,7 @@ def main_train_loop(
         if axis_name is not None:
             grads = jax.lax.pmean(grads, axis_name=axis_name)
             metrics = jax.tree.map(lambda x: jax.lax.pmean(x, axis_name=axis_name), metrics)
+            loss = jax.lax.pmean(loss, axis_name=axis_name)
 
         updates, new_opt_state = tx.update(grads, state.opt_state, state.params)
         new_params = optax.apply_updates(state.params, updates)
@@ -539,7 +541,7 @@ def main_train_loop(
             batch = next(train_iter)
             gt_images = batch["image"][:num_log_images]
             batch = _shard(batch)
-        
+
             state, metrics = p_train_step(state, batch)
             _ = jax.block_until_ready(metrics["train/loss"])
 
@@ -578,7 +580,7 @@ def main_train_loop(
                 # Also log sampling diagnostics (jump statistics, etc.) for SJD.
                 if (wandb_mod is not None) and (sjd_sample_metrics is not None):
                     wandb_mod.log(_sanitize_metrics(sjd_sample_metrics), step=step)
-            
+
             if fid_calc is not None:
                 state_s = unreplicate(state)
                 params_for_sampling = state_s.ema_params if state_s.ema_params is not None else state_s.params
@@ -602,7 +604,7 @@ def main_train_loop(
                     log_dict["lr"] = float(_to_py_scalar(lr_schedule(step)) or lr_schedule(step))
                     log_dict["step"] = step + 1
                     wandb_mod.log(log_dict, step=step + 1)
-            
+
             if (wandb_mod is not None) and (log_images_every_steps > 0) and (step % log_images_every_steps == 0):
                 params_for_sampling = state.ema_params if state.ema_params is not None else state.params
                 sjd_sample_metrics = None

@@ -8,6 +8,7 @@ score_scale: 1.0
 
 hazard_mode: plugin
 log_ratio_clip: 10.0
+intensity_chunk_size: 256
 
 init_std: 1.0
 eps_denom: 1e-12
