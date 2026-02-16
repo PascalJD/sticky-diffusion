@@ -20,9 +20,10 @@ dependencies:
       - hydra-submitit-launcher==1.2.0
       - wandb>=0.16.4
       - matplotlib==3.8.4
-      - tensorflow==2.16.1
-      - tensorflow-probability==0.24.0
-      - tf-keras==2.16.0
+      # Keep TensorFlow stack compatible with jax>=0.4.38 (ml_dtypes>=0.4).
+      - tensorflow==2.18.0
+      - tensorflow-probability==0.25.0
+      - tf-keras==2.18.0
       - tensorflow-datasets==4.9.*
       - etils[epath]>=1.5.1
       - clu 
