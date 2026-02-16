@@ -8,9 +8,11 @@ dependencies:
   - omegaconf=2.3.0
   - pyyaml
   - pip:
-      - --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-      - jaxlib==0.4.28+cuda12.cudnn89
-      - jax==0.4.28
+      # Use the CUDA12 plugin packaging to vendor CUDA user-space libs
+      # (cuDNN/cuPTI/etc.) inside the environment.
+      - jax==0.4.38
+      - jaxlib==0.4.38
+      - jax-cuda12-plugin[with-cuda]==0.4.38
       - flax==0.8.3
       - optax==0.2.4
       - numpyro==0.15.0
