@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Callable, Optional, Tuple
 
 import numpy as np
@@ -230,6 +231,9 @@ class FIDCalculator:
         sample_fn: Callable[[int], np.ndarray],
         num_samples: int,
         batch_size: Optional[int] = None,
+        *,
+        verbose: bool = False,
+        progress_every_batches: int = 20,
     ) -> float:
         self.ensure_reference_stats()
         ref_mu, ref_sigma = self.ref_stats
@@ -238,13 +242,34 @@ class FIDCalculator:
         acc = _OnlineMeanCov(dim=2048)
 
         n = 0
+        batch_i = 0
+        t0 = time.perf_counter()
+        if verbose:
+            print(
+                f"[fid] Start: num_samples={num_samples}, batch_size={bs}",
+                flush=True,
+            )
         while n < num_samples:
             cur = min(bs, num_samples - n)
             imgs = sample_fn(cur)
             feats = self.extractor(imgs)
             acc.update(feats)
             n += cur
+            batch_i += 1
+            if verbose and (
+                (batch_i % max(1, int(progress_every_batches)) == 0) or (n >= num_samples)
+            ):
+                print(
+                    f"[fid] Progress: {n}/{num_samples} "
+                    f"({100.0 * n / max(1, num_samples):.1f}%)",
+                    flush=True,
+                )
 
         mu, sigma = acc.finalize()
-        return fid_from_stats(ref_mu, ref_sigma, mu, sigma)
-
+        fid_val = fid_from_stats(ref_mu, ref_sigma, mu, sigma)
+        if verbose:
+            print(
+                f"[fid] Done in {time.perf_counter() - t0:.1f}s: FID={fid_val:.3f}",
+                flush=True,
+            )
+        return fid_val

@@ -103,6 +103,7 @@ def main_train_loop(
     ema_rate = float(cfg.training.ema_rate)
 
     eval_enabled = bool(eval_cfg.get("enabled", False))
+    run_eval_at_end = bool(eval_cfg.get("run_at_end", True))
 
     fid_every = int(eval_cfg.get("fid_every", eval_every_steps)) if eval_enabled else 0
     is_every = int(eval_cfg.get("is_every", fid_every)) if eval_enabled else 0
@@ -111,7 +112,8 @@ def main_train_loop(
     is_batch_size = int(eval_cfg.get("is_batch_size", fid_batch_size))
     fid_prefix = str(eval_cfg.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg.get("log_at_step_zero", False))
-    eval_sample_every = max(fid_every, is_every)
+    eval_sample_needed = eval_enabled and ((max(fid_every, is_every) > 0) or run_eval_at_end)
+    eval_sample_every = max(fid_every, is_every) if max(fid_every, is_every) > 0 else (1 if eval_sample_needed else 0)
     eval_sample_batch_size = max(fid_batch_size, is_batch_size)
 
     fid_cache_dir = resolve_from_original_cwd(str(eval_cfg.get("fid_cache_dir", "data/fid_stats")))
@@ -144,6 +146,7 @@ def main_train_loop(
     train_step_fn = make_train_step_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
     last_train_metrics = {}
     last_eval_metrics = {}
+    last_eval_step: Optional[int] = None
 
     if use_pmap:
         p_train_step = jax.pmap(
@@ -236,6 +239,7 @@ def main_train_loop(
                     eval_metrics = maybe_log_eval(step_i, params_for_sampling(state_s))
                     if eval_metrics:
                         last_eval_metrics = dict(eval_metrics)
+                        last_eval_step = step_i
                         if metrics_writer is not None:
                             metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
                         if checkpoint_writer is not None:
@@ -305,6 +309,7 @@ def main_train_loop(
                 eval_metrics = maybe_log_eval(step_i, params_for_sampling(state))
                 if eval_metrics:
                     last_eval_metrics = dict(eval_metrics)
+                    last_eval_step = step_i
                     if metrics_writer is not None:
                         metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
                     if checkpoint_writer is not None:
@@ -318,6 +323,30 @@ def main_train_loop(
                 checkpoint_writer.maybe_save_periodic(target=state, step_i=step_i)
 
     final_state = unreplicate(state) if use_pmap else state
+
+    if (
+        eval_enabled
+        and run_eval_at_end
+        and (maybe_log_eval is not None)
+        and (last_eval_step != num_train_steps)
+    ):
+        final_eval_metrics = maybe_log_eval(
+            num_train_steps,
+            params_for_sampling(final_state),
+            force_fid=True,
+            force_is=True,
+        )
+        if final_eval_metrics:
+            last_eval_metrics = dict(final_eval_metrics)
+            if metrics_writer is not None:
+                metrics_writer.write(step_i=num_train_steps, metrics=final_eval_metrics, tag="eval")
+            if checkpoint_writer is not None:
+                checkpoint_writer.maybe_save_best(
+                    target=final_state,
+                    step_i=num_train_steps,
+                    metrics=final_eval_metrics,
+                )
+
     if checkpoint_writer is not None:
         checkpoint_writer.save_final_checkpoint(target=final_state, step_i=num_train_steps)
 

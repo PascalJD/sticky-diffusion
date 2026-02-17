@@ -4,10 +4,16 @@
 enabled: true
 prefix: eval
 log_at_step_zero: false
+# Run heavy generative metrics once at the very end by default.
+run_at_end: true
+verbose: false
+fid_verbose: ${.verbose}
+fid_progress_every_batches: 20
 
 # FID scheduling and sample counts.
+# Set `fid_every>0` to re-enable periodic FID during training.
 fid_enabled: true
-fid_every: 10000
+fid_every: 0
 fid_num_samples: 5000
 fid_batch_size: 128
 
@@ -22,8 +28,9 @@ fid_inception_batch_size: 128
 fid_inception_device: null
 
 # Inception Score scheduling and sample counts.
+# Set `is_every>0` to re-enable periodic IS during training.
 is_enabled: true
-is_every: ${.fid_every}
+is_every: 0
 is_num_samples: ${.fid_num_samples}
 is_batch_size: ${.fid_batch_size}
 is_splits: 10
