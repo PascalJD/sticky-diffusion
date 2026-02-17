@@ -33,7 +33,25 @@ model:
   adm_resblock_updown: false
   adm_use_conv_skip: false
 
-# Use a larger global batch for this run profile.
+# Experiment defaults requested for CIFAR-10 SJD.
 dataset:
-  batch_size: 256
-  eval_batch_size: 256
+  batch_size: 512
+  eval_batch_size: 512
+  augment:
+    enabled: true
+    prob: 0.15
+    rotate: true
+    hflip: true
+    eval: false
+
+optim:
+  name: adamw
+  learning_rate: 1.0e-4
+
+sampler:
+  n_steps: 512
+  logit_temperature: 0.85
+
+forward:
+  hazard:
+    kappa: 2.0
