@@ -2,7 +2,7 @@
 # @package _group_
 
 run:
-  dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra:runtime.choices.experiment}_${experiment.model.name}_${experiment.task.name}
 
 job:
   name: train_sticky

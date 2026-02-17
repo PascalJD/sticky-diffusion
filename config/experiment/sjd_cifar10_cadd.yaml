@@ -7,7 +7,6 @@ defaults:
   - /optim: adamw_cadd
   - /training: sjd_cifar10_cadd
   - /runtime: default
-  - /hydra: default
 
   # SJD-specific sampling and forward-process pieces.
   - /sampler: cadd_cifar10

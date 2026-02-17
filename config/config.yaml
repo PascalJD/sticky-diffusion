@@ -2,6 +2,7 @@
 defaults:
   - experiment: sjd_cifar10
   - eval: sjd_cifar10
+  - hydra: default
   - wandb: default
   - _self_
 

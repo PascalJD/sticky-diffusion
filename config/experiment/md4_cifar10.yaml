@@ -7,7 +7,6 @@ defaults:
   - /optim: adamw_md4
   - /training: md4_cifar10
   - /runtime: default
-  - /hydra: default
 
   - _self_
 
