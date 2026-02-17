@@ -31,6 +31,15 @@ class SJD(nn.Module):
     model_sharding: bool = False
     sequence_backbone: str = "auto"
     image_backbone: str = "auto"
+    adm_num_res_blocks: int = 2
+    adm_attention_resolutions: Sequence[int] = (2, 4, 8)
+    adm_num_heads: int = 4
+    adm_num_head_channels: int = -1
+    adm_num_heads_upsample: int = -1
+    adm_conv_resample: bool = True
+    adm_use_scale_shift_norm: bool = True
+    adm_resblock_updown: bool = False
+    adm_use_conv_skip: bool = False
 
     vocab_size: int = 256
 
@@ -58,6 +67,15 @@ class SJD(nn.Module):
             model_sharding=self.model_sharding,
             sequence_backbone=self.sequence_backbone,
             image_backbone=self.image_backbone,
+            adm_num_res_blocks=self.adm_num_res_blocks,
+            adm_attention_resolutions=self.adm_attention_resolutions,
+            adm_num_heads=self.adm_num_heads,
+            adm_num_head_channels=self.adm_num_head_channels,
+            adm_num_heads_upsample=self.adm_num_heads_upsample,
+            adm_conv_resample=self.adm_conv_resample,
+            adm_use_scale_shift_norm=self.adm_use_scale_shift_norm,
+            adm_resblock_updown=self.adm_resblock_updown,
+            adm_use_conv_skip=self.adm_use_conv_skip,
         )
 
     def embed(self, token_ids: Array) -> Array:

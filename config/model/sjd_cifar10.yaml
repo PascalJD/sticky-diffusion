@@ -26,9 +26,20 @@ time_features: t
 
 # Backbone selection (Hydra-overridable).
 # sequence_backbone: auto | transformer | sharded_transformer
-# image_backbone: auto | unet5d
+# image_backbone: auto | unet5d | adm_unet5d
 sequence_backbone: auto
 image_backbone: auto
+
+# ADM-style image UNet knobs (used when image_backbone=adm_unet5d).
+adm_num_res_blocks: 2
+adm_attention_resolutions: [2, 4, 8]
+adm_num_heads: 4
+adm_num_head_channels: -1
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
 
 # Parallelization.
 model_sharding: false

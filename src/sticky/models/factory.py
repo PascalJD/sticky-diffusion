@@ -62,6 +62,15 @@ def build_model(
             model_sharding=bool(cfg.model.get("model_sharding", False)),
             sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
             image_backbone=str(cfg.model.get("image_backbone", "auto")),
+            adm_num_res_blocks=int(cfg.model.get("adm_num_res_blocks", 2)),
+            adm_attention_resolutions=tuple(cfg.model.get("adm_attention_resolutions", (2, 4, 8))),
+            adm_num_heads=int(cfg.model.get("adm_num_heads", 4)),
+            adm_num_head_channels=int(cfg.model.get("adm_num_head_channels", -1)),
+            adm_num_heads_upsample=int(cfg.model.get("adm_num_heads_upsample", -1)),
+            adm_conv_resample=bool(cfg.model.get("adm_conv_resample", True)),
+            adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
+            adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
+            adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
         )
 
     raise ValueError(f"Unknown model.name={name}")

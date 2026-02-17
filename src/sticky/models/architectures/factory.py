@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import flax.linen as nn
 
-from .image import UNet5DBackbone
+from .image import ADMUNet5DBackbone, UNet5DBackbone
 from .sequence import TransformerBackbone
 
 
@@ -76,6 +76,15 @@ def build_image_backbone(
     ch_mult: Sequence[int],
     vocab_size: int,
     dropout_rate: float,
+    adm_num_res_blocks: int,
+    adm_attention_resolutions: Sequence[int],
+    adm_num_heads: int,
+    adm_num_head_channels: int,
+    adm_num_heads_upsample: int,
+    adm_conv_resample: bool,
+    adm_use_scale_shift_norm: bool,
+    adm_resblock_updown: bool,
+    adm_use_conv_skip: bool,
 ) -> nn.Module:
     """Create image backbone from a Hydra-selected name."""
     key = str(name).lower()
@@ -94,6 +103,24 @@ def build_image_backbone(
             dropout_rate=float(dropout_rate),
         )
 
+    if key == "adm_unet5d":
+        return ADMUNet5DBackbone(
+            feature_dim=int(feature_dim),
+            output_channels=int(vocab_size),
+            num_res_blocks=int(adm_num_res_blocks),
+            attention_resolutions=tuple(int(v) for v in adm_attention_resolutions),
+            channel_mult=tuple(int(x) for x in ch_mult),
+            num_heads=int(adm_num_heads),
+            num_head_channels=int(adm_num_head_channels),
+            num_heads_upsample=int(adm_num_heads_upsample),
+            dropout_rate=float(dropout_rate),
+            conv_resample=bool(adm_conv_resample),
+            use_scale_shift_norm=bool(adm_use_scale_shift_norm),
+            resblock_updown=bool(adm_resblock_updown),
+            use_conv_skip=bool(adm_use_conv_skip),
+        )
+
     raise ValueError(
-        f"Unknown image backbone {name!r}. Expected one of: auto, unet5d."
+        f"Unknown image backbone {name!r}. "
+        "Expected one of: auto, unet5d, adm_unet5d."
     )
