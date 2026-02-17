@@ -42,6 +42,7 @@ class SamplerConfig:
     n_steps: int = 250
     score_from_classifier: bool = True
     score_scale: float = 1.0
+    logit_temperature: float = 1.0
     alloc_mode: str = "argmax"  # "argmax" | "sample"
     hazard_mode: str = "plugin"
     log_ratio_clip: float = 10.0
@@ -97,6 +98,11 @@ def reverse_sample(
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
     L = int(a_table.shape[0])
     d = int(a_table.shape[1])
+    if float(cfg.logit_temperature) <= 0.0:
+        raise ValueError(
+            f"logit_temperature must be > 0, got {cfg.logit_temperature}"
+        )
+    logit_temperature = jnp.asarray(float(cfg.logit_temperature), dtype=jnp.float32)
 
     dt = float(cfg.T) / float(cfg.n_steps)
 
@@ -122,7 +128,8 @@ def reverse_sample(
         y_for_model = y
         key, k_eps, k_u, k_a = jax.random.split(key, 4)
         logits, _ = apply_model(params, y_for_model, t_img)
-        probs = jax.nn.softmax(logits, axis=-1)
+        logits_scaled = logits / logit_temperature
+        probs = jax.nn.softmax(logits_scaled, axis=-1)
 
         probs2 = probs.reshape((-1, L)).astype(jnp.float32)
         mu2 = probs2 @ a_table
@@ -150,7 +157,7 @@ def reverse_sample(
         # Jump step (plugin hazard), reusing the single classifier call above.
         lam_total, a_idx = plugin_intensity_and_choice(
             key=k_a,
-            logits=logits,
+            logits=logits_scaled,
             y=y_for_model,
             t_img=t_img,
             anchors=anchors,
@@ -190,7 +197,8 @@ def reverse_sample(
     # Always compute a filled k for convenience/visualization.
     t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
     logits_end, _ = apply_model(params, y, t0)
-    probs_end = jax.nn.softmax(logits_end, axis=-1)
+    logits_end_scaled = logits_end / logit_temperature
+    probs_end = jax.nn.softmax(logits_end_scaled, axis=-1)
     key, k_end = jax.random.split(key)
     if cfg.alloc_mode == "sample":
         k_fill = jax.random.categorical(k_end, jnp.log(probs_end + 1e-20), axis=-1).astype(jnp.int32)
@@ -212,6 +220,7 @@ def reverse_sample(
         "sampling/frac_committed_final": jnp.mean(committed.astype(jnp.float32)),
         "sampling/jump_count": jump_count,
         "sampling/jump_frac_total": jump_frac,
+        "sampling/logit_temperature": logit_temperature,
     }
 
     return ReverseSampleResult(k=k_idx, k_filled=k_filled, committed=committed, metrics=metrics)

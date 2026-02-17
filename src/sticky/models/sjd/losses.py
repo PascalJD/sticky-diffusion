@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from .sdes import vp_perturb
+from .state_dependency import state_dependency_metrics
 
 Array = jnp.ndarray
 Metrics = Dict[str, Array]
@@ -20,6 +21,9 @@ def ce_allocation_loss(
     beta,
     hazard: Optional[object],
     T: float,
+    jump: Optional[object] = None,
+    anchor_table: Optional[Array] = None,
+    state_dep_log_ratio_clip: float = 10.0,
 ) -> Tuple[Array, Metrics]:
     x0_idx = x0_idx.astype(jnp.int32)
 
@@ -51,7 +55,8 @@ def ce_allocation_loss(
 
     # NLL against the true token/anchor index.
     nll = -jnp.take_along_axis(logp, x0_idx[..., None], axis=-1).squeeze(-1)
-    uncommitted = (~committed).astype(jnp.float32)
+    uncommitted_mask = ~committed
+    uncommitted = uncommitted_mask.astype(jnp.float32)
     uncommitted_count = jnp.sum(uncommitted)
     denom = jnp.maximum(uncommitted_count, 1.0)
     loss = jnp.sum(nll * uncommitted) / denom
@@ -76,5 +81,20 @@ def ce_allocation_loss(
         "CE/frac_uncommitted": frac_uncommitted,
         "CE/frac_committed": frac_committed,
     }
+
+    if (jump is not None) and (anchor_table is not None):
+        metrics.update(
+            state_dependency_metrics(
+                y=x_t,
+                t_img=t_img,
+                logits=logits,
+                uncommitted_mask=uncommitted_mask,
+                anchor_table=anchor_table,
+                beta=beta,
+                jump=jump,
+                hazard=hazard,
+                log_ratio_clip=float(state_dep_log_ratio_clip),
+            )
+        )
 
     return loss, metrics

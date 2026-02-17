@@ -59,6 +59,12 @@ def build_sampling_fns(
             T=float(cfg.sampler.get("T", 1.0)),
             n_steps=int(cfg.sampler.get("n_steps", 250)),
             score_scale=float(cfg.sampler.get("score_scale", 1.0)),
+            logit_temperature=float(
+                cfg.sampler.get(
+                    "logit_temperature",
+                    cfg.sampler.get("temperature", 1.0),
+                )
+            ),
             hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
             alloc_mode=str(cfg.sampler.get("alloc_mode", "argmax")),
             log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),

@@ -38,7 +38,10 @@ class CIFAR10SJDTask(Task):
     # VP forward schedule
     beta: Callable[[Array], Array]
     hazard: Optional[Any] = None
+    jump: Optional[Any] = None
     T: float = 1.0
+    log_state_dependency: bool = True
+    state_dep_log_ratio_clip: float = 10.0
 
     def __post_init__(self):
         self._spec = TaskSpec(
@@ -86,6 +89,12 @@ class CIFAR10SJDTask(Task):
 
         # Anchor vectors (continuous) from the model's anchor table.
         x0_anchor = model.apply({"params": params}, x0_idx, method=model.embed)
+        anchor_table = None
+        if self.log_state_dependency:
+            try:
+                anchor_table = params["anchors"]["table"]
+            except Exception:
+                anchor_table = model.apply({"params": params}, method=model.anchor_table)
 
         def apply_fn(p, xt, t_img):
             return model.apply({"params": p}, xt, t_img, train=train)
@@ -98,6 +107,9 @@ class CIFAR10SJDTask(Task):
             x0_idx=x0_idx,
             beta=self.beta,
             hazard=self.hazard,
+            jump=self.jump if self.log_state_dependency else None,
+            anchor_table=anchor_table,
+            state_dep_log_ratio_clip=float(self.state_dep_log_ratio_clip),
             T=float(self.T),
         )
 

@@ -29,3 +29,7 @@ save_final_metrics: true
 
 # Sampling budget for qualitative logging.
 sample_timesteps: ${..sampler.n_steps}
+
+# State-dependency diagnostics.
+log_state_dependency: true
+state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}

@@ -8,6 +8,7 @@ n_steps: 250
 alloc_mode: argmax
 score_from_classifier: true  # currently the only implemented mode
 score_scale: 1.0
+logit_temperature: 1.0
 
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
