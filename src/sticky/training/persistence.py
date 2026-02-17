@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping as AbcMapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,14 +11,33 @@ import jax
 from flax.training import checkpoints
 
 
-def resolve_run_path(path_like: Optional[str], default_rel: str) -> Path:
+def get_hydra_output_dir() -> Path:
+    try:
+        from hydra.core.hydra_config import HydraConfig
+
+        if HydraConfig.initialized():
+            output_dir = HydraConfig.get().runtime.output_dir
+            if output_dir:
+                return Path(output_dir)
+    except Exception:
+        pass
+    return Path.cwd()
+
+
+def resolve_run_path(
+    path_like: Optional[str],
+    default_rel: str,
+    *,
+    base_dir: Optional[Path] = None,
+) -> Path:
     if path_like in (None, "", "null"):
         path = Path(default_rel)
     else:
         path = Path(str(path_like))
     if path.is_absolute():
         return path
-    return Path.cwd() / path
+    base = base_dir if base_dir is not None else get_hydra_output_dir()
+    return base / path
 
 
 def now_utc_iso() -> str:
@@ -32,6 +52,106 @@ def metrics_to_floats(metrics: Mapping[str, Any]) -> Dict[str, float]:
         except Exception:
             continue
     return out
+
+
+def count_parameters(params: Any) -> int:
+    leaves = jax.tree_util.tree_leaves(params)
+    return int(sum(int(getattr(leaf, "size", 0)) for leaf in leaves))
+
+
+def count_parameters_by_top_level(params: Any) -> Dict[str, int]:
+    if not isinstance(params, AbcMapping):
+        return {}
+    out: Dict[str, int] = {}
+    for key, subtree in params.items():
+        leaves = jax.tree_util.tree_leaves(subtree)
+        out[str(key)] = int(sum(int(getattr(leaf, "size", 0)) for leaf in leaves))
+    return out
+
+
+def _resolved_cfg_dict(cfg: Any) -> Dict[str, Any]:
+    if cfg is None:
+        return {}
+    try:
+        from omegaconf import DictConfig, OmegaConf
+
+        if isinstance(cfg, DictConfig):
+            out = OmegaConf.to_container(cfg, resolve=True)
+            return out if isinstance(out, dict) else {"value": out}
+    except Exception:
+        pass
+    if isinstance(cfg, dict):
+        return dict(cfg)
+    return {"value": str(cfg)}
+
+
+def write_run_context(
+    *,
+    run_dir: Path,
+    experiment_cfg: Any,
+    eval_cfg: Any,
+    params: Any,
+    metrics_dir: Path,
+    checkpoint_dir: Path,
+):
+    if jax.process_index() != 0:
+        return
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    total_params = count_parameters(params)
+    top_level = count_parameters_by_top_level(params)
+    payload: Dict[str, Any] = {
+        "timestamp_utc": now_utc_iso(),
+        "run_dir": str(run_dir),
+        "metrics_dir": str(metrics_dir),
+        "checkpoint_dir": str(checkpoint_dir),
+        "parameter_count_total": total_params,
+        "parameter_count_millions": round(total_params / 1_000_000.0, 3),
+        "parameter_count_by_top_level": top_level,
+        "config": {
+            "experiment": _resolved_cfg_dict(experiment_cfg),
+            "eval": _resolved_cfg_dict(eval_cfg),
+        },
+    }
+
+    (run_dir / "run_context.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    lines = [
+        f"timestamp_utc: {payload['timestamp_utc']}",
+        f"run_dir: {payload['run_dir']}",
+        f"metrics_dir: {payload['metrics_dir']}",
+        f"checkpoint_dir: {payload['checkpoint_dir']}",
+        f"parameter_count_total: {total_params:,}",
+        f"parameter_count_millions: {payload['parameter_count_millions']}",
+    ]
+    if top_level:
+        lines.append("parameter_count_by_top_level:")
+        for name, count in sorted(top_level.items()):
+            lines.append(f"  - {name}: {count:,}")
+    (run_dir / "run_context.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    try:
+        from omegaconf import OmegaConf
+
+        cfg_yaml = OmegaConf.to_yaml(
+            OmegaConf.create(
+                {
+                    "experiment": _resolved_cfg_dict(experiment_cfg),
+                    "eval": _resolved_cfg_dict(eval_cfg),
+                }
+            ),
+            resolve=True,
+        )
+        (run_dir / "resolved_config.yaml").write_text(cfg_yaml, encoding="utf-8")
+    except Exception:
+        (run_dir / "resolved_config.json").write_text(
+            json.dumps(payload["config"], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
 
 @dataclass

@@ -22,7 +22,9 @@ from sticky.training.logging import (
 from sticky.training.persistence import (
     CheckpointWriter,
     MetricsWriter,
+    get_hydra_output_dir,
     resolve_run_path,
+    write_run_context,
 )
 from sticky.training.sampling import build_sampling_fns
 from sticky.training.state import init_state, make_lr_schedule, shard_batch
@@ -37,6 +39,8 @@ def main_train_loop(
 ):
     task = build_task(cfg)
     model = build_model(cfg, data_shape=task.spec.data_shape, vocab_size=task.spec.vocab_size)
+    eval_cfg = eval_cfg or {}
+    run_output_dir = get_hydra_output_dir()
 
     num_log_images = int(cfg.training.num_log_images)
     sample_timesteps = int(cfg.training.sample_timesteps)
@@ -47,7 +51,11 @@ def main_train_loop(
 
     metrics_every_steps = int(cfg.training.get("metrics_every_steps", 0))
     save_final_metrics = bool(cfg.training.get("save_final_metrics", True))
-    metrics_dir = resolve_run_path(cfg.training.get("metrics_dir", "metrics"), "metrics")
+    metrics_dir = resolve_run_path(
+        cfg.training.get("metrics_dir", "metrics"),
+        "metrics",
+        base_dir=run_output_dir,
+    )
     metrics_writer = None
     if (metrics_every_steps > 0) or save_final_metrics:
         metrics_writer = MetricsWriter(root_dir=metrics_dir, every_steps=metrics_every_steps)
@@ -55,7 +63,11 @@ def main_train_loop(
     checkpoint_every_steps = int(cfg.training.get("checkpoint_every_steps", 0))
     checkpoint_keep = int(cfg.training.get("checkpoint_keep", 5))
     save_final_checkpoint = bool(cfg.training.get("save_final_checkpoint", True))
-    checkpoint_dir = resolve_run_path(cfg.training.get("checkpoint_dir", "checkpoints"), "checkpoints")
+    checkpoint_dir = resolve_run_path(
+        cfg.training.get("checkpoint_dir", "checkpoints"),
+        "checkpoints",
+        base_dir=run_output_dir,
+    )
     checkpoint_writer = None
     if (checkpoint_every_steps > 0) or save_final_checkpoint:
         checkpoint_writer = CheckpointWriter(
@@ -69,6 +81,14 @@ def main_train_loop(
 
     rng = jax.random.PRNGKey(int(cfg.training.seed))
     state, tx = init_state(cfg, model, rng)
+    write_run_context(
+        run_dir=run_output_dir,
+        experiment_cfg=cfg,
+        eval_cfg=eval_cfg,
+        params=state.params,
+        metrics_dir=metrics_dir,
+        checkpoint_dir=checkpoint_dir,
+    )
     lr_schedule = make_lr_schedule(cfg)
 
     train_iter, _ = task.make_dataloaders(seed=int(cfg.training.seed))
@@ -82,7 +102,6 @@ def main_train_loop(
 
     ema_rate = float(cfg.training.ema_rate)
 
-    eval_cfg = eval_cfg or {}
     eval_enabled = bool(eval_cfg.get("enabled", False))
 
     fid_every = int(eval_cfg.get("fid_every", eval_every_steps)) if eval_enabled else 0
