@@ -7,6 +7,13 @@ from omegaconf import DictConfig
 
 def build_task(cfg: DictConfig):
     name = cfg.task.name
+    aug_cfg = cfg.dataset.get("augment", {})
+    aug_enabled = bool(aug_cfg.get("enabled", True))
+    aug_prob = float(aug_cfg.get("prob", 0.15))
+    aug_rotate = bool(aug_cfg.get("rotate", True))
+    aug_hflip = bool(aug_cfg.get("hflip", True))
+    aug_eval = bool(aug_cfg.get("eval", False))
+
     if name == "md4_cifar10":
         from sticky.tasks.cifar10_md4 import CIFAR10MD4Task
 
@@ -16,6 +23,11 @@ def build_task(cfg: DictConfig):
             eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
             vocab_size=int(cfg.dataset.get("vocab_size", 256)),
             num_classes=int(cfg.dataset.get("num_classes", -1)),
+            augment_enabled=aug_enabled,
+            augment_prob=aug_prob,
+            augment_rotate=aug_rotate,
+            augment_hflip=aug_hflip,
+            augment_eval=aug_eval,
         )
 
     if name == "sjd_cifar10":
@@ -42,6 +54,11 @@ def build_task(cfg: DictConfig):
             data_shape=tuple(cfg.dataset.data_shape),
             vocab_size=int(cfg.dataset.get("vocab_size", 256)),
             num_classes=int(cfg.dataset.get("num_classes", -1)),
+            augment_enabled=aug_enabled,
+            augment_prob=aug_prob,
+            augment_rotate=aug_rotate,
+            augment_hflip=aug_hflip,
+            augment_eval=aug_eval,
             beta=beta,
             hazard=hazard,
             jump=jump,

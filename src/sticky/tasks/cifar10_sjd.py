@@ -34,6 +34,11 @@ class CIFAR10SJDTask(Task):
     data_shape: Tuple[int, ...]
     vocab_size: int
     num_classes: int
+    augment_enabled: bool = True
+    augment_prob: float = 0.15
+    augment_rotate: bool = True
+    augment_hflip: bool = True
+    augment_eval: bool = False
 
     # VP forward schedule
     beta: Callable[[Array], Array]
@@ -64,6 +69,10 @@ class CIFAR10SJDTask(Task):
             shuffle=True,
             seed=seed,
             repeat=True,
+            augment=self.augment_enabled,
+            augment_prob=self.augment_prob,
+            augment_rotate=self.augment_rotate,
+            augment_hflip=self.augment_hflip,
         )
         eval_it = make_cifar10_iterator(
             data_dir=self.data_dir,
@@ -72,6 +81,10 @@ class CIFAR10SJDTask(Task):
             shuffle=False,
             seed=seed,
             repeat=False,
+            augment=self.augment_eval,
+            augment_prob=self.augment_prob,
+            augment_rotate=self.augment_rotate,
+            augment_hflip=self.augment_hflip,
         )
         return train_it, eval_it
 

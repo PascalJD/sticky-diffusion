@@ -13,3 +13,12 @@ per_device_batch_size: -1
 data_shape: [32, 32, 3]
 vocab_size: 256
 num_classes: -1  # unconditional by default (set to 10 for class-conditional)
+
+# Pixel-preserving augmentation (CADD/EDM style): random 90-degree rotations
+# and horizontal flips, applied per training example with probability 15%.
+augment:
+  enabled: true
+  prob: 0.15
+  rotate: true
+  hflip: true
+  eval: false

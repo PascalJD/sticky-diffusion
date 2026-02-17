@@ -19,6 +19,11 @@ class CIFAR10MD4Task(Task):
     vocab_size: int = 256
     num_classes: int = -1  # -1 => unconditional
     drop_remainder: bool = True
+    augment_enabled: bool = True
+    augment_prob: float = 0.15
+    augment_rotate: bool = True
+    augment_hflip: bool = True
+    augment_eval: bool = False
 
     def __post_init__(self):
         self.spec = TaskSpec(
@@ -40,6 +45,10 @@ class CIFAR10MD4Task(Task):
             shuffle=True,
             repeat=True,
             drop_remainder=self.drop_remainder,
+            augment=self.augment_enabled,
+            augment_prob=self.augment_prob,
+            augment_rotate=self.augment_rotate,
+            augment_hflip=self.augment_hflip,
         )
         eval_iter = make_cifar10_iterator(
             split="test",
@@ -49,6 +58,10 @@ class CIFAR10MD4Task(Task):
             shuffle=False,
             repeat=False,
             drop_remainder=False,
+            augment=self.augment_eval,
+            augment_prob=self.augment_prob,
+            augment_rotate=self.augment_rotate,
+            augment_hflip=self.augment_hflip,
         )
         return train_iter, eval_iter
 
