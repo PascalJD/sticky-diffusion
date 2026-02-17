@@ -55,6 +55,13 @@ def build_model(
             ch_mult=tuple(cfg.model.ch_mult),
             num_heads=int(cfg.model.num_heads),
             dropout_rate=float(cfg.model.dropout_rate),
+            use_attn_dropout=bool(cfg.model.get("use_attn_dropout", True)),
+            mlp_type=str(cfg.model.get("mlp_type", "swiglu")),
+            depth_scaled_init=bool(cfg.model.get("depth_scaled_init", False)),
+            cond_type=str(cfg.model.get("cond_type", "adaln")),
+            model_sharding=bool(cfg.model.get("model_sharding", False)),
+            sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+            image_backbone=str(cfg.model.get("image_backbone", "auto")),
         )
 
     raise ValueError(f"Unknown model.name={name}")

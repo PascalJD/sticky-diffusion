@@ -29,6 +29,8 @@ class SJD(nn.Module):
     depth_scaled_init: bool = False
     cond_type: str = "adaln"
     model_sharding: bool = False
+    sequence_backbone: str = "auto"
+    image_backbone: str = "auto"
 
     vocab_size: int = 256
 
@@ -54,6 +56,8 @@ class SJD(nn.Module):
             depth_scaled_init=self.depth_scaled_init,
             cond_type=self.cond_type,
             model_sharding=self.model_sharding,
+            sequence_backbone=self.sequence_backbone,
+            image_backbone=self.image_backbone,
         )
 
     def embed(self, token_ids: Array) -> Array:

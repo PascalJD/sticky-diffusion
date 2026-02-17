@@ -24,5 +24,11 @@ cond_type: adaln
 outside_embed: false
 time_features: t
 
+# Backbone selection (Hydra-overridable).
+# sequence_backbone: auto | transformer | sharded_transformer
+# image_backbone: auto | unet5d
+sequence_backbone: auto
+image_backbone: auto
+
 # Parallelization.
 model_sharding: false

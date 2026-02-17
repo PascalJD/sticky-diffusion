@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import flax.linen as nn
-import jax
 import jax.numpy as jnp
 
-from sticky.models.md4.backward import CondEmbedding, UNet5DWrapper
-from sticky.models.md4.networks import sharded_transformer, transformer
+from sticky.models.architectures import (
+    CondEmbedding,
+    build_image_backbone,
+    build_sequence_backbone,
+)
 
 
 class ContinuousClassifier(nn.Module):
@@ -30,6 +32,8 @@ class ContinuousClassifier(nn.Module):
     depth_scaled_init: bool = False
     cond_type: str = "adaln"
     model_sharding: bool = False
+    sequence_backbone: str = "auto"
+    image_backbone: str = "auto"
 
     # continuous-input specific
     project_input: bool = True
@@ -58,42 +62,19 @@ class ContinuousClassifier(nn.Module):
 
         # Sequence mode: (B, S, d_anchor)
         if z.ndim == 3:
-            # Use the same Transformer stack as MD4, but with embed_input=False
-            # since z is already continuous.
-            if self.model_sharding:
-                args = sharded_transformer.ModelArgs(
-                    dim=self.feature_dim * self.num_heads,
-                    n_layers=self.n_layers,
-                    n_heads=self.num_heads,
-                    n_kv_heads=self.num_heads,
-                    output_channels=self.vocab_size,
-                    multiple_of=32,
-                    dropout_rate=self.dropout_rate,
-                    depth_scaled_init=self.depth_scaled_init,
-                    mlp_type=self.mlp_type,
-                    cond_type=self.cond_type,
-                    embed_input=False,
-                    n_embed_classes=1,  # unused when embed_input=False
-                    use_attn_dropout=self.use_attn_dropout,
-                )
-                net = sharded_transformer.Transformer(args)
-            else:
-                args = transformer.ModelArgs(
-                    dim=self.feature_dim * self.num_heads,
-                    n_layers=self.n_layers,
-                    n_heads=self.num_heads,
-                    n_kv_heads=self.num_heads,
-                    output_channels=self.vocab_size,
-                    multiple_of=32,
-                    dropout_rate=self.dropout_rate,
-                    depth_scaled_init=self.depth_scaled_init,
-                    mlp_type=self.mlp_type,
-                    cond_type=self.cond_type,
-                    embed_input=False,
-                    n_embed_classes=1,
-                )
-                net = transformer.Transformer(args)
-
+            net = build_sequence_backbone(
+                name=self.sequence_backbone,
+                feature_dim=self.feature_dim,
+                num_heads=self.num_heads,
+                n_layers=self.n_layers,
+                vocab_size=self.vocab_size,
+                dropout_rate=self.dropout_rate,
+                use_attn_dropout=self.use_attn_dropout,
+                mlp_type=self.mlp_type,
+                depth_scaled_init=self.depth_scaled_init,
+                cond_type=self.cond_type,
+                model_sharding=self.model_sharding,
+            )
             logits = net(z, cond=cond, train=train)
             return logits, {}
 
@@ -110,14 +91,15 @@ class ContinuousClassifier(nn.Module):
                 # Match MD4 behavior: token_id -> feature_dim embedding.
                 z = nn.Dense(self.feature_dim, name="input_proj")(z)
 
-            net = UNet5DWrapper(
+            net = build_image_backbone(
+                name=self.image_backbone,
                 feature_dim=self.feature_dim,
                 n_layers=self.n_layers,
                 n_dit_layers=self.n_dit_layers,
                 dit_num_heads=self.dit_num_heads,
                 dit_hidden_size=self.dit_hidden_size,
                 ch_mult=self.ch_mult,
-                output_channels=self.vocab_size,
+                vocab_size=self.vocab_size,
                 dropout_rate=self.dropout_rate,
             )
             logits = net(z, cond=cond, train=train)  # (B,H,W,C,L)
