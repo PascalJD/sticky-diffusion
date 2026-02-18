@@ -151,7 +151,7 @@ def make_cifar10_iterator(
     """Returns an iterator over CIFAR-10 batches with integer tokens.
 
     Each batch is a dict:
-      - `image`: int32 array [B, 32, 32, 3] in [0, 255]
+      - `image`: uint8 array [B, 32, 32, 3] in [0, 255]
       - `label`: int32 array [B]
 
     Optional train-time augmentation is pixel-preserving: random 90-degree
@@ -191,13 +191,14 @@ def make_cifar10_iterator(
 
     def _prep(ex):
         return {
-            "image": tf.cast(ex["image"], tf.int32),
+            # Keep uint8 in the input pipeline to reduce host memory pressure.
+            "image": tf.cast(ex["image"], tf.uint8),
             "label": tf.cast(ex["label"], tf.int32),
         }
 
     if do_augment:
         def _prep_aug(idx, ex):
-            image = tf.cast(ex["image"], tf.int32)
+            image = tf.cast(ex["image"], tf.uint8)
             image = _maybe_augment_discrete_image(
                 image=image,
                 tf=tf,

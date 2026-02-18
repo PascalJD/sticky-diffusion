@@ -74,7 +74,7 @@ class CIFAR10MD4Task(Task):
         batch: Batch,
         train: bool,
     ) -> Tuple[jnp.ndarray, Metrics]:
-        x = batch["image"]  # int32 [B,32,32,3] in [0..255]
+        x = batch["image"].astype(jnp.int32)  # [B,32,32,3] in [0..255]
         if self.num_classes > 0:
             cond = batch["label"].astype(jnp.int32)
         else:

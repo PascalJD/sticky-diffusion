@@ -10,6 +10,7 @@ ema_rate: 0.9999
 
 # Logging/eval/checkpoint cadence.
 log_every_steps: 100
+timing_warn_seconds: 30
 eval_every_steps: 50000
 checkpoint_every_steps: 10000
 log_images_every_steps: 5000

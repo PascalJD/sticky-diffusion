@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import jax
@@ -48,6 +49,7 @@ def main_train_loop(
     log_images_every_steps = int(cfg.training.log_images_every_steps)
     log_every_steps = int(cfg.training.log_every_steps)
     eval_every_steps = int(cfg.training.get("eval_every_steps", 0))
+    timing_warn_seconds = float(cfg.training.get("timing_warn_seconds", 30.0))
 
     metrics_every_steps = int(cfg.training.get("metrics_every_steps", 0))
     save_final_metrics = bool(cfg.training.get("save_final_metrics", True))
@@ -156,17 +158,24 @@ def main_train_loop(
         state = replicate(state)
 
         for step in range(num_train_steps):
-            if step in (4400, 4550, 4650):
-                jax.profiler.save_device_memory_profile(f"/tmp/mem_{step}.prof")
-
+            t_fetch0 = time.perf_counter()
             batch = next(train_iter)
+            t_fetch = time.perf_counter() - t_fetch0
             gt_images = batch["image"][:num_log_images]
             batch = shard_batch(batch)
 
+            t_step0 = time.perf_counter()
             state, metrics = p_train_step(state, batch)
             _ = jax.block_until_ready(metrics["train/loss"])
+            t_step = time.perf_counter() - t_step0
 
             step_i = step + 1
+            if (t_fetch > timing_warn_seconds) or (t_step > timing_warn_seconds):
+                print(
+                    f"[step {step_i}] timing warning: "
+                    f"data_fetch={t_fetch:.2f}s train_step={t_step:.2f}s",
+                    flush=True,
+                )
             need_train_host_metrics = (
                 (step_i % log_every_steps == 0)
                 or (
@@ -185,7 +194,10 @@ def main_train_loop(
                 last_train_metrics = dict(train_log)
 
             if step_i % log_every_steps == 0 and train_log is not None:
-                print(f"[step {step_i}] loss={float(train_log['train/loss']):.4f}")
+                print(
+                    f"[step {step_i}] loss={float(train_log['train/loss']):.4f}",
+                    flush=True,
+                )
                 if wandb_mod is not None:
                     wandb_mod.log(train_log, step=step_i)
 
@@ -256,11 +268,22 @@ def main_train_loop(
         train_step_jit = jax.jit(lambda st, b: train_step_fn(st, b, axis_name=None))
 
         for step in range(num_train_steps):
+            t_fetch0 = time.perf_counter()
             batch = next(train_iter)
+            t_fetch = time.perf_counter() - t_fetch0
             gt_images = batch["image"][:num_log_images]
+            t_step0 = time.perf_counter()
             state, metrics = train_step_jit(state, batch)
+            _ = jax.block_until_ready(metrics["train/loss"])
+            t_step = time.perf_counter() - t_step0
 
             step_i = step + 1
+            if (t_fetch > timing_warn_seconds) or (t_step > timing_warn_seconds):
+                print(
+                    f"[step {step_i}] timing warning: "
+                    f"data_fetch={t_fetch:.2f}s train_step={t_step:.2f}s",
+                    flush=True,
+                )
             train_log = sanitize_metrics(metrics)
             train_log["lr"] = float(
                 to_py_scalar(lr_schedule(step)) or lr_schedule(step)
@@ -269,7 +292,10 @@ def main_train_loop(
             last_train_metrics = dict(train_log)
 
             if step_i % log_every_steps == 0:
-                print(f"[step {step_i}] loss={float(train_log['train/loss']):.4f}")
+                print(
+                    f"[step {step_i}] loss={float(train_log['train/loss']):.4f}",
+                    flush=True,
+                )
                 if wandb_mod is not None:
                     wandb_mod.log(train_log, step=step_i)
 
