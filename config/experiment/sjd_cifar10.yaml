@@ -1,0 +1,20 @@
+# SJD experiment bundle for CIFAR-10.
+
+defaults:
+  # Core components.
+  - /dataset: cifar10_discrete_sjd
+  - /model: sjd_cifar10_adm
+  - /optim: adamw_sjd_cifar10
+  - /training: sjd_cifar10
+  - /runtime: default
+
+  # SJD-specific sampling and forward-process pieces.
+  - /sampler: sjd_cifar10
+  - /forward/beta: vp_linear
+  - /forward/hazard: early_kappa2
+  - /forward/jump: vp_matched
+
+  - _self_
+
+task:
+  name: sjd_cifar10

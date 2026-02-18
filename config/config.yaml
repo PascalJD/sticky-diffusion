@@ -1,7 +1,7 @@
 # Root Hydra config used by the training entrypoint.
 defaults:
-  - experiment: sjd_cifar10_cadd
-  - eval: sjd_cifar10_cadd
+  - experiment: sjd_cifar10
+  - eval: sjd_cifar10
   - hydra: default
   - wandb: default
   - _self_

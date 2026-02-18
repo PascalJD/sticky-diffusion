@@ -1,5 +1,5 @@
-# CADD-style CIFAR-10 training schedule for SJD.
-name: sjd_cifar10_cadd
+# CIFAR-10 training schedule for SJD.
+name: sjd_cifar10
 
 # Randomness.
 seed: 0

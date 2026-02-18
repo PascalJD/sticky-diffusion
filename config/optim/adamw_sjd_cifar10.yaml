@@ -1,0 +1,7 @@
+# AdamW profile for SJD CIFAR-10.
+defaults:
+  - adamw_cadd
+  - _self_
+
+name: adamw
+learning_rate: 1.0e-4

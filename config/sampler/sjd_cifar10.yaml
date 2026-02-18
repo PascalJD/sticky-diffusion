@@ -1,0 +1,10 @@
+# Sampler profile for SJD CIFAR-10.
+defaults:
+  - cadd_cifar10
+  - _self_
+
+# Sample anchor allocation stochastically.
+alloc_mode: sample
+
+# Neutral logits temperature.
+logit_temperature: 1.0

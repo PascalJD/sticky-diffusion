@@ -1,0 +1,19 @@
+# SJD model profile for CIFAR-10 with ADM-style image backbone.
+defaults:
+  - sjd_cifar10
+  - _self_
+
+image_backbone: adm_unet5d
+learnable_anchors: true
+
+# ADM UNet settings used in the CIFAR SJD experiment.
+ch_mult: [1, 2, 2, 2]
+adm_num_res_blocks: 2
+adm_attention_resolutions: [2, 4]
+adm_num_heads: 4
+adm_num_head_channels: -1
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false

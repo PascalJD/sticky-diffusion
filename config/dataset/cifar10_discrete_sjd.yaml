@@ -1,0 +1,8 @@
+# SJD CIFAR-10 dataset profile.
+defaults:
+  - cifar10_discrete
+  - _self_
+
+# Use a larger global batch for multi-GPU runs.
+batch_size: 512
+eval_batch_size: 512

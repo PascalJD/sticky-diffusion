@@ -1,4 +1,4 @@
-# CADD-style CIFAR-10 evaluation setup.
+# CIFAR-10 evaluation setup.
 
 # Global toggles.
 enabled: true
