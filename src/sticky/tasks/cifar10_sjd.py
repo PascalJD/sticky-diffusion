@@ -99,6 +99,8 @@ class CIFAR10SJDTask(Task):
         batch: Dict[str, Array],
         train: bool,
     ):
+        key_loss, key_dropout = jax.random.split(rng)
+
         # Discrete indices (tokens).
         x0_idx = batch["image"].astype(jnp.int32)
 
@@ -112,10 +114,18 @@ class CIFAR10SJDTask(Task):
                 anchor_table = model.apply({"params": params}, method=model.anchor_table)
 
         def apply_fn(p, xt, t_img):
-            return model.apply({"params": p}, xt, t_img, train=train)
+            if train:
+                return model.apply(
+                    {"params": p},
+                    xt,
+                    t_img,
+                    train=True,
+                    rngs={"dropout": key_dropout},
+                )
+            return model.apply({"params": p}, xt, t_img, train=False)
 
         loss, metrics = ce_allocation_loss(
-            key=rng,
+            key=key_loss,
             params=params,
             apply_fn=apply_fn,
             x0_anchor=x0_anchor,

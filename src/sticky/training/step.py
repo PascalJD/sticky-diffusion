@@ -22,6 +22,8 @@ def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rat
 
     def train_step_fn(state: TrainState, batch: Dict[str, Array], axis_name: str | None):
         rng, step_rng = jax.random.split(state.rng)
+        if axis_name is not None:
+            step_rng = jax.random.fold_in(step_rng, jax.lax.axis_index(axis_name))
         (loss, metrics), grads = jax.value_and_grad(loss_and_metrics, has_aux=True)(
             state.params, step_rng, batch, True
         )
