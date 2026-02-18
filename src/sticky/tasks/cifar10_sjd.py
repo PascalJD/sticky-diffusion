@@ -34,11 +34,6 @@ class CIFAR10SJDTask(Task):
     data_shape: Tuple[int, ...]
     vocab_size: int
     num_classes: int
-    augment_enabled: bool = True
-    augment_prob: float = 0.15
-    augment_rotate: bool = True
-    augment_hflip: bool = True
-    augment_eval: bool = False
 
     # VP forward schedule
     beta: Callable[[Array], Array]
@@ -47,6 +42,13 @@ class CIFAR10SJDTask(Task):
     T: float = 1.0
     log_state_dependency: bool = True
     state_dep_log_ratio_clip: float = 10.0
+
+    # data augmentation
+    augment_enabled: bool = True
+    augment_prob: float = 0.15
+    augment_rotate: bool = True
+    augment_hflip: bool = True
+    augment_eval: bool = False
 
     def __post_init__(self):
         self._spec = TaskSpec(
