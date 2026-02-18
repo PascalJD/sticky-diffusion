@@ -1,7 +1,7 @@
 # Weights & Biases logging defaults.
 
 # Global switch.
-enabled: false
+enabled: true
 
 # Run metadata.
 project: sticky-diffusion

@@ -1,6 +1,0 @@
-# Early-event hazard profile for SJD CIFAR-10.
-defaults:
-  - early
-  - _self_
-
-kappa: 2.0

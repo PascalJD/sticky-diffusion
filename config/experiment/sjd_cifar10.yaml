@@ -2,16 +2,16 @@
 
 defaults:
   # Core components.
-  - /dataset: cifar10_discrete_sjd
-  - /model: sjd_cifar10_adm
-  - /optim: adamw_sjd_cifar10
+  - /dataset: cifar10_discrete
+  - /model: sjd_cifar10
+  - /optim: adamw
   - /training: sjd_cifar10
   - /runtime: default
 
   # SJD-specific sampling and forward-process pieces.
   - /sampler: sjd_cifar10
   - /forward/beta: vp_linear
-  - /forward/hazard: early_kappa2
+  - /forward/hazard: early
   - /forward/jump: vp_matched
 
   - _self_

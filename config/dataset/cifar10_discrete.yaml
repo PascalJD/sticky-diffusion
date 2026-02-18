@@ -3,8 +3,8 @@ name: cifar10_discrete
 data_dir: data/cifar10
 
 # Global batch sizes (for single-device and pmap paths).
-batch_size: 128
-eval_batch_size: 128
+batch_size: 512
+eval_batch_size: 512
 
 # Optional per-device override used for parameter initialization.
 per_device_batch_size: -1

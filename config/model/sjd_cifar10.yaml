@@ -3,7 +3,7 @@ name: sjd
 
 # Anchor table.
 anchor_dim: 64
-learnable_anchors: false
+learnable_anchors: true
 anchors_init_std: 1.0
 
 # Classifier backbone.
@@ -13,10 +13,9 @@ n_layers: 32
 n_dit_layers: 0
 dit_num_heads: 12
 dit_hidden_size: 768
-ch_mult: [1]
 
 # Regularization / architectural options.
-dropout_rate: 0.0
+dropout_rate: 0.1
 use_attn_dropout: true
 mlp_type: swiglu
 depth_scaled_init: false
@@ -28,11 +27,12 @@ time_features: t
 # sequence_backbone: auto | transformer | sharded_transformer
 # image_backbone: auto | unet5d | adm_unet5d
 sequence_backbone: auto
-image_backbone: auto
+image_backbone: adm_unet5d
 
 # ADM-style image UNet knobs (used when image_backbone=adm_unet5d).
+ch_mult: [1, 2, 2, 2]
 adm_num_res_blocks: 2
-adm_attention_resolutions: [2, 4, 8]
+adm_attention_resolutions: [2, 4]
 adm_num_heads: 4
 adm_num_head_channels: -1
 adm_num_heads_upsample: -1
