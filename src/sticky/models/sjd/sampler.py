@@ -113,9 +113,12 @@ def reverse_sample(
     k_idx = -jnp.ones((batch_size,) + tuple(shape), dtype=jnp.int32)
 
     jump_count = jnp.asarray(0.0, jnp.float32)
+    lam_sum_active = jnp.asarray(0.0, jnp.float32)
+    p_jump_sum_active = jnp.asarray(0.0, jnp.float32)
+    active_count_total = jnp.asarray(0.0, jnp.float32)
 
     def step_fn(i: int, carry):
-        key, y, committed, k_idx, jump_count = carry
+        key, y, committed, k_idx, jump_count, lam_sum_active, p_jump_sum_active, active_count_total = carry
 
         # Forward-time parameter for this reverse-time slice: t = T - i·dt.
         t_scalar = jnp.asarray(cfg.T - dt * i, dtype=jnp.float32)
@@ -170,9 +173,13 @@ def reverse_sample(
         )
 
         # No jumps once committed.
+        active = (~committed).astype(jnp.float32)
         lam_total = jnp.where(committed, 0.0, lam_total)
 
         p_jump = 1.0 - jnp.exp(-lam_total * dt)
+        lam_sum_active = lam_sum_active + jnp.sum(lam_total * active)
+        p_jump_sum_active = p_jump_sum_active + jnp.sum(p_jump * active)
+        active_count_total = active_count_total + jnp.sum(active)
 
         u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
         jump_mask = (~committed) & (u < p_jump)
@@ -184,15 +191,45 @@ def reverse_sample(
         committed = committed | jump_mask
 
         jump_count = jump_count + jnp.sum(jump_mask.astype(jnp.float32))
-        return (key, y, committed, k_idx, jump_count)
+        return (
+            key,
+            y,
+            committed,
+            k_idx,
+            jump_count,
+            lam_sum_active,
+            p_jump_sum_active,
+            active_count_total,
+        )
 
-    carry = (k_loop, y, committed, k_idx, jump_count)
+    carry = (
+        k_loop,
+        y,
+        committed,
+        k_idx,
+        jump_count,
+        lam_sum_active,
+        p_jump_sum_active,
+        active_count_total,
+    )
     carry = jax.lax.fori_loop(0, int(cfg.n_steps), step_fn, carry)
-    key, y, committed, k_idx, jump_count = carry
+    (
+        key,
+        y,
+        committed,
+        k_idx,
+        jump_count,
+        lam_sum_active,
+        p_jump_sum_active,
+        active_count_total,
+    ) = carry
 
     # Fraction of sites that jumped at least once.
     n_sites = jnp.asarray(committed.size, dtype=jnp.float32)
     jump_frac = jump_count / jnp.maximum(n_sites, 1.0)
+    denom_active = jnp.maximum(active_count_total, 1.0)
+    lam_mean_active = lam_sum_active / denom_active
+    p_jump_mean_active = p_jump_sum_active / denom_active
 
     # Always compute a filled k for convenience/visualization.
     t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
@@ -218,8 +255,11 @@ def reverse_sample(
     metrics = {
         "sampling/frac_committed_pre_force": frac_committed_pre_force,
         "sampling/frac_committed_final": jnp.mean(committed.astype(jnp.float32)),
+        "sampling/fill_frac_by_final_classify": 1.0 - frac_committed_pre_force,
         "sampling/jump_count": jump_count,
         "sampling/jump_frac_total": jump_frac,
+        "sampling/lam_mean_active": lam_mean_active,
+        "sampling/p_jump_mean_active": p_jump_mean_active,
         "sampling/logit_temperature": logit_temperature,
     }
 
