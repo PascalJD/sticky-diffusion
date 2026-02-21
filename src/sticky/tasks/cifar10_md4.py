@@ -74,17 +74,23 @@ class CIFAR10MD4Task(Task):
         batch: Batch,
         train: bool,
     ) -> Tuple[jnp.ndarray, Metrics]:
+        key_sample, key_dropout = jax.random.split(rng)
         x = batch["image"].astype(jnp.int32)  # [B,32,32,3] in [0..255]
         if self.num_classes > 0:
             cond = batch["label"].astype(jnp.int32)
         else:
             cond = None
+
+        rngs = {"sample": key_sample}
+        if train:
+            rngs["dropout"] = key_dropout
+
         stats = model.apply(
             {"params": params},
             x,
             cond=cond,
             train=train,
-            rngs={"sample": rng},
+            rngs=rngs,
         )
         return stats["loss"], stats
 
