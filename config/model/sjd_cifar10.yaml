@@ -3,7 +3,7 @@ name: sjd
 
 # Anchor table.
 anchor_dim: 64
-learnable_anchors: true
+learnable_anchors: false
 anchors_init_std: 1.0
 
 # Classifier backbone.
@@ -27,7 +27,7 @@ time_features: t
 # sequence_backbone: auto | transformer | sharded_transformer
 # image_backbone: auto | unet5d | adm_unet5d
 sequence_backbone: auto
-image_backbone: adm_unet5d
+image_backbone: unet5d
 
 # ADM-style image UNet knobs (used when image_backbone=adm_unet5d).
 ch_mult: [1, 2, 2, 2]

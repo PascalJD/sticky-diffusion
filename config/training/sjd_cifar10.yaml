@@ -5,11 +5,11 @@ name: sjd_cifar10
 seed: 0
 
 # Optimization length and EMA.
-num_train_steps: 1000000
+num_train_steps: 2000000
 ema_rate: 0.9999
 
 # Logging/eval/checkpoint cadence.
-log_every_steps: 100
+log_every_steps: 500
 timing_warn_seconds: 15
 eval_every_steps: 50000
 checkpoint_every_steps: 10000
