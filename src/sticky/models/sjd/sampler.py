@@ -45,6 +45,7 @@ class SamplerConfig:
     logit_temperature: float = 1.0
     alloc_mode: str = "argmax"  # "argmax" | "sample"
     hazard_mode: str = "plugin"
+    intensity_mode: str = "chunked"  # "chunked" | "full"
     log_ratio_clip: float = 10.0
     intensity_chunk_size: int = 256
     init_std: float = 1.0
@@ -168,6 +169,7 @@ def reverse_sample(
             hazard=hazard,
             jump=jump,
             alloc_mode=cfg.alloc_mode,
+            intensity_mode=cfg.intensity_mode,
             log_ratio_clip=float(cfg.log_ratio_clip),
             chunk_size=int(cfg.intensity_chunk_size),
         )

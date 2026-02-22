@@ -23,7 +23,7 @@ def _flatten_sites(x: Array) -> Tuple[Array, tuple[int, ...], int]:
     return flat, site_shape, sites_per_example
 
 
-def plugin_intensity_and_choice(
+def _full_intensity_and_choice(
     *,
     key: jax.random.PRNGKey,
     logits: Array,
@@ -34,15 +34,88 @@ def plugin_intensity_and_choice(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     alloc_mode: str,
-    log_ratio_clip: float = 10.0,
-    chunk_size: int = 256,
-    eps: float = 1e-20,
+    log_ratio_clip: float,
+    eps: float,
 ) -> Tuple[Array, Array]:
-    """Compute total intensity and chosen anchor index without full [B,...,L] Lam.
+    """Dense plugin implementation that materializes [B, S, L]-scale tensors."""
+    logits = logits.astype(jnp.float32)
+    y = y.astype(jnp.float32)
 
-    This avoids materializing large per-anchor tensors and processes anchors in
-    chunks, which is critical when vocab/anchor count grows.
-    """
+    probs = jax.nn.softmax(logits, axis=-1).astype(jnp.float32)
+    B = probs.shape[0]
+    site_shape = probs.shape[1:-1]
+    L = int(probs.shape[-1])
+
+    y_flat = y.reshape((B, -1, y.shape[-1]))
+    probs_flat = probs.reshape((B, -1, L))
+
+    a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    if int(a.shape[0]) != L:
+        raise ValueError(
+            f"Anchor table has {a.shape[0]} rows, but logits last dim is {L}."
+        )
+    d = int(a.shape[-1])
+
+    dot = jnp.einsum("bnd,ld->bnl", y_flat, a)
+    y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
+    a_norm2 = jnp.sum(a * a, axis=-1)[None, None, :]
+
+    alpha, sigma = alpha_sigma(beta, t_img)
+    alpha = alpha.astype(jnp.float32)[:, None, None]
+    sigma2 = jnp.square(sigma).astype(jnp.float32)[:, None, None]
+
+    eta = float(jump.eta)
+    std_floor = float(jump.std_floor)
+    var_q = jnp.maximum(sigma2, 1e-12)
+    var_r = jnp.maximum(
+        (eta * eta) * sigma2,
+        (std_floor * std_floor) + 1e-12,
+    )
+
+    dist2 = y_norm2 - 2.0 * alpha * dot + (alpha * alpha) * a_norm2
+    inv_r = 1.0 / var_r
+    inv_q = 1.0 / var_q
+    log_ratio = -0.5 * (d * jnp.log(var_r / var_q) + dist2 * (inv_r - inv_q))
+    log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
+    ratio = jnp.exp(log_ratio).astype(jnp.float32)
+
+    lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
+    lam = lam_base * probs_flat * ratio
+    lam = jnp.maximum(lam, jnp.asarray(eps, dtype=jnp.float32))
+    lam_total_flat = jnp.maximum(jnp.sum(lam, axis=-1), jnp.asarray(eps, dtype=jnp.float32))
+
+    if alloc_mode == "argmax":
+        a_idx_flat = jnp.argmax(lam, axis=-1).astype(jnp.int32)
+    elif alloc_mode == "sample":
+        a_idx_flat = jax.random.categorical(
+            key,
+            jnp.log(lam),
+            axis=-1,
+        ).astype(jnp.int32)
+    else:
+        raise ValueError(f"Unknown alloc_mode={alloc_mode!r}")
+
+    lam_total = lam_total_flat.reshape((B,) + site_shape)
+    a_idx = a_idx_flat.reshape((B,) + site_shape)
+    return lam_total, a_idx
+
+
+def _chunked_intensity_and_choice(
+    *,
+    key: jax.random.PRNGKey,
+    logits: Array,
+    y: Array,
+    t_img: Array,
+    anchors: Any,
+    beta: Any,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    alloc_mode: str,
+    log_ratio_clip: float,
+    chunk_size: int,
+    eps: float,
+) -> Tuple[Array, Array]:
+    """Chunked plugin implementation with O(B*S*chunk_size) memory."""
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
 
@@ -181,3 +254,61 @@ def plugin_intensity_and_choice(
     lam_total = lam_total_flat.reshape((B,) + site_shape)
     a_idx = a_idx_flat.reshape((B,) + site_shape).astype(jnp.int32)
     return lam_total, a_idx
+
+
+def plugin_intensity_and_choice(
+    *,
+    key: jax.random.PRNGKey,
+    logits: Array,
+    y: Array,
+    t_img: Array,
+    anchors: Any,
+    beta: Any,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    alloc_mode: str,
+    intensity_mode: str = "chunked",
+    log_ratio_clip: float = 10.0,
+    chunk_size: int = 256,
+    eps: float = 1e-20,
+) -> Tuple[Array, Array]:
+    """Compute total plugin intensity and selected anchor index.
+
+    `intensity_mode` controls the implementation:
+      - `chunked` (default): low-memory streaming over anchor chunks.
+      - `full`: dense pre-refactor implementation over all anchors at once.
+    """
+    mode = str(intensity_mode).lower()
+    if mode == "full":
+        return _full_intensity_and_choice(
+            key=key,
+            logits=logits,
+            y=y,
+            t_img=t_img,
+            anchors=anchors,
+            beta=beta,
+            hazard=hazard,
+            jump=jump,
+            alloc_mode=alloc_mode,
+            log_ratio_clip=log_ratio_clip,
+            eps=eps,
+        )
+    if mode == "chunked":
+        return _chunked_intensity_and_choice(
+            key=key,
+            logits=logits,
+            y=y,
+            t_img=t_img,
+            anchors=anchors,
+            beta=beta,
+            hazard=hazard,
+            jump=jump,
+            alloc_mode=alloc_mode,
+            log_ratio_clip=log_ratio_clip,
+            chunk_size=chunk_size,
+            eps=eps,
+        )
+    raise ValueError(
+        f"Unknown intensity_mode={intensity_mode!r}. "
+        "Expected one of: chunked, full."
+    )

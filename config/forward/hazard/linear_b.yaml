@@ -1,0 +1,4 @@
+# Linear cumulative-in-B(t) hazard schedule.
+_target_: sticky.models.sjd.hazard.make_hazard_linear_B
+
+kappa: 3.0

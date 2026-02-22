@@ -1,0 +1,4 @@
+# Linear cumulative-in-time hazard schedule.
+_target_: sticky.models.sjd.hazard.make_hazard_linear_time
+
+kappa: 3.0
