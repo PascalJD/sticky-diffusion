@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import flax.linen as nn
 
-from .adm_unet import ADMUNet2D
+from .networks.adm_unet import ADMUNet2D
 from .networks import unet, uvit
 
 

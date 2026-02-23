@@ -5,8 +5,8 @@ from collections.abc import Sequence
 import flax.linen as nn
 import jax.numpy as jnp
 
-from .conditioning import CondEmbedding
 from .factory import build_image_backbone, build_sequence_backbone
+from .networks.conditioning import CondEmbedding
 
 
 class DiscreteClassifier(nn.Module):
