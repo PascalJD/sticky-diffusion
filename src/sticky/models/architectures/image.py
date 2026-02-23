@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import flax.linen as nn
 
 from .adm_unet import ADMUNet2D
-from sticky.models.md4.networks import unet, uvit
+from .networks import unet, uvit
 
 
 class UNet5DBackbone(nn.Module):

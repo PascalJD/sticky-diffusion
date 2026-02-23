@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import flax.linen as nn
 
-from sticky.models.md4.networks import sharded_transformer, transformer
+from .networks import sharded_transformer, transformer
 
 
 class TransformerBackbone(nn.Module):

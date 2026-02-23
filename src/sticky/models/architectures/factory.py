@@ -21,6 +21,8 @@ def build_sequence_backbone(
     depth_scaled_init: bool,
     cond_type: str,
     model_sharding: bool,
+    embed_input: bool = False,
+    n_embed_classes: int = 1,
 ) -> nn.Module:
     """Create sequence backbone from a Hydra-selected name."""
     key = str(name).lower()
@@ -38,8 +40,8 @@ def build_sequence_backbone(
             mlp_type=str(mlp_type),
             depth_scaled_init=bool(depth_scaled_init),
             cond_type=str(cond_type),
-            embed_input=False,
-            n_embed_classes=1,
+            embed_input=bool(embed_input),
+            n_embed_classes=int(n_embed_classes),
             sharded=False,
         )
 
@@ -54,8 +56,8 @@ def build_sequence_backbone(
             mlp_type=str(mlp_type),
             depth_scaled_init=bool(depth_scaled_init),
             cond_type=str(cond_type),
-            embed_input=False,
-            n_embed_classes=1,
+            embed_input=bool(embed_input),
+            n_embed_classes=int(n_embed_classes),
             sharded=True,
         )
 
