@@ -160,6 +160,49 @@ def make_hazard_linear_time(beta, kappa: float = 3.0) -> HazardSchedule:
     return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
 
 
+def make_hazard_poly_alpha(
+    beta,
+    p: float = 1.0,
+    eps: float = 1e-5,
+) -> HazardSchedule:
+    """Polynomial survival schedule S(t)=(1-t/T)^p on [0, T], with tail clamp.
+
+    The clamp avoids the singularity at t=T by enforcing 1-t/T >= eps.
+    """
+    T = float(beta.T)
+    p_f = float(p)
+    eps_f = float(eps)
+    if p_f <= 0.0:
+        raise ValueError(f"p must be > 0, got {p}")
+    if (eps_f <= 0.0) or (eps_f >= 1.0):
+        raise ValueError(f"eps must be in (0, 1), got {eps}")
+
+    inv_T = 1.0 / max(T, 1e-12)
+
+    def _one_minus(t):
+        tau = jnp.asarray(t, dtype=jnp.float32) * inv_T
+        return jnp.clip(1.0 - tau, a_min=eps_f, a_max=1.0)
+
+    def lam_fn(t):
+        one_minus = _one_minus(t)
+        return (p_f * inv_T) / one_minus
+
+    def cum_fn(t):
+        one_minus = _one_minus(t)
+        return -p_f * jnp.log(one_minus)
+
+    def inv_cdf_fn(u_eff):
+        u_eff = jnp.asarray(u_eff, dtype=jnp.float32)
+        one_minus = jnp.power(
+            jnp.clip(1.0 - u_eff, a_min=0.0, a_max=1.0),
+            1.0 / p_f,
+        )
+        t = jnp.asarray(T, dtype=jnp.float32) * (1.0 - one_minus)
+        return jnp.clip(t, 0.0, jnp.asarray(T, dtype=jnp.float32))
+
+    return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
+
+
 def make_hazard_linear_B(beta, kappa: float = 3.0) -> HazardSchedule:
     """Cumulative hazard linear in VP accumulated noise: H(t)=kappa*B(t)/B(T)."""
     k = _validate_kappa(kappa)

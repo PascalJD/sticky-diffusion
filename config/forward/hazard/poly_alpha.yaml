@@ -1,0 +1,5 @@
+# Polynomial survival hazard schedule: S(t) = (1 - t/T)^p.
+_target_: sticky.models.sjd.hazard.make_hazard_poly_alpha
+
+p: 1.0
+eps: 1.0e-5
