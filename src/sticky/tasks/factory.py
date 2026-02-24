@@ -14,26 +14,11 @@ def build_task(cfg: DictConfig):
     aug_hflip = bool(aug_cfg.get("hflip", True))
     aug_eval = bool(aug_cfg.get("eval", False))
 
-    if name == "md4_cifar10":
-        from sticky.tasks.cifar10_md4 import CIFAR10MD4Task
+    if name in ("md4_cifar10", "cadd_cifar10"):
+        from sticky.tasks.cifar10_discrete import CIFAR10DiscreteTask
 
-        return CIFAR10MD4Task(
-            data_dir=str(cfg.dataset.get("data_dir", None)),
-            batch_size=int(cfg.dataset.get("batch_size")),
-            eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
-            vocab_size=int(cfg.dataset.get("vocab_size", 256)),
-            num_classes=int(cfg.dataset.get("num_classes", -1)),
-            augment_enabled=aug_enabled,
-            augment_prob=aug_prob,
-            augment_rotate=aug_rotate,
-            augment_hflip=aug_hflip,
-            augment_eval=aug_eval,
-        )
-
-    if name == "cadd_cifar10":
-        from sticky.tasks.cifar10_cadd import CIFAR10CADDTask
-
-        return CIFAR10CADDTask(
+        return CIFAR10DiscreteTask(
+            task_name=name,
             data_dir=str(cfg.dataset.get("data_dir", None)),
             batch_size=int(cfg.dataset.get("batch_size")),
             eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
