@@ -1,0 +1,71 @@
+# CADD model config for CIFAR-10.
+name: cadd
+
+# Core diffusion setup.
+cont_time: true
+
+# The paper reports image results with NFE=512.
+timesteps: 512
+
+# Forward-process schedules (Appendix B.1).
+discrete_schedule_type: linear     # alpha(t)=1-t
+continuous_schedule_type: linear   # gamma_bar(t) schedule for the continuous latent
+# Strict B.1 behavior: no clipping, so alpha(t)=1-t and gamma_bar(t)=1-t.
+schedule_eps: 0.0
+
+# Backbone / embedding.
+feature_dim: 128
+n_layers: 32
+n_dit_layers: 0
+dit_num_heads: 12
+dit_hidden_size: 768
+
+# Use the ADM-style UNet backbone (MDM-Prime / ADM).
+image_backbone: adm_unet5d
+sequence_backbone: auto
+
+# ADM / MDM-Prime style knobs.
+ch_mult: [1, 2, 2, 2]
+adm_num_res_blocks: 2
+adm_attention_resolutions: [2, 4]
+adm_num_heads: 4
+adm_num_head_channels: -1
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+
+# Regularization.
+dropout_rate: 0.1
+use_attn_dropout: true
+
+# Transformer-only fields (unused for the image UNet path).
+num_heads: 12
+mlp_type: swiglu
+depth_scaled_init: false
+cond_type: adaln
+model_sharding: false
+time_features: t
+
+# Conditioning.
+classes: -1
+
+# Sampling (Appendix B.2).
+sampling_grid: cosine
+temperature_schedule: cosine_decay
+tau_max: 2.5
+logit_temperature: 1.0
+
+z0_estimator: hard
+K: 1
+force_decode_at_end: true
+
+# Sampling corrector (paper: "applied the corrector following Gat et al. (2024)").
+# Keep it OFF by default so baseline runs are strictly no-corrector unless
+# explicitly enabled in a sweep/ablation.
+corrector_enabled: false
+corrector_steps: 1
+corrector_remask_frac: 0.0
+corrector_metric: entropy
+corrector_sample_mode: sample

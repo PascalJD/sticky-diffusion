@@ -30,6 +30,22 @@ def build_task(cfg: DictConfig):
             augment_eval=aug_eval,
         )
 
+    if name == "cadd_cifar10":
+        from sticky.tasks.cifar10_cadd import CIFAR10CADDTask
+
+        return CIFAR10CADDTask(
+            data_dir=str(cfg.dataset.get("data_dir", None)),
+            batch_size=int(cfg.dataset.get("batch_size")),
+            eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+            vocab_size=int(cfg.dataset.get("vocab_size", 256)),
+            num_classes=int(cfg.dataset.get("num_classes", -1)),
+            augment_enabled=aug_enabled,
+            augment_prob=aug_prob,
+            augment_rotate=aug_rotate,
+            augment_hflip=aug_hflip,
+            augment_eval=aug_eval,
+        )
+
     if name == "sjd_cifar10":
         from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
