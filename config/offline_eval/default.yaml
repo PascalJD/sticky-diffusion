@@ -1,0 +1,32 @@
+# Offline checkpoint-evaluation options.
+
+# Checkpoint root selection:
+# 1) If `checkpoint_dir` is set, use it directly as the checkpoint root.
+# 2) Else if `run_dir` is set, read `<run_dir>/run_context.json` checkpoint_dir
+#    when available, otherwise use `<run_dir>/<experiment.training.checkpoint_dir>`.
+# 3) Else fall back to `experiment.training.checkpoint_dir` from this Hydra run.
+checkpoint_dir: null
+run_dir: null
+
+# Which CheckpointWriter subdirectory to evaluate:
+# - periodic/latest/root: periodic checkpoints directory itself
+# - best: periodic_dir/best
+# - final: periodic_dir/final
+checkpoint_source: best
+
+# Optional explicit checkpoint step (e.g., 50000). Null => latest in selected dir.
+checkpoint_step: null
+
+# Use EMA params when available.
+use_ema: true
+
+# Force a one-off metric pass regardless of schedule cadence.
+force_fid: true
+force_is: true
+
+# Optional override for generator timesteps; null uses experiment.training.sample_timesteps.
+sample_timesteps: null
+
+# Where to write the JSON report (relative to Hydra output dir unless absolute).
+output_path: offline_eval_metrics.json
+

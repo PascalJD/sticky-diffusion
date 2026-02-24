@@ -1,0 +1,16 @@
+# Root Hydra config for offline checkpoint evaluation.
+defaults:
+  - experiment: sjd_cifar10
+  - eval: sjd_cifar10
+  - offline_eval: default
+  - hydra: default
+  - wandb: default
+  - _self_
+
+wandb:
+  enabled: false
+
+hydra:
+  job:
+    name: eval_checkpoint
+
