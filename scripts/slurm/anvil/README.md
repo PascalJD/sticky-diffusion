@@ -1,6 +1,42 @@
-# ANVIL Slurm Scripts (SJD CIFAR-10 Stage-1)
+# ANVIL Slurm Scripts (SJD + CADD CIFAR-10)
 
 This folder contains a Stage-1-only sweep for SJD on CIFAR-10 (`eta x p`) using Slurm arrays.
+
+It also includes a CADD smoke-test launcher that defaults dataset/cache, logs,
+and run outputs to `scratch`.
+
+## CADD smoke test (recommended first run)
+
+```bash
+PARTITION=gpu \
+ACCOUNT=<your-allocation> \
+CONDA_ENV=sticky \
+bash scripts/slurm/anvil/submit_cadd_smoke.sh
+```
+
+Default smoke settings:
+- single GPU (`GPUS_PER_NODE=1`, `platform=single`)
+- `num_train_steps=200`
+- no FID/IS (`eval.enabled=false`)
+- no checkpointing (`checkpoint_every_steps=0`)
+- data dir: `$SCRATCH/sticky-diffusion/data/cifar10`
+- run dir: `$SCRATCH/sticky-diffusion/outputs/smoke/<run_tag>`
+
+Useful overrides:
+
+```bash
+# 4-GPU pmap smoke test
+GPUS_PER_NODE=4 \
+CPUS_PER_TASK=64 \
+MEMORY=0 \
+PLATFORM=pmap \
+BATCH_SIZE=512 \
+EVAL_BATCH_SIZE=512 \
+TIME_LIMIT=01:00:00 \
+PARTITION=gpu \
+ACCOUNT=<your-allocation> \
+bash scripts/slurm/anvil/submit_cadd_smoke.sh
+```
 
 ## One-command submit (Stage 1 only)
 
