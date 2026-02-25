@@ -18,10 +18,45 @@ if [[ ! -d "${REPO_ROOT}" ]]; then
 fi
 cd "${REPO_ROOT}"
 
+ensure_module_cmd() {
+  if command -v module >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -f /etc/profile.d/modules.sh ]]; then
+    # shellcheck disable=SC1091
+    source /etc/profile.d/modules.sh
+  fi
+  command -v module >/dev/null 2>&1
+}
+
+ensure_conda_cmd() {
+  if command -v conda >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ensure_module_cmd; then
+    CONDA_MODULE_CANDIDATES="${CONDA_MODULE_CANDIDATES:-anaconda/2023.09 anaconda/2024.02 anaconda}"
+    for mod in ${CONDA_MODULE_CANDIDATES}; do
+      if module load "${mod}" >/dev/null 2>&1; then
+        if command -v conda >/dev/null 2>&1; then
+          echo "Auto-loaded conda module: ${mod}"
+          return 0
+        fi
+      fi
+    done
+  fi
+
+  if [[ -f "${HOME}/.bashrc" ]]; then
+    # shellcheck disable=SC1090
+    source "${HOME}/.bashrc" >/dev/null 2>&1 || true
+  fi
+  command -v conda >/dev/null 2>&1
+}
+
 # Optional module list, e.g.:
 #   export ANVIL_MODULES="anaconda/2023.09 cuda/12.2"
 if [[ -n "${ANVIL_MODULES:-}" ]]; then
-  if command -v module >/dev/null 2>&1; then
+  if ensure_module_cmd; then
     module purge || true
     for mod in ${ANVIL_MODULES}; do
       module load "${mod}"
@@ -32,12 +67,42 @@ if [[ -n "${ANVIL_MODULES:-}" ]]; then
 fi
 
 CONDA_ENV="${CONDA_ENV:-sticky}"
-if ! command -v conda >/dev/null 2>&1; then
-  echo "conda command not found. Load the appropriate Anvil module first." >&2
+if ! ensure_conda_cmd; then
+  echo "conda command not found. Set ANVIL_MODULES (for example: anaconda/2023.09)." >&2
   exit 1
 fi
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "${CONDA_ENV}"
+
+activate_conda_env() {
+  local env_spec="$1"
+  if conda activate "${env_spec}" >/dev/null 2>&1; then
+    echo "Activated conda env: ${env_spec}"
+    return 0
+  fi
+
+  if [[ "${env_spec}" != /* ]]; then
+    local candidates=()
+    if [[ -n "${SCRATCH:-}" ]]; then
+      candidates+=("${SCRATCH}/envs/${env_spec}")
+    fi
+    candidates+=("/anvil/scratch/${USER}/envs/${env_spec}")
+
+    local env_path
+    for env_path in "${candidates[@]}"; do
+      if [[ -d "${env_path}" ]] && conda activate "${env_path}" >/dev/null 2>&1; then
+        echo "Activated conda env via path fallback: ${env_path}"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+if ! activate_conda_env "${CONDA_ENV}"; then
+  echo "Failed to activate CONDA_ENV=${CONDA_ENV}. If this is a path-based env, pass its full path." >&2
+  exit 1
+fi
 
 if [[ -n "${SCRATCH:-}" ]]; then
   SCRATCH_ROOT="${SCRATCH}"
