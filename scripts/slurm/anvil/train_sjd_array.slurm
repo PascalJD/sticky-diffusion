@@ -26,6 +26,12 @@ if [[ ! -d "${REPO_ROOT}" ]]; then
   exit 1
 fi
 cd "${REPO_ROOT}"
+if [[ ! -f "${REPO_ROOT}/src/sticky/__init__.py" ]]; then
+  echo "REPO_ROOT does not appear to be sticky-diffusion root: ${REPO_ROOT}" >&2
+  echo "Expected: ${REPO_ROOT}/src/sticky/__init__.py" >&2
+  exit 1
+fi
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
 ensure_module_cmd() {
   if command -v module >/dev/null 2>&1; then

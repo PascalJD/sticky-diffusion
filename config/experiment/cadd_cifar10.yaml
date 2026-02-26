@@ -1,12 +1,12 @@
 # CADD CIFAR-10 experiment config.
 defaults:
-  - override /eval: cadd_cifar10
   - /dataset: cifar10_discrete
   - /model: cadd_cifar10
   - /optim: adamw
   - /training: cadd_cifar10
   - /runtime: default
   - _self_
+  - override /eval: cadd_cifar10
 
 task:
   name: cadd_cifar10
