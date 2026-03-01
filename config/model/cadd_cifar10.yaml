@@ -14,7 +14,8 @@ continuous_schedule_type: linear   # gamma_bar(t) schedule for the continuous la
 schedule_eps: 0.0
 
 # Backbone / embedding.
-feature_dim: 128
+# MDM-Prime Appendix A.4.2 uses embedding dimension 96 for image experiments.
+feature_dim: 96
 n_layers: 32
 n_dit_layers: 0
 dit_num_heads: 12
@@ -25,11 +26,15 @@ image_backbone: adm_unet5d
 sequence_backbone: auto
 
 # ADM / MDM-Prime style knobs.
-ch_mult: [1, 2, 2, 2]
-adm_num_res_blocks: 2
+# MDM-Prime Appendix A.4.2 reports channel multipliers [3,4,4].
+ch_mult: [3, 4, 4]
+# Paper reports depth=5. In this implementation the decoder has (num_res_blocks + 1)
+# residual blocks per level, so setting 4 best matches the reported ~114M-parameter scale.
+adm_num_res_blocks: 4
 adm_attention_resolutions: [2, 4]
 adm_num_heads: 4
-adm_num_head_channels: -1
+# MDM-Prime Appendix A.4.2: attention head channels = 64.
+adm_num_head_channels: 64
 adm_num_heads_upsample: -1
 adm_conv_resample: true
 adm_use_scale_shift_norm: true

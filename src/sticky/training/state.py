@@ -38,11 +38,17 @@ def make_lr_schedule(cfg: DictConfig):
     total_steps = int(cfg.training.num_train_steps)
     base_lr = float(cfg.optim.learning_rate)
 
+    # Optax expects decay_steps to be the overall schedule horizon and requires
+    # decay_steps > warmup_steps. Short smoke runs can otherwise fail.
+    total_steps = max(1, total_steps)
+    warmup_steps = max(0, min(warmup_steps, total_steps - 1))
+    decay_steps = max(total_steps, warmup_steps + 1)
+
     return optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=base_lr,
         warmup_steps=warmup_steps,
-        decay_steps=max(1, total_steps - warmup_steps),
+        decay_steps=decay_steps,
         end_value=0.0,
     )
 

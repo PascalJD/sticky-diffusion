@@ -6,7 +6,6 @@ defaults:
   - /training: cadd_cifar10
   - /runtime: default
   - _self_
-  - override /eval: cadd_cifar10
 
 task:
   name: cadd_cifar10
