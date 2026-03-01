@@ -108,6 +108,8 @@ if ! activate_conda_env "${CONDA_ENV}"; then
   exit 1
 fi
 
+export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
+
 if [[ -n "${SCRATCH:-}" ]]; then
   SCRATCH_ROOT="${SCRATCH}"
 elif [[ -d "/anvil/scratch/${USER}" ]]; then
@@ -121,11 +123,15 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-${SCRATCH_ROOT}/sticky-diffusion/outputs/baselines}"
 RUN_TAG="${RUN_TAG:-cadd_md4_baseline_$(date +%Y%m%d_%H%M%S)}"
 
 PLATFORM="${PLATFORM:-pmap}"
-WANDB_ENABLED="${WANDB_ENABLED:-false}"
+WANDB_ENABLED="${WANDB_ENABLED:-true}"
 SEED="${SEED:-0}"
 
-BATCH_SIZE="${BATCH_SIZE:-512}"
+BATCH_SIZE="${BATCH_SIZE:-256}"
+BATCH_SIZE_CADD="${BATCH_SIZE_CADD:-${BATCH_SIZE}}"
+BATCH_SIZE_MD4="${BATCH_SIZE_MD4:-${BATCH_SIZE}}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-${BATCH_SIZE}}"
+EVAL_BATCH_SIZE_CADD="${EVAL_BATCH_SIZE_CADD:-${BATCH_SIZE_CADD}}"
+EVAL_BATCH_SIZE_MD4="${EVAL_BATCH_SIZE_MD4:-${BATCH_SIZE_MD4}}"
 TRAIN_STEPS="${TRAIN_STEPS:-500000}"
 LEARNING_RATE="${LEARNING_RATE:-1.0e-4}"
 WARMUP_STEPS="${WARMUP_STEPS:-100}"
@@ -137,6 +143,7 @@ LOG_EVERY="${LOG_EVERY:-1000}"
 METRICS_EVERY="${METRICS_EVERY:-1000}"
 LOG_IMAGES_EVERY="${LOG_IMAGES_EVERY:-25000}"
 CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-10000}"
+SAVE_FINAL_CHECKPOINT="${SAVE_FINAL_CHECKPOINT:-true}"
 
 mkdir -p "${DATA_DIR}" "${OUTPUT_ROOT}/${RUN_TAG}/cadd" "${OUTPUT_ROOT}/${RUN_TAG}/md4"
 
@@ -144,8 +151,6 @@ COMMON_OVERRIDES=(
   "wandb.enabled=${WANDB_ENABLED}"
   "experiment.runtime.platform=${PLATFORM}"
   "experiment.dataset.data_dir=${DATA_DIR}"
-  "experiment.dataset.batch_size=${BATCH_SIZE}"
-  "experiment.dataset.eval_batch_size=${EVAL_BATCH_SIZE}"
   "experiment.dataset.augment.enabled=false"
   "experiment.optim.learning_rate=${LEARNING_RATE}"
   "experiment.optim.warmup_steps=${WARMUP_STEPS}"
@@ -157,6 +162,7 @@ COMMON_OVERRIDES=(
   "experiment.training.metrics_every_steps=${METRICS_EVERY}"
   "experiment.training.eval_every_steps=0"
   "experiment.training.checkpoint_every_steps=${CHECKPOINT_EVERY}"
+  "experiment.training.save_final_checkpoint=${SAVE_FINAL_CHECKPOINT}"
   "experiment.training.log_images_every_steps=${LOG_IMAGES_EVERY}"
   "experiment.training.sample_timesteps=${DIFFUSION_STEPS}"
   "eval.enabled=false"
@@ -200,6 +206,8 @@ CADD_OVERRIDES=(
   "experiment=cadd_cifar10"
   "eval=cadd_cifar10"
   "hydra.run.dir=${CADD_RUN_DIR}"
+  "experiment.dataset.batch_size=${BATCH_SIZE_CADD}"
+  "experiment.dataset.eval_batch_size=${EVAL_BATCH_SIZE_CADD}"
   "experiment.model.corrector_enabled=false"
   "experiment.model.corrector_steps=0"
   "experiment.model.corrector_remask_frac=0.0"
@@ -210,6 +218,8 @@ MD4_OVERRIDES=(
   "experiment=md4_cifar10"
   "eval=sjd_cifar10"
   "hydra.run.dir=${MD4_RUN_DIR}"
+  "experiment.dataset.batch_size=${BATCH_SIZE_MD4}"
+  "experiment.dataset.eval_batch_size=${EVAL_BATCH_SIZE_MD4}"
 )
 
 MODEL_PHASE="${MODEL_PHASE:-both}" # cadd | md4 | both
@@ -226,7 +236,8 @@ echo "Run tag: ${RUN_TAG}"
 echo "Data dir: ${DATA_DIR}"
 echo "Output root: ${OUTPUT_ROOT}"
 echo "Platform: ${PLATFORM}"
-echo "Batch size: ${BATCH_SIZE}"
+echo "Batch size (CADD): ${BATCH_SIZE_CADD}"
+echo "Batch size (MD4):  ${BATCH_SIZE_MD4}"
 echo "Train steps: ${TRAIN_STEPS}"
 echo "Diffusion steps: ${DIFFUSION_STEPS}"
 echo "Model phase: ${MODEL_PHASE}"

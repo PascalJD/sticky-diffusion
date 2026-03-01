@@ -41,15 +41,17 @@ valid feature string on your Anvil allocation.
 - optimization/training:
   - AdamW, `lr=1e-4`, `warmup_steps=100`, `b2=0.99`, `weight_decay=0.01`
   - `num_train_steps=500000`
-  - `batch_size=512`
+  - `batch_size=256` (default for both CADD and MD4)
 - logging/sampling:
   - `log_every_steps=1000`
   - `log_images_every_steps=25000`
   - `checkpoint_every_steps=10000`
+  - `save_final_checkpoint=true`
   - `model.timesteps=512`
   - `training.sample_timesteps=512`
   - `eval.enabled=false` (no FID/IS)
 - other:
+  - `wandb.enabled=true`
   - `dataset.augment.enabled=false`
   - CADD corrector disabled (`corrector_enabled=false`, `corrector_steps=0`)
 
@@ -59,8 +61,8 @@ valid feature string on your Anvil allocation.
 # Job resources (split mode, default)
 TIME_LIMIT_CADD=24:00:00 \
 TIME_LIMIT_MD4=24:00:00 \
-CPUS_PER_TASK=32 \
-MEMORY=240G \
+CPUS_PER_TASK=48 \
+MEMORY=480G \
 bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 
 # Force single-allocation mode (legacy behavior)
@@ -78,5 +80,10 @@ bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 EXTRA_OVERRIDES_COMMON="experiment.training.seed=1" \
 EXTRA_OVERRIDES_CADD="experiment.model.dropout_rate=0.0" \
 EXTRA_OVERRIDES_MD4="experiment.model.dropout_rate=0.0" \
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
+
+# Per-phase batch sizes
+BATCH_SIZE_CADD=256 \
+BATCH_SIZE_MD4=256 \
 bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 ```
