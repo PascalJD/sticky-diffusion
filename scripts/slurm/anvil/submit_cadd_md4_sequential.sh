@@ -11,7 +11,8 @@ cd "${REPO_ROOT}"
 PARTITION="${PARTITION:-ai}"
 ACCOUNT="${ACCOUNT:-}"
 QOS="${QOS:-}"
-CONSTRAINT="${CONSTRAINT:-h100}"
+# Optional. Leave empty unless you confirmed a valid feature name via sinfo/scontrol.
+CONSTRAINT="${CONSTRAINT:-}"
 
 TIME_LIMIT="${TIME_LIMIT:-72:00:00}"
 NODES="${NODES:-1}"

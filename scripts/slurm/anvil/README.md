@@ -14,6 +14,9 @@ CONDA_ENV=sticky \
 bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 ```
 
+`CONSTRAINT` is optional and unset by default. Only set it if you have a confirmed
+valid feature string on your Anvil allocation.
+
 ## Defaults enforced by the job
 
 - architecture:
