@@ -147,6 +147,43 @@ SAVE_FINAL_CHECKPOINT="${SAVE_FINAL_CHECKPOINT:-true}"
 
 mkdir -p "${DATA_DIR}" "${OUTPUT_ROOT}/${RUN_TAG}/cadd" "${OUTPUT_ROOT}/${RUN_TAG}/md4"
 
+if [[ "${PLATFORM}" == "pmap" ]]; then
+  REQUIRED_LOCAL_DEVICES="${REQUIRED_LOCAL_DEVICES:-${GPUS_PER_NODE:-2}}"
+  echo "Preflight JAX device check (required local devices: ${REQUIRED_LOCAL_DEVICES})"
+  preflight_out="$(
+    XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.05 \
+    python - <<'PY'
+import os
+import jax
+
+print(f"local_device_count={jax.local_device_count()}")
+print("devices=" + ", ".join(str(d) for d in jax.devices()))
+print("CUDA_VISIBLE_DEVICES=" + os.environ.get("CUDA_VISIBLE_DEVICES", ""))
+PY
+  )"
+  preflight_rc=$?
+  echo "${preflight_out}"
+  if (( preflight_rc != 0 )); then
+    echo "JAX preflight failed before training start." >&2
+    nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv || true
+    exit 1
+  fi
+
+  detected_local_devices="$(
+    echo "${preflight_out}" | awk -F= '/^local_device_count=/{print $2}' | tail -n 1
+  )"
+  if [[ -z "${detected_local_devices}" ]]; then
+    echo "Could not parse local_device_count from JAX preflight output." >&2
+    exit 1
+  fi
+  if (( detected_local_devices < REQUIRED_LOCAL_DEVICES )); then
+    echo "Expected >= ${REQUIRED_LOCAL_DEVICES} local JAX devices, got ${detected_local_devices}." >&2
+    nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv || true
+    exit 1
+  fi
+fi
+
 COMMON_OVERRIDES=(
   "wandb.enabled=${WANDB_ENABLED}"
   "experiment.runtime.platform=${PLATFORM}"

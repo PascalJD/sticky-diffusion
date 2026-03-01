@@ -11,6 +11,8 @@ By default, submit uses two Slurm jobs with dependency:
 - MD4 job is submitted with `afterok:<cadd_jobid>`
 
 This avoids long single-job walltime limits on Anvil.
+The training runner also performs a JAX preflight check and fails fast if fewer
+local GPUs are visible than expected for `platform=pmap`.
 
 ## Submit
 
@@ -22,6 +24,7 @@ bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 
 `CONSTRAINT` is optional and unset by default. Only set it if you have a confirmed
 valid feature string on your Anvil allocation.
+You can also set `EXCLUDE=<node1,node2>` to avoid known-problematic nodes.
 
 ## Defaults enforced by the job
 

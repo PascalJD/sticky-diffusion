@@ -13,6 +13,8 @@ ACCOUNT="${ACCOUNT:-}"
 QOS="${QOS:-}"
 # Optional. Leave empty unless you confirmed a valid feature name via sinfo/scontrol.
 CONSTRAINT="${CONSTRAINT:-}"
+EXCLUDE="${EXCLUDE:-}"
+NODELIST="${NODELIST:-}"
 
 SPLIT_JOBS="${SPLIT_JOBS:-1}" # 1=true -> submit CADD then MD4 with dependency
 TIME_LIMIT="${TIME_LIMIT:-72:00:00}" # used when SPLIT_JOBS=0
@@ -54,12 +56,20 @@ fi
 if [[ -n "${CONSTRAINT}" ]]; then
   COMMON_SBATCH_ARGS+=(--constraint="${CONSTRAINT}")
 fi
+if [[ -n "${EXCLUDE}" ]]; then
+  COMMON_SBATCH_ARGS+=(--exclude="${EXCLUDE}")
+fi
+if [[ -n "${NODELIST}" ]]; then
+  COMMON_SBATCH_ARGS+=(--nodelist="${NODELIST}")
+fi
 
 echo "Submitting sequential CADD->MD4 baseline job"
 echo "  partition: ${PARTITION}"
 echo "  account:   ${ACCOUNT:-<none>}"
 echo "  qos:       ${QOS:-<none>}"
 echo "  constraint:${CONSTRAINT:-<none>}"
+echo "  exclude:   ${EXCLUDE:-<none>}"
+echo "  nodelist:  ${NODELIST:-<none>}"
 echo "  gpus:      ${GPUS_PER_NODE}"
 echo "  cpus:      ${CPUS_PER_TASK}"
 echo "  mem:       ${MEMORY}"
