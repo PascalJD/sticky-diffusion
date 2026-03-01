@@ -212,6 +212,15 @@ MD4_OVERRIDES=(
   "hydra.run.dir=${MD4_RUN_DIR}"
 )
 
+MODEL_PHASE="${MODEL_PHASE:-both}" # cadd | md4 | both
+case "${MODEL_PHASE}" in
+  cadd|md4|both) ;;
+  *)
+    echo "Invalid MODEL_PHASE=${MODEL_PHASE}; expected one of: cadd, md4, both" >&2
+    exit 1
+    ;;
+esac
+
 echo "[$(date)] Host: $(hostname)"
 echo "Run tag: ${RUN_TAG}"
 echo "Data dir: ${DATA_DIR}"
@@ -220,20 +229,29 @@ echo "Platform: ${PLATFORM}"
 echo "Batch size: ${BATCH_SIZE}"
 echo "Train steps: ${TRAIN_STEPS}"
 echo "Diffusion steps: ${DIFFUSION_STEPS}"
+echo "Model phase: ${MODEL_PHASE}"
 echo
 
-echo "=== Training CADD ==="
-python -m sticky.entrypoints.train \
-  "${COMMON_OVERRIDES[@]}" \
-  "${EXTRA_COMMON_ARR[@]}" \
-  "${CADD_OVERRIDES[@]}" \
-  "${EXTRA_CADD_ARR[@]}"
+if [[ "${MODEL_PHASE}" == "cadd" || "${MODEL_PHASE}" == "both" ]]; then
+  echo "=== Training CADD ==="
+  python -m sticky.entrypoints.train \
+    "${COMMON_OVERRIDES[@]}" \
+    "${EXTRA_COMMON_ARR[@]}" \
+    "${CADD_OVERRIDES[@]}" \
+    "${EXTRA_CADD_ARR[@]}"
+fi
 
-echo "=== Training MD4 ==="
-python -m sticky.entrypoints.train \
-  "${COMMON_OVERRIDES[@]}" \
-  "${EXTRA_COMMON_ARR[@]}" \
-  "${MD4_OVERRIDES[@]}" \
-  "${EXTRA_MD4_ARR[@]}"
+if [[ "${MODEL_PHASE}" == "md4" || "${MODEL_PHASE}" == "both" ]]; then
+  echo "=== Training MD4 ==="
+  python -m sticky.entrypoints.train \
+    "${COMMON_OVERRIDES[@]}" \
+    "${EXTRA_COMMON_ARR[@]}" \
+    "${MD4_OVERRIDES[@]}" \
+    "${EXTRA_MD4_ARR[@]}"
+fi
 
-echo "[$(date)] Completed: CADD then MD4."
+if [[ "${MODEL_PHASE}" == "both" ]]; then
+  echo "[$(date)] Completed: CADD then MD4."
+else
+  echo "[$(date)] Completed phase: ${MODEL_PHASE}."
+fi

@@ -2,9 +2,15 @@
 
 This folder contains one clean workflow for Anvil:
 - allocate 1 node with 2 GPUs on `ai`
-- train **CADD first**, then **MD4** sequentially in the same job
+- train **CADD first**, then **MD4** in order
 - enforce the shared 114M-ish ADM UNet baseline
 - disable augmentation, FID/IS, and CADD corrector
+
+By default, submit uses two Slurm jobs with dependency:
+- CADD job runs first
+- MD4 job is submitted with `afterok:<cadd_jobid>`
+
+This avoids long single-job walltime limits on Anvil.
 
 ## Submit
 
@@ -50,10 +56,16 @@ valid feature string on your Anvil allocation.
 ## Common overrides
 
 ```bash
-# Job resources
-TIME_LIMIT=72:00:00 \
+# Job resources (split mode, default)
+TIME_LIMIT_CADD=24:00:00 \
+TIME_LIMIT_MD4=24:00:00 \
 CPUS_PER_TASK=32 \
 MEMORY=240G \
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
+
+# Force single-allocation mode (legacy behavior)
+SPLIT_JOBS=0 \
+TIME_LIMIT=24:00:00 \
 bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 
 # Paths
