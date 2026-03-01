@@ -44,7 +44,7 @@ valid feature string on your Anvil allocation.
   - `batch_size=256` (default for both CADD and MD4)
 - logging/sampling:
   - `log_every_steps=1000`
-  - `log_images_every_steps=25000`
+  - `log_images_every_steps=0` (disabled by default for stable long runs)
   - `checkpoint_every_steps=10000`
   - `save_final_checkpoint=true`
   - `model.timesteps=512`

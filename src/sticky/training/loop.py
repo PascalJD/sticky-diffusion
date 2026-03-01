@@ -209,7 +209,7 @@ def main_train_loop(
                 metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
             if (wandb_mod is not None) and (log_images_every_steps > 0) and (
-                step % log_images_every_steps == 0
+                step_i % log_images_every_steps == 0
             ):
                 state_s = unreplicate(state)
                 params = params_for_sampling(state_s)
@@ -217,18 +217,18 @@ def main_train_loop(
                     cfg=cfg,
                     sample_images_jit=sample_images_jit,
                     params_for_sampling=params,
-                    step=step,
+                    step=step_i,
                 )
 
                 log_images_to_wandb(
                     wandb_mod=wandb_mod,
-                    step_i=step,
+                    step_i=step_i,
                     gt_images=gt_images,
                     max_images=num_log_images,
                     samples=samples,
                 )
                 if sjd_sample_metrics is not None:
-                    wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step)
+                    wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step_i)
 
             eval_due = (
                 eval_enabled
@@ -303,25 +303,25 @@ def main_train_loop(
                 metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
             if (wandb_mod is not None) and (log_images_every_steps > 0) and (
-                step % log_images_every_steps == 0
+                step_i % log_images_every_steps == 0
             ):
                 params = params_for_sampling(state)
                 samples, sjd_sample_metrics = sample_for_logging(
                     cfg=cfg,
                     sample_images_jit=sample_images_jit,
                     params_for_sampling=params,
-                    step=step,
+                    step=step_i,
                 )
 
                 log_images_to_wandb(
                     wandb_mod=wandb_mod,
-                    step_i=step,
+                    step_i=step_i,
                     gt_images=gt_images,
                     max_images=num_log_images,
                     samples=samples,
                 )
                 if sjd_sample_metrics is not None:
-                    wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step)
+                    wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step_i)
 
             eval_due = (
                 eval_enabled

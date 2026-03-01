@@ -172,6 +172,9 @@ class CADD(nn.Module):
 
         if self.classes > 0:
             self.cond_embeddings = nn.Embed(int(self.classes), int(self.feature_dim))
+        # Pre-register time/conditioning embedder so it can be used from
+        # non-compact helper methods (e.g., sampling/eval paths).
+        self.time_cond_embed = CondEmbedding(int(self.feature_dim))
 
         self._seq_backbone = build_sequence_backbone(
             name=self.sequence_backbone,
@@ -234,7 +237,7 @@ class CADD(nn.Module):
         if jnp.isscalar(t) or t.ndim == 0:
             t = t * jnp.ones((int(batch_size),), dtype=jnp.asarray(t).dtype)
         # If cond is None, CondEmbedding will just embed time.
-        return CondEmbedding(int(self.feature_dim))(t * 1000.0, cond=cond)
+        return self.time_cond_embed(t * 1000.0, cond=cond)
 
     # --------------------------- Core network call --------------------------
 
