@@ -1,99 +1,67 @@
-# ANVIL Slurm Scripts (SJD + CADD CIFAR-10)
+# ANVIL Slurm Scripts (CADD + MD4 Baseline)
 
-This folder contains a Stage-1-only sweep for SJD on CIFAR-10 (`eta x p`) using Slurm arrays.
+This folder contains one clean workflow for Anvil:
+- allocate 1 node with 2 GPUs on `ai`
+- train **CADD first**, then **MD4** sequentially in the same job
+- enforce the shared 114M-ish ADM UNet baseline
+- disable augmentation, FID/IS, and CADD corrector
 
-It also includes a CADD smoke-test launcher that defaults dataset/cache, logs,
-and run outputs to `scratch`.
-
-## CADD smoke test (recommended first run)
+## Submit
 
 ```bash
-PARTITION=gpu \
 ACCOUNT=<your-allocation> \
 CONDA_ENV=sticky \
-bash scripts/slurm/anvil/submit_cadd_smoke.sh
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 ```
 
-Default smoke settings:
-- single GPU (`GPUS_PER_NODE=1`, `platform=single`)
-- `num_train_steps=200`
-- no FID/IS (`eval.enabled=false`)
-- no checkpointing (`checkpoint_every_steps=0`)
-- data dir: `$SCRATCH/sticky-diffusion/data/cifar10`
-- run dir: `$SCRATCH/sticky-diffusion/outputs/smoke/<run_tag>`
+## Defaults enforced by the job
 
-Useful overrides:
+- architecture:
+  - `adm_unet5d`
+  - `feature_dim=96`
+  - `ch_mult=[3,4,4]`
+  - `adm_num_res_blocks=4`
+  - `adm_attention_resolutions=[2,4]`
+  - `adm_num_heads=4`
+  - `adm_num_head_channels=64`
+  - `adm_num_heads_upsample=-1`
+  - `adm_conv_resample=true`
+  - `adm_use_scale_shift_norm=true`
+  - `adm_resblock_updown=false`
+  - `adm_use_conv_skip=false`
+- optimization/training:
+  - AdamW, `lr=1e-4`, `warmup_steps=100`, `b2=0.99`, `weight_decay=0.01`
+  - `num_train_steps=500000`
+  - `batch_size=512`
+- logging/sampling:
+  - `log_every_steps=1000`
+  - `log_images_every_steps=25000`
+  - `checkpoint_every_steps=10000`
+  - `model.timesteps=512`
+  - `training.sample_timesteps=512`
+  - `eval.enabled=false` (no FID/IS)
+- other:
+  - `dataset.augment.enabled=false`
+  - CADD corrector disabled (`corrector_enabled=false`, `corrector_steps=0`)
 
-```bash
-# 4-GPU pmap smoke test
-GPUS_PER_NODE=4 \
-CPUS_PER_TASK=64 \
-MEMORY=0 \
-PLATFORM=pmap \
-BATCH_SIZE=512 \
-EVAL_BATCH_SIZE=512 \
-TIME_LIMIT=01:00:00 \
-PARTITION=gpu \
-ACCOUNT=<your-allocation> \
-bash scripts/slurm/anvil/submit_cadd_smoke.sh
-```
-
-## One-command submit (Stage 1 only)
-
-```bash
-mkdir -p logs manifests
-
-PARTITION=gpu \
-ACCOUNT=<your-allocation> \
-QOS=<optional-qos> \
-CONDA_ENV=sticky \
-bash scripts/slurm/anvil/submit_sjd_stage1_sweep.sh
-```
-
-Default Stage-1 grid:
-- `eta`: `0.9,0.85,0.8,0.75`
-- `p`: `0.5,1,2,3`
-- fixed anchors
-- `temperature=1.0`
-
-## Baseline enforced in `train_sjd_array.slurm`
-
-- `experiment.model.image_backbone=adm_unet5d`
-- `experiment.sampler.n_steps=512`
-- `experiment/forward/jump=vp_matched`
-- `experiment/forward/hazard=poly_alpha`
-- `experiment.optim.learning_rate=1e-4`
-- `experiment.optim.b2=0.999` (`b1=0.9` fixed in code)
-- `experiment.dataset.augment.enabled=false`
-- `experiment.model.dropout_rate=0.1`
-- Proxy FID during sweep: `eval.fid_every=50000`, `eval.fid_num_samples=10000`
-- Checkpoint cadence: `experiment.training.checkpoint_every_steps=10000`
-
-## Useful overrides
+## Common overrides
 
 ```bash
-STAGE1_ETAS="0.9,0.85,0.8,0.75" \
-STAGE1_P_VALUES="0.5,1,2,3" \
-STAGE1_SEEDS="0,1" \
-ARRAY_MAX_PARALLEL=16 \
-TIME_LIMIT=24:00:00 \
-bash scripts/slurm/anvil/submit_sjd_stage1_sweep.sh
-```
+# Job resources
+TIME_LIMIT=72:00:00 \
+CPUS_PER_TASK=32 \
+MEMORY=240G \
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 
-## Manual flow
+# Paths
+DATA_DIR=/anvil/scratch/$USER/sticky-diffusion/data/cifar10 \
+OUTPUT_ROOT=/anvil/scratch/$USER/sticky-diffusion/outputs/baselines \
+RUN_TAG=my_baseline_run \
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 
-1) Generate manifest:
-
-```bash
-python scripts/slurm/anvil/generate_sjd_manifest.py \
-  --output manifests/sjd_stage1_eta_p.txt
-```
-
-2) Submit array from manifest:
-
-```bash
-PARTITION=gpu \
-ACCOUNT=<your-allocation> \
-CONDA_ENV=sticky \
-bash scripts/slurm/anvil/submit_sjd_tuning.sh manifests/sjd_stage1_eta_p.txt
+# Extra Hydra overrides (space-separated)
+EXTRA_OVERRIDES_COMMON="experiment.training.seed=1" \
+EXTRA_OVERRIDES_CADD="experiment.model.dropout_rate=0.0" \
+EXTRA_OVERRIDES_MD4="experiment.model.dropout_rate=0.0" \
+bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
 ```
