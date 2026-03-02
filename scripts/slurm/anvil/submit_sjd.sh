@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-DEFAULT_EXTRA_OVERRIDES="forward/beta=vp_linear forward/hazard=poly_alpha forward/jump=vp_matched forward.jump.eta=0.8 experiment.training.num_log_images=4"
+DEFAULT_EXTRA_OVERRIDES="forward/beta@experiment.forward.beta=vp_linear forward/hazard@experiment.forward.hazard=poly_alpha forward/jump@experiment.forward.jump=vp_matched experiment.forward.jump.eta=0.8 experiment.training.num_log_images=4"
 if [[ -n "${EXTRA_OVERRIDES:-}" ]]; then
   EXTRA_OVERRIDES="${DEFAULT_EXTRA_OVERRIDES} ${EXTRA_OVERRIDES}"
 else
@@ -33,7 +33,7 @@ export METRICS_EVERY="${METRICS_EVERY:-1000}"
 export CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-10000}"
 export LOG_IMAGES_EVERY="${LOG_IMAGES_EVERY:-10000}"
 export SAVE_FINAL_CHECKPOINT="${SAVE_FINAL_CHECKPOINT:-true}"
-export MODEL_TIMESTEPS="${MODEL_TIMESTEPS:-512}"
+export MODEL_TIMESTEPS="${MODEL_TIMESTEPS:-}"
 export SAMPLE_TIMESTEPS="${SAMPLE_TIMESTEPS:-128}"
 
 export LEARNING_RATE="${LEARNING_RATE:-1e-4}"
