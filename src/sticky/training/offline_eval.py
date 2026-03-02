@@ -192,25 +192,29 @@ def run_offline_checkpoint_eval(
 
     eval_cfg_local = _clone_eval_cfg(eval_cfg)
     eval_cfg_local.run_at_end = True
+    eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
 
-    fid_every = int(eval_cfg_local.get("fid_every", 0))
-    is_every = int(eval_cfg_local.get("is_every", fid_every))
+    fid_every = int(eval_cfg_local.get("fid_every", 0)) if eval_mode != "sudoku" else 0
+    is_every = int(eval_cfg_local.get("is_every", fid_every)) if eval_mode != "sudoku" else 0
+    sudoku_every = int(eval_cfg_local.get("sudoku_every", 0)) if eval_mode == "sudoku" else 0
     fid_num_samples = int(eval_cfg_local.get("fid_num_samples", 50_000))
     fid_batch_size = int(eval_cfg_local.get("fid_batch_size", 256))
     is_batch_size = int(eval_cfg_local.get("is_batch_size", fid_batch_size))
     eval_sample_batch_size = max(fid_batch_size, is_batch_size)
 
-    _, sample_images_fid_jit = build_sampling_fns(
-        cfg=cfg,
-        task=task,
-        model=model,
-        num_log_images=eval_sample_batch_size,
-        sample_timesteps=sample_timesteps,
-        fid_every=max(1, fid_every, is_every),
-        fid_batch_size=eval_sample_batch_size,
-    )
-    if sample_images_fid_jit is None:
-        raise RuntimeError("Could not build sampling function for offline evaluation.")
+    sample_images_fid_jit = None
+    if eval_mode != "sudoku":
+        _, sample_images_fid_jit = build_sampling_fns(
+            cfg=cfg,
+            task=task,
+            model=model,
+            num_log_images=eval_sample_batch_size,
+            sample_timesteps=sample_timesteps,
+            fid_every=max(1, fid_every, is_every),
+            fid_batch_size=eval_sample_batch_size,
+        )
+        if sample_images_fid_jit is None:
+            raise RuntimeError("Could not build sampling function for offline evaluation.")
 
     fid_prefix = str(eval_cfg_local.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg_local.get("log_at_step_zero", False))
@@ -233,11 +237,15 @@ def run_offline_checkpoint_eval(
         fid_log_at_step_zero=fid_log_at_step_zero,
         fid_cache_dir=fid_cache_dir,
         fid_tfds_data_dir=fid_tfds_data_dir,
+        task=task,
+        model=model,
+        eval_every=(sudoku_every if eval_mode == "sudoku" else max(fid_every, is_every)),
+        sample_timesteps_override=(sample_timesteps if eval_mode == "sudoku" else None),
     )
     if maybe_log_eval is None:
         raise RuntimeError(
             "Offline evaluation produced no evaluator. "
-            "Enable eval.fid_enabled and/or eval.is_enabled."
+            "Check eval.mode and metric-specific eval toggles."
         )
 
     force_fid = bool(offline_cfg.get("force_fid", True))
@@ -253,7 +261,7 @@ def run_offline_checkpoint_eval(
     if not metrics:
         raise RuntimeError(
             "Offline evaluation returned no metrics. "
-            "Check eval.fid_enabled/is_enabled and force flags."
+            "Check eval settings and force flags."
         )
 
     output_path_cfg = offline_cfg.get("output_path", "offline_eval_metrics.json")
@@ -277,16 +285,20 @@ def run_offline_checkpoint_eval(
             "use_ema_requested": bool(use_ema),
         },
         "evaluation": {
+            "mode": eval_mode,
             "sample_timesteps": int(sample_timesteps),
             "force_fid": bool(force_fid),
             "force_is": bool(force_is),
-            "fid_enabled": bool(eval_cfg_local.get("fid_enabled", True)),
-            "is_enabled": bool(eval_cfg_local.get("is_enabled", True)),
+            "fid_enabled": bool(eval_cfg_local.get("fid_enabled", True)) if eval_mode != "sudoku" else False,
+            "is_enabled": bool(eval_cfg_local.get("is_enabled", True)) if eval_mode != "sudoku" else False,
             "fid_num_samples": int(fid_num_samples),
             "fid_batch_size": int(fid_batch_size),
             "is_num_samples": int(eval_cfg_local.get("is_num_samples", fid_num_samples)),
             "is_batch_size": int(is_batch_size),
             "prefix": str(fid_prefix),
+            "sudoku_every": int(sudoku_every),
+            "sudoku_num_batches": int(eval_cfg_local.get("sudoku_num_batches", 64)),
+            "sudoku_num_batches_force": int(eval_cfg_local.get("sudoku_num_batches_force", -1)),
         },
         "metrics": metrics,
     }

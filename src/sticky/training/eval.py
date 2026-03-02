@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import hydra
 import jax
@@ -170,7 +170,26 @@ def build_eval_logger(
     fid_log_at_step_zero: bool,
     fid_cache_dir: Optional[str],
     fid_tfds_data_dir: Optional[str],
+    task: Optional[Any] = None,
+    model: Optional[Any] = None,
+    eval_every: int = 0,
+    sample_timesteps_override: Optional[int] = None,
 ):
+    mode = str(eval_cfg.get("mode", "fid_is")).lower()
+    if mode == "sudoku":
+        from sticky.eval.sudoku import build_sudoku_eval_logger
+
+        return build_sudoku_eval_logger(
+            cfg=cfg,
+            eval_cfg=eval_cfg,
+            task=task,
+            model=model,
+            wandb_mod=wandb_mod,
+            eval_every=int(eval_every),
+            log_at_step_zero=bool(fid_log_at_step_zero),
+            sample_timesteps_override=sample_timesteps_override,
+        )
+
     if sample_images_fid_jit is None:
         return None
     if not numpy_available():

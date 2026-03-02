@@ -22,6 +22,8 @@ def simple_generate(
     batch_size: int,
     shape: Sequence[int],
     cfg: SamplerConfig,
+    known_idx: Array | None = None,
+    known_mask: Array | None = None,
 ) -> ReverseSampleResult:
 
     shape_tup: Tuple[int, ...] = tuple(int(x) for x in shape)
@@ -40,4 +42,6 @@ def simple_generate(
         shape=shape_tup,
         batch_size=int(batch_size),
         cfg=cfg,
+        known_idx=known_idx,
+        known_mask=known_mask,
     )

@@ -1,0 +1,47 @@
+# SJD model config for Sudoku (sequence tokens).
+name: sjd
+
+# Anchor table.
+anchor_dim: 64
+learnable_anchors: false
+anchors_init_std: 1.0
+
+# Classifier backbone.
+# MGDM "Tiny"/6M GPT-2-like setting: 3 layers, 12 heads, hidden dim 384.
+# In this codebase, transformer dim = feature_dim * num_heads.
+feature_dim: 32
+num_heads: 12
+n_layers: 3
+n_dit_layers: 0
+dit_num_heads: 12
+dit_hidden_size: 384
+
+# Image-only knobs are unused for sequence mode, but still required.
+ch_mult: [1]
+
+# Regularization / architectural options.
+dropout_rate: 0.1
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: false
+cond_type: adaln
+outside_embed: false
+time_features: t
+
+# Backbone selection.
+sequence_backbone: transformer
+image_backbone: auto
+
+# ADM-style image UNet knobs (unused for sequence mode).
+adm_num_res_blocks: 2
+adm_attention_resolutions: [2, 4]
+adm_num_heads: 4
+adm_num_head_channels: -1
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+
+# Parallelization.
+model_sharding: false

@@ -106,17 +106,29 @@ def main_train_loop(
 
     eval_enabled = bool(eval_cfg.get("enabled", False))
     run_eval_at_end = bool(eval_cfg.get("run_at_end", True))
+    eval_mode = str(eval_cfg.get("mode", "fid_is")).lower()
 
-    fid_every = int(eval_cfg.get("fid_every", eval_every_steps)) if eval_enabled else 0
-    is_every = int(eval_cfg.get("is_every", fid_every)) if eval_enabled else 0
+    sudoku_every = 0
+    fid_every = 0
+    is_every = 0
+    if eval_enabled and eval_mode == "sudoku":
+        sudoku_every = int(eval_cfg.get("sudoku_every", eval_every_steps))
+    elif eval_enabled:
+        fid_every = int(eval_cfg.get("fid_every", eval_every_steps))
+        is_every = int(eval_cfg.get("is_every", fid_every))
+
     fid_num_samples = int(eval_cfg.get("fid_num_samples", 50_000))
     fid_batch_size = int(eval_cfg.get("fid_batch_size", 256))
     is_batch_size = int(eval_cfg.get("is_batch_size", fid_batch_size))
     fid_prefix = str(eval_cfg.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg.get("log_at_step_zero", False))
-    eval_sample_needed = eval_enabled and ((max(fid_every, is_every) > 0) or run_eval_at_end)
+    eval_sample_needed = (
+        eval_enabled
+        and eval_mode != "sudoku"
+        and ((max(fid_every, is_every) > 0) or run_eval_at_end)
+    )
     eval_sample_every = max(fid_every, is_every) if max(fid_every, is_every) > 0 else (1 if eval_sample_needed else 0)
-    eval_sample_batch_size = max(fid_batch_size, is_batch_size)
+    eval_sample_batch_size = max(fid_batch_size, is_batch_size, 1)
 
     fid_cache_dir = resolve_from_original_cwd(str(eval_cfg.get("fid_cache_dir", "data/fid_stats")))
     fid_tfds_data_dir = resolve_from_original_cwd(eval_cfg.get("fid_tfds_data_dir", None))
@@ -143,6 +155,9 @@ def main_train_loop(
         fid_log_at_step_zero=fid_log_at_step_zero,
         fid_cache_dir=fid_cache_dir,
         fid_tfds_data_dir=fid_tfds_data_dir,
+        task=task,
+        model=model,
+        eval_every=(sudoku_every if eval_mode == "sudoku" else max(fid_every, is_every)),
     )
 
     train_step_fn = make_train_step_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
@@ -230,14 +245,22 @@ def main_train_loop(
                 if sjd_sample_metrics is not None:
                     wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step_i)
 
-            eval_due = (
-                eval_enabled
-                and (maybe_log_eval is not None)
-                and (
-                    ((fid_every > 0) and (step_i % fid_every == 0))
-                    or ((is_every > 0) and (step_i % is_every == 0))
+            if eval_mode == "sudoku":
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (sudoku_every > 0)
+                    and (step_i % sudoku_every == 0)
                 )
-            )
+            else:
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (
+                        ((fid_every > 0) and (step_i % fid_every == 0))
+                        or ((is_every > 0) and (step_i % is_every == 0))
+                    )
+                )
             checkpoint_due = (
                 (checkpoint_writer is not None)
                 and (checkpoint_every_steps > 0)
@@ -323,14 +346,22 @@ def main_train_loop(
                 if sjd_sample_metrics is not None:
                     wandb_mod.log(sanitize_metrics(sjd_sample_metrics), step=step_i)
 
-            eval_due = (
-                eval_enabled
-                and (maybe_log_eval is not None)
-                and (
-                    ((fid_every > 0) and (step_i % fid_every == 0))
-                    or ((is_every > 0) and (step_i % is_every == 0))
+            if eval_mode == "sudoku":
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (sudoku_every > 0)
+                    and (step_i % sudoku_every == 0)
                 )
-            )
+            else:
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (
+                        ((fid_every > 0) and (step_i % fid_every == 0))
+                        or ((is_every > 0) and (step_i % is_every == 0))
+                    )
+                )
             if eval_due and maybe_log_eval is not None:
                 eval_metrics = maybe_log_eval(step_i, params_for_sampling(state))
                 if eval_metrics:

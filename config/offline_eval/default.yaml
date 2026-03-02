@@ -21,6 +21,7 @@ checkpoint_step: null
 use_ema: true
 
 # Force a one-off metric pass regardless of schedule cadence.
+# For non-FID evaluators (e.g. Sudoku), these flags still trigger evaluation.
 force_fid: true
 force_is: true
 
@@ -29,4 +30,3 @@ sample_timesteps: null
 
 # Where to write the JSON report (relative to Hydra output dir unless absolute).
 output_path: offline_eval_metrics.json
-

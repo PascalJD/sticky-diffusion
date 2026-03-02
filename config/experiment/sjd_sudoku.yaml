@@ -1,0 +1,20 @@
+# SJD experiment bundle for Sudoku.
+
+defaults:
+  # Core components.
+  - /dataset: sudoku
+  - /model: sjd_sudoku
+  - /optim: adamw_sudoku
+  - /training: sjd_sudoku
+  - /runtime: default
+
+  # SJD-specific sampling and forward-process pieces.
+  - /sampler: sjd_sudoku
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+
+  - _self_
+
+task:
+  name: sjd_sudoku

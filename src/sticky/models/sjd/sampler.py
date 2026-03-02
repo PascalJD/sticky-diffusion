@@ -86,6 +86,8 @@ def reverse_sample(
     shape: Tuple[int, ...],
     batch_size: int,
     cfg: SamplerConfig,
+    known_idx: Array | None = None,
+    known_mask: Array | None = None,
 ) -> ReverseSampleResult:
     """
     This is a splitting scheme:
@@ -112,6 +114,24 @@ def reverse_sample(
 
     committed = jnp.zeros((batch_size,) + tuple(shape), dtype=bool)
     k_idx = -jnp.ones((batch_size,) + tuple(shape), dtype=jnp.int32)
+    known_frac = jnp.asarray(0.0, dtype=jnp.float32)
+
+    if (known_idx is None) != (known_mask is None):
+        raise ValueError("known_idx and known_mask must both be provided or both be None.")
+    if known_idx is not None and known_mask is not None:
+        known_idx = jnp.asarray(known_idx, dtype=jnp.int32)
+        known_mask = jnp.asarray(known_mask, dtype=bool)
+        if known_idx.shape != committed.shape or known_mask.shape != committed.shape:
+            raise ValueError(
+                "known_idx/known_mask must match sampled token shape "
+                f"{committed.shape}; got {known_idx.shape} and {known_mask.shape}."
+            )
+        known_idx_clipped = jnp.clip(known_idx, 0, L - 1)
+        known_vec = a_table[known_idx_clipped]
+        y = jnp.where(known_mask[..., None], known_vec, y)
+        committed = known_mask
+        k_idx = jnp.where(known_mask, known_idx_clipped, k_idx)
+        known_frac = jnp.mean(known_mask.astype(jnp.float32))
 
     jump_count = jnp.asarray(0.0, jnp.float32)
     lam_sum_active = jnp.asarray(0.0, jnp.float32)
@@ -258,6 +278,7 @@ def reverse_sample(
         "sampling/frac_committed_pre_force": frac_committed_pre_force,
         "sampling/frac_committed_final": jnp.mean(committed.astype(jnp.float32)),
         "sampling/fill_frac_by_final_classify": 1.0 - frac_committed_pre_force,
+        "sampling/known_frac": known_frac,
         "sampling/jump_count": jump_count,
         "sampling/jump_frac_total": jump_frac,
         "sampling/lam_mean_active": lam_mean_active,
