@@ -1,92 +1,70 @@
-# ANVIL Slurm Scripts (CADD + MD4 Baseline)
+# Anvil Slurm Launchers
 
-This folder contains one clean workflow for Anvil:
-- allocate 1 node with 2 GPUs on `ai`
-- train **CADD first**, then **MD4** in order
-- enforce the shared 114M-ish ADM UNet baseline
-- disable augmentation, FID/IS, and CADD corrector
+Fresh layout with one job = one model.
 
-By default, submit uses two Slurm jobs with dependency:
-- CADD job runs first
-- MD4 job is submitted with `afterok:<cadd_jobid>`
+## Files
 
-This avoids long single-job walltime limits on Anvil.
-The training runner also performs a JAX preflight check and fails fast if fewer
-local GPUs are visible than expected for `platform=pmap`.
+- `submit_train.sh`: generic submit entrypoint for any model.
+- `train_model.slurm`: generic runtime script that executes one training run.
+- `submit_cadd.sh`: CADD wrapper with paper-style defaults.
+- `submit_md4.sh`: MD4 wrapper with paper-style defaults.
 
-## Submit
+## Recommended usage
+
+### CADD baseline
 
 ```bash
-ACCOUNT=<your-allocation> \
-CONDA_ENV=sticky \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
+ACCOUNT=<allocation> \
+CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
+EXCLUDE=<optional_bad_nodes> \
+RUN_TAG=cadd_baseline_$(date +%Y%m%d_%H%M%S) \
+bash scripts/slurm/anvil/submit_cadd.sh
 ```
 
-`CONSTRAINT` is optional and unset by default. Only set it if you have a confirmed
-valid feature string on your Anvil allocation.
-You can also set `EXCLUDE=<node1,node2>` to avoid known-problematic nodes.
-
-## Defaults enforced by the job
-
-- architecture:
-  - `adm_unet5d`
-  - `feature_dim=96`
-  - `ch_mult=[3,4,4]`
-  - `adm_num_res_blocks=4`
-  - `adm_attention_resolutions=[2,4]`
-  - `adm_num_heads=4`
-  - `adm_num_head_channels=64`
-  - `adm_num_heads_upsample=-1`
-  - `adm_conv_resample=true`
-  - `adm_use_scale_shift_norm=true`
-  - `adm_resblock_updown=false`
-  - `adm_use_conv_skip=false`
-- optimization/training:
-  - AdamW, `lr=1e-4`, `warmup_steps=100`, `b2=0.99`, `weight_decay=0.01`
-  - `num_train_steps=500000`
-  - `batch_size=256` (default for both CADD and MD4)
-- logging/sampling:
-  - `log_every_steps=1000`
-  - `log_images_every_steps=0` (disabled by default for stable long runs)
-  - `checkpoint_every_steps=10000`
-  - `save_final_checkpoint=true`
-  - `model.timesteps=512`
-  - `training.sample_timesteps=512`
-  - `eval.enabled=false` (no FID/IS)
-- other:
-  - `wandb.enabled=true`
-  - `dataset.augment.enabled=false`
-  - CADD corrector disabled (`corrector_enabled=false`, `corrector_steps=0`)
-
-## Common overrides
+### MD4 baseline
 
 ```bash
-# Job resources (split mode, default)
-TIME_LIMIT_CADD=24:00:00 \
-TIME_LIMIT_MD4=24:00:00 \
-CPUS_PER_TASK=48 \
-MEMORY=480G \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
+ACCOUNT=<allocation> \
+CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
+EXCLUDE=<optional_bad_nodes> \
+RUN_TAG=md4_baseline_$(date +%Y%m%d_%H%M%S) \
+bash scripts/slurm/anvil/submit_md4.sh
+```
 
-# Force single-allocation mode (legacy behavior)
-SPLIT_JOBS=0 \
+## Generic usage
+
+Run any model from one command path:
+
+```bash
+MODEL=sjd \
+EXPERIMENT_CFG=sjd_cifar10 \
+EVAL_CFG=sjd_cifar10 \
+ACCOUNT=<allocation> \
+CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
 TIME_LIMIT=24:00:00 \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
-
-# Paths
-DATA_DIR=/anvil/scratch/$USER/sticky-diffusion/data/cifar10 \
-OUTPUT_ROOT=/anvil/scratch/$USER/sticky-diffusion/outputs/baselines \
-RUN_TAG=my_baseline_run \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
-
-# Extra Hydra overrides (space-separated)
-EXTRA_OVERRIDES_COMMON="experiment.training.seed=1" \
-EXTRA_OVERRIDES_CADD="experiment.model.dropout_rate=0.0" \
-EXTRA_OVERRIDES_MD4="experiment.model.dropout_rate=0.0" \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
-
-# Per-phase batch sizes
-BATCH_SIZE_CADD=256 \
-BATCH_SIZE_MD4=256 \
-bash scripts/slurm/anvil/submit_cadd_md4_sequential.sh
+GPUS_PER_NODE=2 \
+PLATFORM=pmap \
+REQUIRED_LOCAL_DEVICES=2 \
+RUN_TAG=sjd_run_$(date +%Y%m%d_%H%M%S) \
+EXTRA_OVERRIDES="experiment.dataset.augment.enabled=false" \
+bash scripts/slurm/anvil/submit_train.sh
 ```
+
+## Key environment knobs
+
+- `MODEL`: model key (`cadd`, `md4`, `sjd`, or custom with explicit `EXPERIMENT_CFG`/`EVAL_CFG`).
+- `ACCOUNT`, `PARTITION`, `QOS`, `CONSTRAINT`, `EXCLUDE`, `NODELIST`: Slurm placement/accounting.
+- `GPUS_PER_NODE`, `CPUS_PER_TASK`, `MEMORY`, `TIME_LIMIT`: Slurm resources.
+- `CONDA_ENV`, `ANVIL_MODULES`: Python environment setup.
+- `RUN_TAG`, `OUTPUT_ROOT`, `DATA_DIR`: output/data location.
+- `PLATFORM`: `single`, `pmap`, or `auto`.
+- `REQUIRED_LOCAL_DEVICES`: fail-fast JAX preflight threshold in `pmap`.
+- `BATCH_SIZE`, `EVAL_BATCH_SIZE`, `TRAIN_STEPS`, `CHECKPOINT_EVERY`, `LOG_IMAGES_EVERY`.
+- `WANDB_ENABLED`, `EVAL_ENABLED`, `SAVE_FINAL_CHECKPOINT`.
+- `BASELINE_ARCH_114M`, `DISABLE_AUGMENT`, `DISABLE_CORRECTOR`.
+- `EXTRA_OVERRIDES`: extra Hydra overrides (space-separated).
+
+## Notes
+
+- The runtime script performs a JAX device preflight when `PLATFORM=pmap` and aborts if not enough local devices are visible.
+- The wrappers are thin defaults only; override any variable at submit time.
