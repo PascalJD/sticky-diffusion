@@ -8,6 +8,7 @@ Fresh layout with one job = one model.
 - `train_model.slurm`: generic runtime script that executes one training run.
 - `submit_cadd.sh`: CADD wrapper with paper-style defaults.
 - `submit_md4.sh`: MD4 wrapper with paper-style defaults.
+- `submit_sjd.sh`: SJD wrapper with CADD-matched training cadence and explicit forward defaults.
 
 ## Recommended usage
 
@@ -29,6 +30,16 @@ CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
 EXCLUDE=<optional_bad_nodes> \
 RUN_TAG=md4_baseline_$(date +%Y%m%d_%H%M%S) \
 bash scripts/slurm/anvil/submit_md4.sh
+```
+
+### SJD baseline
+
+```bash
+ACCOUNT=<allocation> \
+CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
+EXCLUDE=<optional_bad_nodes> \
+RUN_TAG=sjd_baseline_$(date +%Y%m%d_%H%M%S) \
+bash scripts/slurm/anvil/submit_sjd.sh
 ```
 
 ## Generic usage
@@ -68,3 +79,8 @@ bash scripts/slurm/anvil/submit_train.sh
 
 - The runtime script performs a JAX device preflight when `PLATFORM=pmap` and aborts if not enough local devices are visible.
 - The wrappers are thin defaults only; override any variable at submit time.
+- `submit_sjd.sh` pins:
+  - `forward/beta=vp_linear`
+  - `forward/hazard=poly_alpha`
+  - `forward/jump=vp_matched`
+  - `forward.jump.eta=0.8`
