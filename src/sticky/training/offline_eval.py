@@ -138,6 +138,62 @@ def _to_float_metrics(metrics: Dict[str, Any]) -> Dict[str, float]:
     return out
 
 
+def _to_float_scalar(value: Any) -> Optional[float]:
+    try:
+        return float(jax.device_get(value))
+    except Exception:
+        return None
+
+
+def _collect_sjd_sampler_probe_metrics(
+    *,
+    cfg: DictConfig,
+    task,
+    model,
+    params_for_eval,
+    sample_timesteps: int,
+    batch_size: int,
+    num_batches: int,
+    seed: int,
+) -> Dict[str, float]:
+    _, sample_images_probe_jit = build_sampling_fns(
+        cfg=cfg,
+        task=task,
+        model=model,
+        num_log_images=batch_size,
+        sample_timesteps=sample_timesteps,
+        fid_every=1,
+        fid_batch_size=batch_size,
+    )
+    if sample_images_probe_jit is None:
+        raise RuntimeError("Could not build SJD sampler probe function.")
+
+    sums: Dict[str, float] = {}
+    counts: Dict[str, int] = {}
+    base_rng = jax.random.PRNGKey(int(seed))
+    for i in range(int(num_batches)):
+        rng = jax.random.fold_in(base_rng, int(i))
+        out = sample_images_probe_jit(params_for_eval, rng)
+        jax.block_until_ready(out.k_filled)
+        out_metrics = getattr(out, "metrics", None)
+        if out_metrics is None:
+            continue
+        for key, value in out_metrics.items():
+            scalar = _to_float_scalar(value)
+            if scalar is None:
+                continue
+            k = str(key)
+            sums[k] = sums.get(k, 0.0) + float(scalar)
+            counts[k] = counts.get(k, 0) + 1
+
+    mean_metrics: Dict[str, float] = {}
+    for key, total in sums.items():
+        count = counts.get(key, 0)
+        if count > 0:
+            mean_metrics[key] = float(total / count)
+    return mean_metrics
+
+
 def run_offline_checkpoint_eval(
     *,
     cfg: DictConfig,
@@ -264,6 +320,50 @@ def run_offline_checkpoint_eval(
             "Check eval settings and force flags."
         )
 
+    probe_batches_cfg = offline_cfg.get("sampler_probe_batches", 0)
+    probe_batches = 0 if _is_nullish(probe_batches_cfg) else int(probe_batches_cfg)
+    sampling_probe_payload = None
+    if probe_batches > 0:
+        if (str(cfg.model.name) == "sjd") and (eval_mode != "sudoku"):
+            probe_batch_size_cfg = offline_cfg.get("sampler_probe_batch_size", None)
+            if _is_nullish(probe_batch_size_cfg):
+                probe_batch_size = int(eval_sample_batch_size)
+            else:
+                probe_batch_size = int(probe_batch_size_cfg)
+
+            probe_seed_offset_cfg = offline_cfg.get("sampler_probe_seed_offset", 777777)
+            probe_seed_offset = (
+                777777 if _is_nullish(probe_seed_offset_cfg) else int(probe_seed_offset_cfg)
+            )
+            probe_seed = int(cfg.training.seed) + probe_seed_offset
+
+            probe_metrics = _collect_sjd_sampler_probe_metrics(
+                cfg=cfg,
+                task=task,
+                model=model,
+                params_for_eval=params_for_eval,
+                sample_timesteps=sample_timesteps,
+                batch_size=probe_batch_size,
+                num_batches=probe_batches,
+                seed=probe_seed,
+            )
+            sampling_probe_payload = {
+                "enabled": True,
+                "num_batches": int(probe_batches),
+                "batch_size": int(probe_batch_size),
+                "seed": int(probe_seed),
+                "metrics": probe_metrics,
+            }
+        else:
+            sampling_probe_payload = {
+                "enabled": False,
+                "requested_batches": int(probe_batches),
+                "reason": (
+                    "sampler probes are supported only for non-sudoku SJD runs; "
+                    f"got model={cfg.model.name!r}, eval_mode={eval_mode!r}"
+                ),
+            }
+
     output_path_cfg = offline_cfg.get("output_path", "offline_eval_metrics.json")
     if _is_nullish(output_path_cfg):
         output_path_cfg = "offline_eval_metrics.json"
@@ -302,6 +402,8 @@ def run_offline_checkpoint_eval(
         },
         "metrics": metrics,
     }
+    if sampling_probe_payload is not None:
+        payload["sampling_probe"] = sampling_probe_payload
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",

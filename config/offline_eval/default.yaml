@@ -28,5 +28,11 @@ force_is: true
 # Optional override for generator timesteps; null uses experiment.training.sample_timesteps.
 sample_timesteps: null
 
+# Optional sampler probe diagnostics (primarily for SJD sweeps).
+# Runs extra sampling batches and records mean sampler metrics in the report.
+sampler_probe_batches: 0
+sampler_probe_batch_size: null
+sampler_probe_seed_offset: 777777
+
 # Where to write the JSON report (relative to Hydra output dir unless absolute).
 output_path: offline_eval_metrics.json
