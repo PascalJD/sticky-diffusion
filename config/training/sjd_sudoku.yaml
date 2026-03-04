@@ -5,10 +5,8 @@ name: sjd_sudoku
 seed: 0
 
 # Optimization length and EMA.
-# Paper reference is 300 epochs for Sudoku.
-# With 1.8M train examples and batch size 128 this is:
-# 300 * ceil(1_800_000 / 128) = 4,218,750 steps.
-num_train_steps: 4218750
+# Shortened default horizon for faster iteration while tuning stability.
+num_train_steps: 3500000
 ema_rate: 0.9999
 
 # Logging/eval/checkpoint cadence.

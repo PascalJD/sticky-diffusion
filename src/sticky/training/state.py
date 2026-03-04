@@ -55,12 +55,19 @@ def make_lr_schedule(cfg: DictConfig):
 
 def make_optimizer(cfg: DictConfig):
     lr_schedule = make_lr_schedule(cfg)
-    return optax.adamw(
+    adamw_tx = optax.adamw(
         learning_rate=lr_schedule,
         b1=0.9,
         b2=float(cfg.optim.b2),
         weight_decay=float(cfg.optim.weight_decay),
     )
+    grad_clip_norm = float(cfg.optim.get("grad_clip_norm", 0.0))
+    if grad_clip_norm > 0.0:
+        return optax.chain(
+            optax.clip_by_global_norm(grad_clip_norm),
+            adamw_tx,
+        )
+    return adamw_tx
 
 
 def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):

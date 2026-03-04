@@ -1,0 +1,6 @@
+# VP-matched Gaussian jump proposal tuned for Sudoku SJD.
+_target_: sticky.models.sjd.jump.VPMatchedGaussianJump
+
+eta: 0.6
+std_floor: 1e-3
+clip: null

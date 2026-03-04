@@ -8,8 +8,8 @@ alloc_mode: sample
 score_from_classifier: true
 score_scale: 1.0
 
-# MGDM reports decoding temperature 0.5.
-logit_temperature: 0.5
+# Slightly higher decoding temperature for Sudoku SJD stability.
+logit_temperature: 0.8
 
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin

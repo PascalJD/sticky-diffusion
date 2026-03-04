@@ -1,9 +1,10 @@
 # AdamW settings for Sudoku experiments (Train For the Worst style).
 name: adamw
 
-# TrainForWorst Appendix D.2 reports lr=1e-3 for Sudoku.
-learning_rate: 1.0e-3
-warmup_steps: 1000
+# Tuned default for improved stability on Sudoku SJD training.
+learning_rate: 3.0e-4
+warmup_steps: 4000
+grad_clip_norm: 1.0
 
 # Keep repo-default AdamW regularization/moments unless otherwise specified.
 weight_decay: 0.01

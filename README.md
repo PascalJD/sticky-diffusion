@@ -43,7 +43,7 @@ Sudoku dataset setup:
 - If `SCRATCH` is set and `dataset.data_dir` is left at the default `data/sudoku`, files are downloaded to `$SCRATCH/sticky-diffusion/data/sudoku`.
 - You can still override `dataset.data_dir`, `dataset.train_file`, and `dataset.test_file`.
 - Supported sequence ordering is configured via `dataset.seq_order` with values: `dataset`, `fixed`, `random`.
-- The `sjd_sudoku` preset follows paper-style defaults: 6M GPT-2-like backbone (`3` layers, `12` heads, hidden dim `384`), `batch_size=128`, `learning_rate=1e-3`, and `50` reverse sampling steps.
+- The `sjd_sudoku` preset uses tuned defaults: 6M GPT-2-like backbone (`3` layers, `12` heads, hidden dim `384`), `batch_size=256`, `learning_rate=3e-4` (warmup `4000`), `grad_clip_norm=1.0`, jump `eta=0.6`, `logit_temperature=0.8`, and `50` reverse sampling steps.
 - Optional manual prefetch:
 ```bash
 python -m sticky.scripts.prepare_sudoku_data --data-dir data/sudoku

@@ -12,7 +12,7 @@ defaults:
   - /sampler: sjd_sudoku
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
-  - /forward/jump: vp_matched
+  - /forward/jump: vp_matched_sudoku
 
   - _self_
 
