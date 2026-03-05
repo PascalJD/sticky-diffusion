@@ -132,6 +132,8 @@ def main_train_loop(
 
     fid_cache_dir = resolve_from_original_cwd(str(eval_cfg.get("fid_cache_dir", "data/fid_stats")))
     fid_tfds_data_dir = resolve_from_original_cwd(eval_cfg.get("fid_tfds_data_dir", None))
+    if fid_tfds_data_dir is None:
+        fid_tfds_data_dir = resolve_from_original_cwd(cfg.dataset.get("data_dir", None))
 
     sample_images_jit, sample_images_fid_jit = build_sampling_fns(
         cfg=cfg,

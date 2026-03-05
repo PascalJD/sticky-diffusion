@@ -151,6 +151,7 @@ fi
 
 DATA_DIR="${DATA_DIR:-${SCRATCH_ROOT}/sticky-diffusion/data/cifar10}"
 FID_CACHE_DIR="${FID_CACHE_DIR:-${SCRATCH_ROOT}/sticky-diffusion/data/fid_stats}"
+FID_TFDS_DATA_DIR="${FID_TFDS_DATA_DIR:-${DATA_DIR}}"
 RUN_DIR="${RUN_DIR:-${SCRATCH_ROOT}/sticky-diffusion/outputs/offline_eval/sjd_eta_tau}"
 METRICS_BASENAME="${METRICS_BASENAME:-offline_eval_metrics.json}"
 METRICS_PATH="${RUN_DIR}/${METRICS_BASENAME}"
@@ -168,6 +169,7 @@ echo "eta: ${ETA}"
 echo "tau/logit_temperature: ${TAU}"
 echo "FID samples: ${FID_NUM_SAMPLES}"
 echo "FID batch size: ${FID_BATCH_SIZE}"
+echo "FID TFDS dir: ${FID_TFDS_DATA_DIR}"
 echo "Sampler probe batches: ${SAMPLER_PROBE_BATCHES}"
 echo
 
@@ -192,6 +194,7 @@ python -m sticky.entrypoints.eval_checkpoint \
   eval.fid_dataset_name=cifar10 \
   eval.fid_split=train \
   eval.fid_cache_dir="${FID_CACHE_DIR}" \
+  eval.fid_tfds_data_dir="${FID_TFDS_DATA_DIR}" \
   eval.is_enabled="${IS_ENABLED}" \
   eval.is_every=0 \
   eval.is_num_samples="${IS_NUM_SAMPLES}" \

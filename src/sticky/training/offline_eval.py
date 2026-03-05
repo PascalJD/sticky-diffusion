@@ -280,6 +280,10 @@ def run_offline_checkpoint_eval(
     fid_tfds_data_dir = resolve_from_original_cwd(
         eval_cfg_local.get("fid_tfds_data_dir", None)
     )
+    if fid_tfds_data_dir is None:
+        fid_tfds_data_dir = resolve_from_original_cwd(
+            cfg.dataset.get("data_dir", None)
+        )
 
     maybe_log_eval = build_eval_logger(
         cfg=cfg,
