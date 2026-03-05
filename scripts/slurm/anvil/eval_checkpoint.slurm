@@ -111,11 +111,19 @@ fi
 
 export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
 
+is_truthy() {
+  case "${1,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 EXPERIMENT_CFG="${EXPERIMENT_CFG:-sjd_cifar10}"
 EVAL_CFG="${EVAL_CFG:-sjd_cifar10}"
 PLATFORM="${PLATFORM:-single}"
 SEED="${SEED:-0}"
 WANDB_ENABLED="${WANDB_ENABLED:-false}"
+BASELINE_ARCH_114M="${BASELINE_ARCH_114M:-true}"
 
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-}"
 if [[ -z "${CHECKPOINT_DIR}" ]]; then
@@ -165,6 +173,7 @@ echo "Checkpoint source: ${CHECKPOINT_SOURCE}"
 echo "Checkpoint step: ${CHECKPOINT_STEP}"
 echo "Run dir: ${RUN_DIR}"
 echo "Metrics path: ${METRICS_PATH}"
+echo "114M baseline arch: ${BASELINE_ARCH_114M}"
 echo "eta: ${ETA}"
 echo "tau/logit_temperature: ${TAU}"
 echo "FID samples: ${FID_NUM_SAMPLES}"
@@ -172,6 +181,24 @@ echo "FID batch size: ${FID_BATCH_SIZE}"
 echo "FID TFDS dir: ${FID_TFDS_DATA_DIR}"
 echo "Sampler probe batches: ${SAMPLER_PROBE_BATCHES}"
 echo
+
+MODEL_OVERRIDES=()
+if is_truthy "${BASELINE_ARCH_114M}"; then
+  MODEL_OVERRIDES+=(
+    "experiment.model.image_backbone=adm_unet5d"
+    "experiment.model.feature_dim=96"
+    "experiment.model.ch_mult=[3,4,4]"
+    "experiment.model.adm_num_res_blocks=4"
+    "experiment.model.adm_attention_resolutions=[2,4]"
+    "experiment.model.adm_num_heads=4"
+    "experiment.model.adm_num_head_channels=64"
+    "experiment.model.adm_num_heads_upsample=-1"
+    "experiment.model.adm_conv_resample=true"
+    "experiment.model.adm_use_scale_shift_norm=true"
+    "experiment.model.adm_resblock_updown=false"
+    "experiment.model.adm_use_conv_skip=false"
+  )
+fi
 
 python -m sticky.entrypoints.eval_checkpoint \
   experiment="${EXPERIMENT_CFG}" \
@@ -181,6 +208,7 @@ python -m sticky.entrypoints.eval_checkpoint \
   experiment.runtime.platform="${PLATFORM}" \
   experiment.sampler.n_steps="${SAMPLER_STEPS}" \
   experiment.sampler.logit_temperature="${TAU}" \
+  "${MODEL_OVERRIDES[@]}" \
   forward/beta@experiment.forward.beta=vp_linear \
   forward/hazard@experiment.forward.hazard=poly_alpha \
   forward/jump@experiment.forward.jump=vp_matched \
