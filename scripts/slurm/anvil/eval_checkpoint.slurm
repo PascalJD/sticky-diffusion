@@ -62,7 +62,7 @@ ensure_conda_cmd() {
 
 if [[ -n "${ANVIL_MODULES:-}" ]]; then
   if ensure_module_cmd; then
-    module purge || true
+    module --force purge || true
     for mod in ${ANVIL_MODULES}; do
       module load "${mod}"
     done
@@ -174,7 +174,6 @@ echo
 python -m sticky.entrypoints.eval_checkpoint \
   experiment="${EXPERIMENT_CFG}" \
   eval="${EVAL_CFG}" \
-  seed="${SEED}" \
   experiment.training.seed="${SEED}" \
   experiment.dataset.data_dir="${DATA_DIR}" \
   experiment.runtime.platform="${PLATFORM}" \
