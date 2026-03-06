@@ -11,7 +11,7 @@ logit_temperature: 1.0
 
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
-intensity_mode: chunked
+intensity_mode: full
 log_ratio_clip: 10.0
 intensity_chunk_size: 256
 
