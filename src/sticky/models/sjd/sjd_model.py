@@ -12,6 +12,7 @@ Array = jnp.ndarray
 
 class SJD(nn.Module):
     anchor_dim: int = 64
+    anchor_init: str = "normal"
     learnable_anchors: bool = True
     anchors_init_std: float = 1.0
 
@@ -47,6 +48,7 @@ class SJD(nn.Module):
         self.anchors = TokenAnchors(
             vocab_size=self.vocab_size,
             anchor_dim=self.anchor_dim,
+            anchor_init=self.anchor_init,
             learnable=self.learnable_anchors,
             init_std=self.anchors_init_std,
         )

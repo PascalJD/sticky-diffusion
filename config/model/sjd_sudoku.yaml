@@ -3,6 +3,7 @@ name: sjd
 
 # Anchor table.
 anchor_dim: 64
+anchor_init: normal
 learnable_anchors: false
 anchors_init_std: 1.0
 

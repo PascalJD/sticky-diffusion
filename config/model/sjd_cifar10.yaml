@@ -1,10 +1,13 @@
 # SJD model config for CIFAR-10.
 name: sjd
 
-# Anchor table.
-anchor_dim: 64
+# Anchor table. Each RGB channel is a separate site, so anchor_dim=1 makes the
+# diffusion ambient space match HWC. For 8-bit images we use fixed ordered
+# scalar anchors a_k = -1 + 2k/255.
+anchor_dim: 1
+anchor_init: ordered_scalar
 learnable_anchors: false
-anchors_init_std: 1.0
+anchors_init_std: 1.0  # unused unless anchor_init=normal
 
 # Classifier backbone.
 feature_dim: 128

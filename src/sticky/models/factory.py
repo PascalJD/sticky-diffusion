@@ -56,6 +56,7 @@ def build_model(
         return SJD(
             vocab_size=vocab_size,
             anchor_dim=int(cfg.model.anchor_dim),
+            anchor_init=str(cfg.model.get("anchor_init", "normal")),
             learnable_anchors=bool(cfg.model.get("learnable_anchors", True)),
             anchors_init_std=float(cfg.model.get("anchors_init_std", 1.0)),
             feature_dim=int(cfg.model.feature_dim),

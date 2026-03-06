@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Dict
 
 import jax
@@ -53,7 +54,21 @@ def make_lr_schedule(cfg: DictConfig):
     )
 
 
-def make_optimizer(cfg: DictConfig):
+def _path_keys(path: Sequence[Any]) -> tuple[Any, ...]:
+    return tuple(
+        getattr(entry, "key", getattr(entry, "name", getattr(entry, "idx", entry)))
+        for entry in path
+    )
+
+
+def _sjd_optimizer_labels(params: Any):
+    def _label(path, _leaf):
+        return "frozen" if _path_keys(path) == ("anchors", "table") else "trainable"
+
+    return jax.tree_util.tree_map_with_path(_label, params)
+
+
+def make_optimizer(cfg: DictConfig, params: Any):
     lr_schedule = make_lr_schedule(cfg)
     adamw_tx = optax.adamw(
         learning_rate=lr_schedule,
@@ -61,13 +76,26 @@ def make_optimizer(cfg: DictConfig):
         b2=float(cfg.optim.b2),
         weight_decay=float(cfg.optim.weight_decay),
     )
+    base_tx: optax.GradientTransformation = adamw_tx
+    if (
+        str(cfg.model.name) == "sjd"
+        and not bool(cfg.model.get("learnable_anchors", True))
+    ):
+        base_tx = optax.multi_transform(
+            {
+                "trainable": adamw_tx,
+                "frozen": optax.set_to_zero(),
+            },
+            _sjd_optimizer_labels(params),
+        )
+
     grad_clip_norm = float(cfg.optim.get("grad_clip_norm", 0.0))
     if grad_clip_norm > 0.0:
         return optax.chain(
             optax.clip_by_global_norm(grad_clip_norm),
-            adamw_tx,
+            base_tx,
         )
-    return adamw_tx
+    return base_tx
 
 
 def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
@@ -121,7 +149,7 @@ def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
         raise ValueError(f"Unknown model.name={name!r} for init")
 
     params = variables["params"]
-    tx = make_optimizer(cfg)
+    tx = make_optimizer(cfg, params)
     opt_state = tx.init(params)
 
     ema_rate = float(cfg.training.ema_rate)
