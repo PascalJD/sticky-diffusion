@@ -13,7 +13,7 @@ log_every_steps: 500
 timing_warn_seconds: 15
 eval_every_steps: 50000
 checkpoint_every_steps: 10000
-log_images_every_steps: 5000
+log_images_every_steps: 2500
 num_log_images: 16
 
 # Artifact persistence.

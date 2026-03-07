@@ -34,20 +34,24 @@ def _full_intensity_and_choice(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     alloc_mode: str,
+    logit_temperature: float,
     log_ratio_clip: float,
     eps: float,
 ) -> Tuple[Array, Array]:
     """Dense plugin implementation that materializes [B, S, L]-scale tensors."""
+    if logit_temperature <= 0.0:
+        raise ValueError(f"logit_temperature must be > 0, got {logit_temperature}")
+
     logits = logits.astype(jnp.float32)
     y = y.astype(jnp.float32)
 
-    probs = jax.nn.softmax(logits, axis=-1).astype(jnp.float32)
-    B = probs.shape[0]
-    site_shape = probs.shape[1:-1]
-    L = int(probs.shape[-1])
+    B = logits.shape[0]
+    site_shape = logits.shape[1:-1]
+    L = int(logits.shape[-1])
+    logp = jax.nn.log_softmax(logits, axis=-1).astype(jnp.float32)
 
     y_flat = y.reshape((B, -1, y.shape[-1]))
-    probs_flat = probs.reshape((B, -1, L))
+    logp_flat = logp.reshape((B, -1, L))
 
     a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
     if int(a.shape[0]) != L:
@@ -77,19 +81,31 @@ def _full_intensity_and_choice(
     inv_q = 1.0 / var_q
     log_ratio = -0.5 * (d * jnp.log(var_r / var_q) + dist2 * (inv_r - inv_q))
     log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
-    ratio = jnp.exp(log_ratio).astype(jnp.float32)
 
     lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
-    lam = lam_base * probs_flat * ratio
-    lam = jnp.maximum(lam, jnp.asarray(eps, dtype=jnp.float32))
-    lam_total_flat = jnp.maximum(jnp.sum(lam, axis=-1), jnp.asarray(eps, dtype=jnp.float32))
+    log_lam_base = jnp.log(jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)))
+    logw_raw = log_lam_base + logp_flat + log_ratio
+    lam_total_flat = jnp.maximum(
+        jnp.sum(jnp.exp(logw_raw), axis=-1),
+        jnp.asarray(eps, dtype=jnp.float32),
+    )
+
+    if logit_temperature == 1.0:
+        logp_choice_flat = logp_flat
+    else:
+        logp_choice = jax.nn.log_softmax(
+            logits / jnp.asarray(logit_temperature, dtype=jnp.float32),
+            axis=-1,
+        ).astype(jnp.float32)
+        logp_choice_flat = logp_choice.reshape((B, -1, L))
+    logw_choice = log_lam_base + logp_choice_flat + log_ratio
 
     if alloc_mode == "argmax":
-        a_idx_flat = jnp.argmax(lam, axis=-1).astype(jnp.int32)
+        a_idx_flat = jnp.argmax(logw_choice, axis=-1).astype(jnp.int32)
     elif alloc_mode == "sample":
         a_idx_flat = jax.random.categorical(
             key,
-            jnp.log(lam),
+            logw_choice,
             axis=-1,
         ).astype(jnp.int32)
     else:
@@ -111,6 +127,7 @@ def _chunked_intensity_and_choice(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     alloc_mode: str,
+    logit_temperature: float,
     log_ratio_clip: float,
     chunk_size: int,
     eps: float,
@@ -118,6 +135,8 @@ def _chunked_intensity_and_choice(
     """Chunked plugin implementation with O(B*S*chunk_size) memory."""
     if chunk_size <= 0:
         raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+    if logit_temperature <= 0.0:
+        raise ValueError(f"logit_temperature must be > 0, got {logit_temperature}")
 
     logits = logits.astype(jnp.float32)
     y = y.astype(jnp.float32)
@@ -155,13 +174,21 @@ def _chunked_intensity_and_choice(
     log_lam_base = jnp.log(jnp.maximum(lam_base_flat, eps))
 
     log_norm = jax.nn.logsumexp(logits_flat, axis=-1, keepdims=True)
+    if logit_temperature == 1.0:
+        log_norm_choice = log_norm
+    else:
+        log_norm_choice = jax.nn.logsumexp(
+            logits_flat / jnp.asarray(logit_temperature, dtype=jnp.float32),
+            axis=-1,
+            keepdims=True,
+        )
 
     n_sites_total = logits_flat.shape[0]
     n_chunks = (L + chunk_size - 1) // chunk_size
     offsets = jnp.arange(chunk_size, dtype=jnp.int32)
     neg_inf = jnp.array(-jnp.inf, dtype=jnp.float32)
 
-    def _chunk_logw(chunk_idx: Array) -> tuple[Array, Array]:
+    def _chunk_logw(chunk_idx: Array) -> tuple[Array, Array, Array]:
         start = chunk_idx * int(chunk_size)
         idx = start + offsets
         valid = idx < L
@@ -170,6 +197,14 @@ def _chunked_intensity_and_choice(
         logits_chunk = logits_flat[:, idx_clipped]
         logits_chunk = jnp.where(valid[None, :], logits_chunk, neg_inf)
         logp_chunk = logits_chunk - log_norm
+        if logit_temperature == 1.0:
+            logp_choice_chunk = logp_chunk
+        else:
+            logits_choice_chunk = logits_chunk / jnp.asarray(
+                logit_temperature,
+                dtype=jnp.float32,
+            )
+            logp_choice_chunk = logits_choice_chunk - log_norm_choice
 
         a_chunk = a[idx_clipped]
         dot = y_flat @ a_chunk.T
@@ -183,20 +218,21 @@ def _chunked_intensity_and_choice(
         log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
         log_ratio = jnp.where(valid[None, :], log_ratio, neg_inf)
 
-        logw = log_lam_base[:, None] + logp_chunk + log_ratio
-        return logw, idx
+        logw_raw = log_lam_base[:, None] + logp_chunk + log_ratio
+        logw_choice = log_lam_base[:, None] + logp_choice_chunk + log_ratio
+        return logw_raw, logw_choice, idx
 
     if alloc_mode == "argmax":
 
         def body_fn(i: int, carry):
             lam_total, best_score, best_idx = carry
-            logw, idx = _chunk_logw(jnp.asarray(i, dtype=jnp.int32))
+            logw_raw, logw_choice, idx = _chunk_logw(jnp.asarray(i, dtype=jnp.int32))
 
-            weights = jnp.exp(logw)
+            weights = jnp.exp(logw_raw)
             lam_total = lam_total + jnp.sum(weights, axis=-1)
 
-            local = jnp.argmax(logw, axis=-1).astype(jnp.int32)
-            score = jnp.max(logw, axis=-1)
+            local = jnp.argmax(logw_choice, axis=-1).astype(jnp.int32)
+            score = jnp.max(logw_choice, axis=-1)
             idx_global = jnp.minimum(idx[local], L - 1).astype(jnp.int32)
             take = score > best_score
             best_score = jnp.where(take, score, best_score)
@@ -216,21 +252,21 @@ def _chunked_intensity_and_choice(
             key_i, lam_total, best_score, best_idx = carry
             key_i, key_g = jax.random.split(key_i)
 
-            logw, idx = _chunk_logw(jnp.asarray(i, dtype=jnp.int32))
-            weights = jnp.exp(logw)
+            logw_raw, logw_choice, idx = _chunk_logw(jnp.asarray(i, dtype=jnp.int32))
+            weights = jnp.exp(logw_raw)
             lam_total = lam_total + jnp.sum(weights, axis=-1)
 
             gumbel = -jnp.log(
                 -jnp.log(
                     jax.random.uniform(
                         key_g,
-                        shape=logw.shape,
+                        shape=logw_choice.shape,
                         minval=jnp.array(eps, dtype=jnp.float32),
                         maxval=jnp.array(1.0, dtype=jnp.float32),
                     )
                 )
             )
-            draw = logw + gumbel
+            draw = logw_choice + gumbel
             local = jnp.argmax(draw, axis=-1).astype(jnp.int32)
             score = jnp.max(draw, axis=-1)
             idx_global = jnp.minimum(idx[local], L - 1).astype(jnp.int32)
@@ -267,12 +303,16 @@ def plugin_intensity_and_choice(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     alloc_mode: str,
+    logit_temperature: float = 1.0,
     intensity_mode: str = "chunked",
     log_ratio_clip: float = 10.0,
     chunk_size: int = 256,
     eps: float = 1e-20,
 ) -> Tuple[Array, Array]:
     """Compute total plugin intensity and selected anchor index.
+
+    `logit_temperature` only affects the per-jump anchor allocation; the total
+    plugin intensity is always computed from the raw classifier distribution.
 
     `intensity_mode` controls the implementation:
       - `chunked` (default): low-memory streaming over anchor chunks.
@@ -290,6 +330,7 @@ def plugin_intensity_and_choice(
             hazard=hazard,
             jump=jump,
             alloc_mode=alloc_mode,
+            logit_temperature=logit_temperature,
             log_ratio_clip=log_ratio_clip,
             eps=eps,
         )
@@ -304,6 +345,7 @@ def plugin_intensity_and_choice(
             hazard=hazard,
             jump=jump,
             alloc_mode=alloc_mode,
+            logit_temperature=logit_temperature,
             log_ratio_clip=log_ratio_clip,
             chunk_size=chunk_size,
             eps=eps,

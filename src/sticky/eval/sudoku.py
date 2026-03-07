@@ -175,12 +175,15 @@ def build_sudoku_eval_logger(
             )
         ),
         hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
-        alloc_mode=str(cfg.sampler.get("alloc_mode", "argmax")),
+        alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
         intensity_mode=str(cfg.sampler.get("intensity_mode", "chunked")),
         log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
         intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
         init_std=float(cfg.sampler.get("init_std", 1.0)),
         force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
+        refresh_logits_after_em_step=bool(
+            cfg.sampler.get("refresh_logits_after_em_step", False)
+        ),
     )
 
     prefix = str(eval_cfg.get("prefix", "eval"))

@@ -43,19 +43,21 @@ class SamplerConfig:
     score_from_classifier: bool = True
     score_scale: float = 1.0
     logit_temperature: float = 1.0
-    alloc_mode: str = "argmax"  # "argmax" | "sample"
+    alloc_mode: str = "sample"  # "argmax" | "sample"
     hazard_mode: str = "plugin"
     intensity_mode: str = "chunked"  # "chunked" | "full"
     log_ratio_clip: float = 10.0
     intensity_chunk_size: int = 256
     init_std: float = 1.0
     eps_denom: float = 1e-12
-    force_classify_at_end: bool = True
+    force_classify_at_end: bool = True  # legacy name: force final plug-in jump at t=dt
+    refresh_logits_after_em_step: bool = False
 
 
 @struct.dataclass
 class ReverseSampleResult:
     # k: committed anchor indices, -1 for uncommitted if force_classify_at_end=False
+    # k_filled: convenience fill if any sites remain uncommitted at the end
     k: Array
     k_filled: Array
     committed: Array
@@ -93,7 +95,15 @@ def reverse_sample(
     This is a splitting scheme:
         1) Evaluate classifier once at current state y_t.
         2) Euler-Maruyama reverse VP diffusion step (only on uncommitted sites).
-        3) Bernoulli jump step to commit sites to anchors, using the same logits.
+        3) Bernoulli jump step to commit sites to anchors.
+
+    By default the reverse score uses the raw classifier distribution, while
+    `logit_temperature` only affects jump-time anchor allocation. If
+    `refresh_logits_after_em_step=True`, the jump step makes a second classifier
+    call on the post-EM state at the next time slice. If
+    `force_classify_at_end=True`, the final strictly positive slice forces a
+    plug-in jump for any remaining uncommitted sites; no separate t=0
+    classifier projection is applied in that path.
 
     Returns:
         ReverseSampleResult with indices and sampling metrics.
@@ -137,13 +147,25 @@ def reverse_sample(
     lam_sum_active = jnp.asarray(0.0, jnp.float32)
     p_jump_sum_active = jnp.asarray(0.0, jnp.float32)
     active_count_total = jnp.asarray(0.0, jnp.float32)
+    frac_committed_pre_force = jnp.asarray(0.0, dtype=jnp.float32)
 
     def step_fn(i: int, carry):
-        key, y, committed, k_idx, jump_count, lam_sum_active, p_jump_sum_active, active_count_total = carry
+        (
+            key,
+            y,
+            committed,
+            k_idx,
+            jump_count,
+            lam_sum_active,
+            p_jump_sum_active,
+            active_count_total,
+            frac_committed_pre_force,
+        ) = carry
 
         # Forward-time parameter for this reverse-time slice: t = T - i·dt.
         t_scalar = jnp.asarray(cfg.T - dt * i, dtype=jnp.float32)
         t_img = _broadcast_time_to_batch(t_scalar, batch_size)
+        is_last_step = i == int(cfg.n_steps) - 1
 
         # Diffusion step (Euler-Maruyama)
         if not cfg.score_from_classifier:
@@ -151,9 +173,8 @@ def reverse_sample(
 
         y_for_model = y
         key, k_eps, k_u, k_a = jax.random.split(key, 4)
-        logits, _ = apply_model(params, y_for_model, t_img)
-        logits_scaled = logits / logit_temperature
-        probs = jax.nn.softmax(logits_scaled, axis=-1)
+        logits_score, _ = apply_model(params, y_for_model, t_img)
+        probs = jax.nn.softmax(logits_score, axis=-1)
 
         probs2 = probs.reshape((-1, L)).astype(jnp.float32)
         mu2 = probs2 @ a_table
@@ -178,17 +199,37 @@ def reverse_sample(
         noise = jax.random.normal(k_eps, shape=y.shape, dtype=jnp.float32)
         y = y + m * (drift * dt + jnp.sqrt(bt * dt) * noise)
 
-        # Jump step (plugin hazard), reusing the single classifier call above.
+        jump_y = y_for_model
+        jump_t_img = t_img
+        jump_logits = logits_score
+        if cfg.refresh_logits_after_em_step:
+            refreshed_t_scalar = jnp.maximum(
+                t_scalar - jnp.asarray(dt, dtype=jnp.float32),
+                jnp.asarray(0.0, dtype=jnp.float32),
+            )
+            refreshed_t_img = _broadcast_time_to_batch(refreshed_t_scalar, batch_size)
+            refreshed_y = y
+            refreshed_logits, _ = apply_model(params, refreshed_y, refreshed_t_img)
+            jump_t_img = refreshed_t_img
+            jump_y = refreshed_y
+            jump_logits = refreshed_logits
+            if cfg.force_classify_at_end:
+                jump_t_img = jnp.where(is_last_step, t_img, jump_t_img)
+                jump_y = jnp.where(is_last_step, y_for_model, jump_y)
+                jump_logits = jnp.where(is_last_step, logits_score, jump_logits)
+
+        # Jump step (plugin hazard). Temperature only changes allocation.
         lam_total, a_idx = plugin_intensity_and_choice(
             key=k_a,
-            logits=logits_scaled,
-            y=y_for_model,
-            t_img=t_img,
+            logits=jump_logits,
+            y=jump_y,
+            t_img=jump_t_img,
             anchors=anchors,
             beta=beta,
             hazard=hazard,
             jump=jump,
             alloc_mode=cfg.alloc_mode,
+            logit_temperature=float(cfg.logit_temperature),
             intensity_mode=cfg.intensity_mode,
             log_ratio_clip=float(cfg.log_ratio_clip),
             chunk_size=int(cfg.intensity_chunk_size),
@@ -205,6 +246,13 @@ def reverse_sample(
 
         u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
         jump_mask = (~committed) & (u < p_jump)
+        if cfg.force_classify_at_end:
+            frac_committed_pre_force = jnp.where(
+                is_last_step,
+                jnp.mean(committed.astype(jnp.float32)),
+                frac_committed_pre_force,
+            )
+            jump_mask = jnp.where(is_last_step, ~committed, jump_mask)
 
         # Commit: set discrete index + snap y to the chosen anchor vector.
         k_idx = jnp.where(jump_mask, a_idx, k_idx)
@@ -222,6 +270,7 @@ def reverse_sample(
             lam_sum_active,
             p_jump_sum_active,
             active_count_total,
+            frac_committed_pre_force,
         )
 
     carry = (
@@ -233,6 +282,7 @@ def reverse_sample(
         lam_sum_active,
         p_jump_sum_active,
         active_count_total,
+        frac_committed_pre_force,
     )
     carry = jax.lax.fori_loop(0, int(cfg.n_steps), step_fn, carry)
     (
@@ -244,6 +294,7 @@ def reverse_sample(
         lam_sum_active,
         p_jump_sum_active,
         active_count_total,
+        frac_committed_pre_force,
     ) = carry
 
     # Fraction of sites that jumped at least once.
@@ -253,36 +304,37 @@ def reverse_sample(
     lam_mean_active = lam_sum_active / denom_active
     p_jump_mean_active = p_jump_sum_active / denom_active
 
-    # Always compute a filled k for convenience/visualization.
-    t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
-    logits_end, _ = apply_model(params, y, t0)
-    logits_end_scaled = logits_end / logit_temperature
-    probs_end = jax.nn.softmax(logits_end_scaled, axis=-1)
-    key, k_end = jax.random.split(key)
-    if cfg.alloc_mode == "sample":
-        k_fill = jax.random.categorical(k_end, jnp.log(probs_end + 1e-20), axis=-1).astype(jnp.int32)
-    else:
-        k_fill = jnp.argmax(probs_end, axis=-1).astype(jnp.int32)
+    final_committed_frac = jnp.mean(committed.astype(jnp.float32))
 
-    k_filled = jnp.where(committed, k_idx, k_fill)
-
-    frac_committed_pre_force = jnp.mean(committed.astype(jnp.float32))
-
+    # Fill any remaining sites only as a convenience when the terminal forced
+    # jump is disabled.
     if cfg.force_classify_at_end:
-        a_vec_end = a_table[k_fill]
-        y = jnp.where(committed[..., None], y, a_vec_end)
-        committed = jnp.ones_like(committed, dtype=bool)
-        k_idx = k_filled
+        k_filled = k_idx
+    else:
+        t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
+        logits_end, _ = apply_model(params, y, t0)
+        key, k_end = jax.random.split(key)
+        if cfg.alloc_mode == "sample":
+            k_fill = jax.random.categorical(k_end, logits_end, axis=-1).astype(jnp.int32)
+        else:
+            k_fill = jnp.argmax(logits_end, axis=-1).astype(jnp.int32)
+        k_filled = jnp.where(committed, k_idx, k_fill)
+        frac_committed_pre_force = final_committed_frac
 
     metrics = {
         "sampling/frac_committed_pre_force": frac_committed_pre_force,
-        "sampling/frac_committed_final": jnp.mean(committed.astype(jnp.float32)),
-        "sampling/fill_frac_by_final_classify": 1.0 - frac_committed_pre_force,
+        "sampling/frac_committed_final": final_committed_frac,
+        "sampling/fill_frac_by_final_jump": jnp.clip(
+            final_committed_frac - frac_committed_pre_force,
+            a_min=0.0,
+            a_max=1.0,
+        ),
         "sampling/known_frac": known_frac,
         "sampling/jump_count": jump_count,
         "sampling/jump_frac_total": jump_frac,
         "sampling/lam_mean_active": lam_mean_active,
         "sampling/p_jump_mean_active": p_jump_mean_active,
+        "sampling/score_scale": jnp.asarray(float(cfg.score_scale), dtype=jnp.float32),
         "sampling/logit_temperature": logit_temperature,
     }
 

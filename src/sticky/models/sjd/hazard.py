@@ -165,9 +165,13 @@ def make_hazard_poly_alpha(
     p: float = 1.0,
     eps: float = 1e-5,
 ) -> HazardSchedule:
-    """Polynomial survival schedule S(t)=(1-t/T)^p on [0, T], with tail clamp.
+    """Polynomial survival schedule with a matched finite tail.
 
-    The clamp avoids the singularity at t=T by enforcing 1-t/T >= eps.
+    For t <= T(1 - eps), this matches S(t) = (1 - t/T)^p exactly. For the last
+    eps-fraction of the interval, it switches to a constant hazard chosen to
+    match both the value and slope of the cumulative hazard at the splice point.
+    This keeps lam, cum, surv, and inv_cdf mutually consistent while avoiding
+    the singularity at t = T.
     """
     T = float(beta.T)
     p_f = float(p)
@@ -178,27 +182,38 @@ def make_hazard_poly_alpha(
         raise ValueError(f"eps must be in (0, 1), got {eps}")
 
     inv_T = 1.0 / max(T, 1e-12)
+    T_arr = jnp.asarray(T, dtype=jnp.float32)
+    eps_arr = jnp.asarray(eps_f, dtype=jnp.float32)
+    tail_start = T_arr * (1.0 - eps_arr)
+    tail_rate = jnp.asarray(p_f * inv_T / eps_f, dtype=jnp.float32)
+    tail_cum_start = jnp.asarray(-p_f * jnp.log(eps_arr), dtype=jnp.float32)
 
-    def _one_minus(t):
-        tau = jnp.asarray(t, dtype=jnp.float32) * inv_T
-        return jnp.clip(1.0 - tau, a_min=eps_f, a_max=1.0)
+    def _t_clipped(t):
+        return jnp.clip(jnp.asarray(t, dtype=jnp.float32), 0.0, T_arr)
+
+    def _one_minus_exact(t):
+        tau = _t_clipped(t) * inv_T
+        return jnp.clip(1.0 - tau, a_min=0.0, a_max=1.0)
 
     def lam_fn(t):
-        one_minus = _one_minus(t)
+        one_minus = jnp.maximum(_one_minus_exact(t), eps_arr)
         return (p_f * inv_T) / one_minus
 
     def cum_fn(t):
-        one_minus = _one_minus(t)
-        return -p_f * jnp.log(one_minus)
+        t = _t_clipped(t)
+        one_minus = _one_minus_exact(t)
+        exact_cum = -p_f * jnp.log(jnp.maximum(one_minus, eps_arr))
+        tail_cum = tail_cum_start + tail_rate * (t - tail_start)
+        return jnp.where(t <= tail_start, exact_cum, tail_cum)
 
     def inv_cdf_fn(u_eff):
         u_eff = jnp.asarray(u_eff, dtype=jnp.float32)
-        one_minus = jnp.power(
-            jnp.clip(1.0 - u_eff, a_min=0.0, a_max=1.0),
-            1.0 / p_f,
-        )
-        t = jnp.asarray(T, dtype=jnp.float32) * (1.0 - one_minus)
-        return jnp.clip(t, 0.0, jnp.asarray(T, dtype=jnp.float32))
+        h = -jnp.log1p(-u_eff)
+        one_minus = jnp.exp(-h / p_f)
+        exact_t = T_arr * (1.0 - one_minus)
+        tail_t = tail_start + (h - tail_cum_start) / jnp.maximum(tail_rate, 1e-12)
+        t = jnp.where(h <= tail_cum_start, exact_t, tail_t)
+        return jnp.clip(t, 0.0, T_arr)
 
     return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
 

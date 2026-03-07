@@ -1,16 +1,17 @@
 # SJD model config for CIFAR-10.
 name: sjd
 
-# Anchor table. Each RGB channel is a separate site, so anchor_dim=1 makes the
-# diffusion ambient space match HWC. For 8-bit images we use fixed ordered
-# scalar anchors a_k = -1 + 2k/255.
+# Anchor table. CADD/MDM-Prime treat images as 32 x 32 x 3 scalar-valued sites
+# with vocabulary 256 per channel, so anchor_dim=1 matches the per-channel tokenization.
+# For 8-bit images we use fixed ordered scalar anchors a_k = -1 + 2k/255.
 anchor_dim: 1
 anchor_init: ordered_scalar
 learnable_anchors: false
 anchors_init_std: 1.0  # unused unless anchor_init=normal
 
-# Classifier backbone.
-feature_dim: 128
+# Shared backbone width. For the ADM image backbone, this should match the public
+# MDM-Prime/CADD image config (model_channels = 96).
+feature_dim: 96
 num_heads: 12
 n_layers: 32
 n_dit_layers: 0
@@ -18,7 +19,8 @@ dit_num_heads: 12
 dit_hidden_size: 768
 
 # Regularization / architectural options.
-dropout_rate: 0.1
+# MDM-Prime/CADD use dropout=0.4 in the image ADM-style UNet.
+dropout_rate: 0.4
 use_attn_dropout: true
 mlp_type: swiglu
 depth_scaled_init: false
@@ -30,16 +32,17 @@ time_features: t
 # sequence_backbone: auto | transformer | sharded_transformer
 # image_backbone: auto | unet5d | adm_unet5d
 sequence_backbone: auto
-image_backbone: unet5d
+image_backbone: adm_unet5d
 
-# ADM-style image UNet knobs (used when image_backbone=adm_unet5d).
-ch_mult: [1, 2, 2, 2]
-adm_num_res_blocks: 2
-adm_attention_resolutions: [2, 4]
-adm_num_heads: 4
-adm_num_head_channels: -1
+# ADM-style image UNet knobs (MDM-Prime / CADD image backbone, ~114M params in the
+# public PyTorch implementation).
+ch_mult: [3, 4, 4]
+adm_num_res_blocks: 5
+adm_attention_resolutions: [2]
+adm_num_heads: -1
+adm_num_head_channels: 64
 adm_num_heads_upsample: -1
-adm_conv_resample: true
+adm_conv_resample: false
 adm_use_scale_shift_norm: true
 adm_resblock_updown: false
 adm_use_conv_skip: false

@@ -8,7 +8,7 @@ Fresh layout with one job = one model.
 - `train_model.slurm`: generic runtime script that executes one training run.
 - `submit_cadd.sh`: CADD wrapper with paper-style defaults.
 - `submit_md4.sh`: MD4 wrapper with paper-style defaults.
-- `submit_sjd.sh`: SJD wrapper with CADD-matched training cadence and explicit forward defaults.
+- `submit_sjd.sh`: SJD wrapper that submits the default `sjd_cifar10` experiment config.
 - `eval_checkpoint.slurm`: runtime script for offline checkpoint evaluation (FID/IS + optional sampler probes).
 - `submit_sjd_fid_sweep.sh`: submits an eta/tau sweep for SJD checkpoint evaluation as separate Slurm jobs.
 
@@ -105,8 +105,4 @@ bash scripts/slurm/anvil/submit_train.sh
 
 - The runtime script performs a JAX device preflight when `PLATFORM=pmap` and aborts if not enough local devices are visible.
 - The wrappers are thin defaults only; override any variable at submit time.
-- `submit_sjd.sh` pins:
-- `submit_sjd.sh` pins `forward/beta=vp_linear`.
-- `submit_sjd.sh` pins `forward/hazard=poly_alpha`.
-- `submit_sjd.sh` pins `forward/jump=vp_matched`.
-- `submit_sjd.sh` pins `forward.jump.eta=0.8`.
+- `submit_sjd.sh` now leaves SJD hyperparameters untouched by default and only changes scheduler/resource defaults, including a `48:00:00` default time limit.
