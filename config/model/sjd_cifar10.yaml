@@ -19,7 +19,7 @@ dit_num_heads: 12
 dit_hidden_size: 768
 
 # Regularization / architectural options.
-# MDM-Prime/CADD use dropout=0.4 in the image ADM-style UNet.
+# Paper quote uses dropout 0.4 for the ADM-style image model.
 dropout_rate: 0.4
 use_attn_dropout: true
 mlp_type: swiglu
@@ -34,15 +34,18 @@ time_features: t
 sequence_backbone: auto
 image_backbone: adm_unet5d
 
-# ADM-style image UNet knobs (MDM-Prime / CADD image backbone, ~114M params in the
-# public PyTorch implementation).
+# ADM-style image UNet knobs aligned to the paper description as closely as this
+# implementation allows.
 ch_mult: [3, 4, 4]
-adm_num_res_blocks: 5
+# The paper reports depth 5. In this implementation the decoder has
+# (num_res_blocks + 1) residual blocks per level, so `4` is the closest match
+# to the intended ~113M / ~114M parameter scale.
+adm_num_res_blocks: 4
 adm_attention_resolutions: [2]
-adm_num_heads: -1
+adm_num_heads: 4
 adm_num_head_channels: 64
 adm_num_heads_upsample: -1
-adm_conv_resample: false
+adm_conv_resample: true
 adm_use_scale_shift_norm: true
 adm_resblock_updown: false
 adm_use_conv_skip: false
