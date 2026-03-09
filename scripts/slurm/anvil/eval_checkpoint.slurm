@@ -113,7 +113,9 @@ export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
 
 run_job_step() {
   if command -v srun >/dev/null 2>&1 && [[ -n "${SLURM_JOB_ID:-}" ]]; then
-    srun --ntasks=1 --nodes=1 --cpu-bind=none "$@"
+    local gpu_count
+    gpu_count="${SLURM_GPUS_ON_NODE:-1}"
+    srun --ntasks=1 --nodes=1 --cpu-bind=none --gpu-bind=none --gpus-per-node="${gpu_count}" "$@"
   else
     "$@"
   fi
@@ -210,26 +212,37 @@ fi
 
 if [[ "${JAX_PLATFORMS}" == *cuda* ]]; then
   echo "Preflight JAX device check for offline eval"
-  preflight_out="$(
+  preflight_out="$({
     echo "batch_host=$(hostname)"
     echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
     echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-}"
     echo "SLURM_STEP_GPUS=${SLURM_STEP_GPUS:-}"
     echo "SLURM_GPUS_ON_NODE=${SLURM_GPUS_ON_NODE:-}"
     nvidia-smi -L || true
+    run_job_step bash -lc '
+      echo "step_host=$(hostname)"
+      echo "step.CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
+      echo "step.SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-}"
+      echo "step.SLURM_STEP_GPUS=${SLURM_STEP_GPUS:-}"
+      echo "step.SLURM_GPUS_ON_NODE=${SLURM_GPUS_ON_NODE:-}"
+      nvidia-smi -L || true
+    '
     XLA_PYTHON_CLIENT_PREALLOCATE=false \
     XLA_PYTHON_CLIENT_MEM_FRACTION=0.05 \
     run_job_step python - <<'PY'
 import os
+import socket
 import jax
 
-print(f"local_device_count={jax.local_device_count()}")
-print("devices=" + ", ".join(str(d) for d in jax.devices()))
+print("step_host=" + socket.gethostname())
 print("CUDA_VISIBLE_DEVICES=" + os.environ.get("CUDA_VISIBLE_DEVICES", ""))
 print("SLURM_JOB_GPUS=" + os.environ.get("SLURM_JOB_GPUS", ""))
 print("SLURM_STEP_GPUS=" + os.environ.get("SLURM_STEP_GPUS", ""))
+print("SLURM_GPUS_ON_NODE=" + os.environ.get("SLURM_GPUS_ON_NODE", ""))
+print(f"local_device_count={jax.local_device_count()}")
+print("devices=" + ", ".join(str(d) for d in jax.devices()))
 PY
-  )"
+  } 2>&1)"
   preflight_rc=$?
   echo "${preflight_out}"
   if (( preflight_rc != 0 )); then
