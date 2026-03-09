@@ -112,6 +112,10 @@ fi
 export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
 
 run_job_step() {
+  if [[ -n "${SLURM_JOB_ID:-}" ]] && [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    "$@"
+    return
+  fi
   if command -v srun >/dev/null 2>&1 && [[ -n "${SLURM_JOB_ID:-}" ]]; then
     local gpu_count
     local srun_export
