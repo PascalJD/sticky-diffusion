@@ -187,6 +187,7 @@ mkdir -p "${DATA_DIR}" "${RUN_DIR}"
 if [[ "${PLATFORM}" == "pmap" ]]; then
   REQUIRED_LOCAL_DEVICES="${REQUIRED_LOCAL_DEVICES:-2}"
   echo "Preflight JAX device check (required local devices: ${REQUIRED_LOCAL_DEVICES})"
+  set +e
   preflight_out="$({
     echo "batch_host=$(hostname)"
     echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
@@ -219,6 +220,7 @@ print("devices=" + ", ".join(str(d) for d in jax.devices()))
 PY
   } 2>&1)"
   preflight_rc=$?
+  set -e
   echo "${preflight_out}"
   if (( preflight_rc != 0 )); then
     echo "JAX preflight failed before training start." >&2

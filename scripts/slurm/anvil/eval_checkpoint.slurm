@@ -212,6 +212,7 @@ fi
 
 if [[ "${JAX_PLATFORMS}" == *cuda* ]]; then
   echo "Preflight JAX device check for offline eval"
+  set +e
   preflight_out="$({
     echo "batch_host=$(hostname)"
     echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
@@ -244,6 +245,7 @@ print("devices=" + ", ".join(str(d) for d in jax.devices()))
 PY
   } 2>&1)"
   preflight_rc=$?
+  set -e
   echo "${preflight_out}"
   if (( preflight_rc != 0 )); then
     echo "JAX preflight failed before offline eval start." >&2
