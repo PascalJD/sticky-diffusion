@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
@@ -33,6 +33,96 @@ from sticky.training.step import make_train_step_fn, params_for_sampling
 
 
 Array = jnp.ndarray
+
+
+def _is_bits_per_dim_model(cfg: DictConfig, task: Any) -> bool:
+    return str(cfg.model.name) in {"md4", "cadd"} and str(task.spec.task_type) == "image"
+
+
+def _with_bpd_alias(metrics: dict[str, float], *, prefix: str, enable_alias: bool) -> dict[str, float]:
+    out = dict(metrics)
+    if not enable_alias:
+        return out
+
+    loss_key = f"{prefix}/loss"
+    if loss_key in out:
+        out[f"{prefix}/bpd"] = out[loss_key]
+
+    for suffix in ("loss_diff", "loss_prior", "loss_recon"):
+        key = f"{prefix}/{suffix}"
+        if key in out:
+            alias = suffix.replace("loss_", "bpd_")
+            out[f"{prefix}/{alias}"] = out[key]
+
+    return out
+
+
+def make_eval_step_fn(*, task, model):
+    def eval_step_fn(params, rng, batch, axis_name: str | None):
+        loss, metrics = task.loss_fn(rng=rng, model=model, params=params, batch=batch, train=False)
+        if axis_name is not None:
+            loss = jax.lax.pmean(loss, axis_name=axis_name)
+            metrics = jax.tree.map(lambda x: jax.lax.pmean(x, axis_name=axis_name), metrics)
+
+        metrics = dict(metrics)
+        metrics["loss"] = loss
+        return metrics
+
+    return eval_step_fn
+
+
+def run_likelihood_eval(
+    *,
+    cfg: DictConfig,
+    task: Any,
+    eval_step_jit,
+    p_eval_step,
+    params: Any,
+    use_pmap: bool,
+    step_i: int,
+    max_batches: int,
+) -> dict[str, float]:
+    _, eval_iter = task.make_dataloaders(seed=int(cfg.training.seed) + 1)
+    if eval_iter is None:
+        return {}
+
+    total_examples = 0
+    metric_sums: dict[str, float] = {}
+    local_devices = jax.local_device_count()
+    base_rng = jax.random.PRNGKey(int(cfg.training.seed) + 2026)
+    base_rng = jax.random.fold_in(base_rng, int(step_i))
+
+    for batch_idx, batch in enumerate(eval_iter):
+        if (max_batches > 0) and (batch_idx >= max_batches):
+            break
+
+        batch_size = int(next(iter(batch.values())).shape[0])
+        if batch_size <= 0:
+            continue
+        if use_pmap and (batch_size % local_devices != 0):
+            # Skip the final non-divisible tail batch under pmap.
+            continue
+
+        rng = jax.random.fold_in(base_rng, batch_idx)
+        if use_pmap:
+            per_device_rng = jax.random.split(rng, local_devices)
+            metrics = p_eval_step(params, shard_batch(batch), per_device_rng)
+            metrics_host = unreplicate(metrics)
+        else:
+            metrics_host = eval_step_jit(params, batch, rng)
+
+        clean_metrics = sanitize_metrics(metrics_host)
+        if not clean_metrics:
+            continue
+
+        total_examples += batch_size
+        for key, value in clean_metrics.items():
+            metric_sums[key] = metric_sums.get(key, 0.0) + (float(value) * batch_size)
+
+    if total_examples <= 0:
+        return {}
+
+    return {f"eval/{k}": v / total_examples for k, v in metric_sums.items()}
 
 
 def main_train_loop(
@@ -103,6 +193,14 @@ def main_train_loop(
         use_pmap = False
 
     ema_rate = float(cfg.training.ema_rate)
+    bits_per_dim_model = _is_bits_per_dim_model(cfg, task)
+    likelihood_eval_every_steps = int(
+        cfg.training.get(
+            "likelihood_eval_every_steps",
+            cfg.training.get("eval_every_steps", 0),
+        )
+    )
+    likelihood_eval_max_batches = int(cfg.training.get("likelihood_eval_max_batches", -1))
 
     eval_enabled = bool(eval_cfg.get("enabled", False))
     run_eval_at_end = bool(eval_cfg.get("run_at_end", True))
@@ -163,6 +261,7 @@ def main_train_loop(
     )
 
     train_step_fn = make_train_step_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
+    eval_step_fn = make_eval_step_fn(task=task, model=model)
     last_train_metrics = {}
     last_eval_metrics = {}
     last_eval_step: Optional[int] = None
@@ -170,6 +269,10 @@ def main_train_loop(
     if use_pmap:
         p_train_step = jax.pmap(
             lambda st, b: train_step_fn(st, b, axis_name="batch"),
+            axis_name="batch",
+        )
+        p_eval_step = jax.pmap(
+            lambda p, b, r: eval_step_fn(p, r, b, axis_name="batch"),
             axis_name="batch",
         )
         state = replicate(state)
@@ -208,6 +311,7 @@ def main_train_loop(
                     to_py_scalar(lr_schedule(step)) or lr_schedule(step)
                 )
                 train_log["step"] = step_i
+                train_log = _with_bpd_alias(train_log, prefix="train", enable_alias=bits_per_dim_model)
                 last_train_metrics = dict(train_log)
 
             if step_i % log_every_steps == 0 and train_log is not None:
@@ -268,14 +372,41 @@ def main_train_loop(
                 and (checkpoint_every_steps > 0)
                 and (step_i % checkpoint_every_steps == 0)
             )
+            likelihood_eval_due = (
+                likelihood_eval_every_steps > 0
+                and (step_i % likelihood_eval_every_steps == 0)
+            )
 
-            if eval_due or checkpoint_due:
+            if eval_due or checkpoint_due or likelihood_eval_due:
                 state_s = unreplicate(state)
+
+                if likelihood_eval_due:
+                    likelihood_metrics = run_likelihood_eval(
+                        cfg=cfg,
+                        task=task,
+                        eval_step_jit=None,
+                        p_eval_step=p_eval_step,
+                        params=params_for_sampling(state),
+                        use_pmap=True,
+                        step_i=step_i,
+                        max_batches=likelihood_eval_max_batches,
+                    )
+                    if likelihood_metrics:
+                        likelihood_metrics = _with_bpd_alias(
+                            likelihood_metrics,
+                            prefix="eval",
+                            enable_alias=bits_per_dim_model,
+                        )
+                        last_eval_metrics.update(likelihood_metrics)
+                        if metrics_writer is not None:
+                            metrics_writer.write(step_i=step_i, metrics=likelihood_metrics, tag="eval_likelihood")
+                        if wandb_mod is not None:
+                            wandb_mod.log(likelihood_metrics, step=step_i)
 
                 if eval_due and maybe_log_eval is not None:
                     eval_metrics = maybe_log_eval(step_i, params_for_sampling(state_s))
                     if eval_metrics:
-                        last_eval_metrics = dict(eval_metrics)
+                        last_eval_metrics.update(eval_metrics)
                         last_eval_step = step_i
                         if metrics_writer is not None:
                             metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
@@ -291,6 +422,7 @@ def main_train_loop(
 
     else:
         train_step_jit = jax.jit(lambda st, b: train_step_fn(st, b, axis_name=None))
+        eval_step_jit = jax.jit(lambda p, b, r: eval_step_fn(p, r, b, axis_name=None))
 
         for step in range(num_train_steps):
             t_fetch0 = time.perf_counter()
@@ -314,6 +446,7 @@ def main_train_loop(
                 to_py_scalar(lr_schedule(step)) or lr_schedule(step)
             )
             train_log["step"] = step_i
+            train_log = _with_bpd_alias(train_log, prefix="train", enable_alias=bits_per_dim_model)
             last_train_metrics = dict(train_log)
 
             if step_i % log_every_steps == 0:
@@ -364,10 +497,36 @@ def main_train_loop(
                         or ((is_every > 0) and (step_i % is_every == 0))
                     )
                 )
+            likelihood_eval_due = (
+                likelihood_eval_every_steps > 0
+                and (step_i % likelihood_eval_every_steps == 0)
+            )
+            if likelihood_eval_due:
+                likelihood_metrics = run_likelihood_eval(
+                    cfg=cfg,
+                    task=task,
+                    eval_step_jit=eval_step_jit,
+                    p_eval_step=None,
+                    params=params_for_sampling(state),
+                    use_pmap=False,
+                    step_i=step_i,
+                    max_batches=likelihood_eval_max_batches,
+                )
+                if likelihood_metrics:
+                    likelihood_metrics = _with_bpd_alias(
+                        likelihood_metrics,
+                        prefix="eval",
+                        enable_alias=bits_per_dim_model,
+                    )
+                    last_eval_metrics.update(likelihood_metrics)
+                    if metrics_writer is not None:
+                        metrics_writer.write(step_i=step_i, metrics=likelihood_metrics, tag="eval_likelihood")
+                    if wandb_mod is not None:
+                        wandb_mod.log(likelihood_metrics, step=step_i)
             if eval_due and maybe_log_eval is not None:
                 eval_metrics = maybe_log_eval(step_i, params_for_sampling(state))
                 if eval_metrics:
-                    last_eval_metrics = dict(eval_metrics)
+                    last_eval_metrics.update(eval_metrics)
                     last_eval_step = step_i
                     if metrics_writer is not None:
                         metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
