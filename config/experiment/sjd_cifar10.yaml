@@ -11,7 +11,7 @@ defaults:
   # SJD-specific sampling and forward-process pieces.
   - /sampler: sjd_cifar10
   - /forward/beta: vp_linear
-  - /forward/hazard: cosine
+  - /forward/hazard: cosine_alpha
   - /forward/jump: vp_matched
 
   - _self_

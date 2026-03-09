@@ -1,0 +1,4 @@
+# MD4 cosine-alpha survival schedule: S(t) = alpha_MD4_cosine(t).
+_target_: sticky.models.sjd.hazard.make_hazard_cosine_alpha
+
+eps: 1.0e-4

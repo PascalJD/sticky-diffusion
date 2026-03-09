@@ -218,6 +218,57 @@ def make_hazard_poly_alpha(
     return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
 
 
+def make_hazard_cosine_alpha(
+    beta,
+    eps: float = 1e-4,
+) -> HazardSchedule:
+    """Hazard whose survival matches the MD4 cosine alpha schedule.
+
+    With tau=t/T, this uses the clipped MD4 keep-probability
+
+      S(t) = alpha(t) = (1 - 2*eps) * (1 - sin(pi * tau / 2)) + eps.
+
+    This matches the forward masking survival used by MD4's cosine schedule,
+    including its endpoint regularization.
+    """
+    T = float(beta.T)
+    eps_f = float(eps)
+    if not (0.0 <= eps_f < 0.5):
+        raise ValueError(f"eps must be in [0, 0.5), got {eps}")
+
+    T_arr = jnp.asarray(T, dtype=jnp.float32)
+    eps_arr = jnp.asarray(eps_f, dtype=jnp.float32)
+    scale = jnp.asarray(1.0 - 2.0 * eps_f, dtype=jnp.float32)
+    half_pi_over_T = 0.5 * jnp.pi / max(T, 1e-12)
+
+    def _theta(t):
+        t = jnp.clip(jnp.asarray(t, dtype=jnp.float32), 0.0, T_arr)
+        return half_pi_over_T * t
+
+    def _surv_exact(t):
+        theta = _theta(t)
+        raw = 1.0 - jnp.sin(theta)
+        return scale * raw + eps_arr
+
+    def lam_fn(t):
+        theta = _theta(t)
+        numer = scale * half_pi_over_T * jnp.cos(theta)
+        denom = jnp.maximum(_surv_exact(t), 1e-12)
+        return numer / denom
+
+    def cum_fn(t):
+        return -jnp.log(jnp.maximum(_surv_exact(t), 1e-12))
+
+    def inv_cdf_fn(u_eff):
+        # Since the clipped MD4 alpha has S(0)=1-eps, the induced event CDF has
+        # F(0)=eps. Values below that map to t=0.
+        sin_arg = (jnp.asarray(u_eff, dtype=jnp.float32) - eps_arr) / jnp.maximum(scale, 1e-12)
+        sin_arg = jnp.clip(sin_arg, 0.0, 1.0)
+        return (2.0 * T_arr / jnp.pi) * jnp.arcsin(sin_arg)
+
+    return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
+
+
 def make_hazard_linear_B(beta, kappa: float = 3.0) -> HazardSchedule:
     """Cumulative hazard linear in VP accumulated noise: H(t)=kappa*B(t)/B(T)."""
     k = _validate_kappa(kappa)
