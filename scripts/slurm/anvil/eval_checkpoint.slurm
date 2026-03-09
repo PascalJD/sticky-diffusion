@@ -24,7 +24,7 @@ if [[ ! -f "${REPO_ROOT}/src/sticky/__init__.py" ]]; then
 fi
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 unset PYTHONHOME
-ANVIL_MODULES="${ANVIL_MODULES:-modtree/gpu cuda/12.0.1 anaconda/2024.02-py311}"
+ANVIL_MODULES="${ANVIL_MODULES:-modtree/gpu cuda/12.0.1}"
 
 ensure_module_cmd() {
   if command -v module >/dev/null 2>&1; then
