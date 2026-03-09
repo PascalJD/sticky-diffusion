@@ -114,8 +114,13 @@ export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
 run_job_step() {
   if command -v srun >/dev/null 2>&1 && [[ -n "${SLURM_JOB_ID:-}" ]]; then
     local gpu_count
+    local srun_export
     gpu_count="${SLURM_GPUS_ON_NODE:-${REQUIRED_LOCAL_DEVICES:-1}}"
-    srun --ntasks=1 --nodes=1 --cpu-bind=none --gpu-bind=none --gpus-per-node="${gpu_count}" "$@"
+    srun_export="ALL"
+    if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+      srun_export="${srun_export},CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+    fi
+    srun --ntasks=1 --nodes=1 --cpu-bind=none --gpu-bind=none --gpus-per-node="${gpu_count}" --export="${srun_export}" "$@"
   else
     "$@"
   fi
