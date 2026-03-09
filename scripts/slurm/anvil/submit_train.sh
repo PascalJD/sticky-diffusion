@@ -31,7 +31,7 @@ MEMORY="${MEMORY:-480G}"
 JOB_NAME="${JOB_NAME:-sticky_${MODEL}}"
 
 CONDA_ENV="${CONDA_ENV:-sticky}"
-ANVIL_MODULES="${ANVIL_MODULES:-anaconda/2024.02-py311}"
+ANVIL_MODULES="${ANVIL_MODULES:-modtree/gpu cuda/12.0.1 anaconda/2024.02-py311}"
 
 if [[ -n "${SCRATCH:-}" ]]; then
   SCRATCH_ROOT="${SCRATCH}"
