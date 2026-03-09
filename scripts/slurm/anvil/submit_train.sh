@@ -105,4 +105,26 @@ echo "  run tag:   ${RUN_TAG}"
 echo "  run dir:   ${OUTPUT_ROOT}/${RUN_TAG}"
 echo
 
-sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/train_model.slurm"
+sbatch_out="$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/train_model.slurm")"
+sbatch_rc=$?
+echo "${sbatch_out}"
+if (( sbatch_rc != 0 )); then
+  exit "${sbatch_rc}"
+fi
+
+job_id="$(printf '%s\n' "${sbatch_out}" | grep -Eo '[0-9]+' | tail -n 1 || true)"
+if [[ -n "${job_id}" ]] && command -v scontrol >/dev/null 2>&1; then
+  job_info="$(scontrol show job "${job_id}" 2>/dev/null | tr '\n' ' ' || true)"
+  if [[ -n "${job_info}" ]]; then
+    effective_partition="$(printf '%s\n' "${job_info}" | grep -Eo 'Partition=[^ ]+' | head -n 1 | cut -d= -f2-)"
+    effective_qos="$(printf '%s\n' "${job_info}" | grep -Eo 'QOS=[^ ]+' | head -n 1 | cut -d= -f2-)"
+    effective_time_limit="$(printf '%s\n' "${job_info}" | grep -Eo 'TimeLimit=[^ ]+' | head -n 1 | cut -d= -f2-)"
+    effective_time_min="$(printf '%s\n' "${job_info}" | grep -Eo 'TimeMin=[^ ]+' | head -n 1 | cut -d= -f2-)"
+    echo "Effective Slurm assignment:"
+    echo "  job id:    ${job_id}"
+    echo "  partition: ${effective_partition:-<unknown>}"
+    echo "  qos:       ${effective_qos:-<unknown>}"
+    echo "  timelimit: ${effective_time_limit:-<unknown>}"
+    echo "  timemin:   ${effective_time_min:-<unknown>}"
+  fi
+fi

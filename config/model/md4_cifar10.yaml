@@ -48,7 +48,7 @@ model_sharding: false
 classes: -1  # set to 11 if you want CIFAR10 + null class for CFG-style unconditional drop
 
 # Sampling.
-antithetic_time_sampling: false
+antithetic_time_sampling: true
 sampler: ancestral
 sampling_grid: cosine
 topp: 0.98
