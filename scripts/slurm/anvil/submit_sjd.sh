@@ -17,10 +17,10 @@ export TIME_LIMIT="${TIME_LIMIT:-48:00:00}"
 export PLATFORM="${PLATFORM:-pmap}"
 export REQUIRED_LOCAL_DEVICES="${REQUIRED_LOCAL_DEVICES:-${GPUS_PER_NODE}}"
 
-# Use the experiment config defaults unless explicitly overridden at submit time.
-export BATCH_SIZE="${BATCH_SIZE:-}"
-export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-}"
-export TRAIN_STEPS="${TRAIN_STEPS:-}"
+# Use MD4-matching CIFAR defaults unless explicitly overridden at submit time.
+export BATCH_SIZE="${BATCH_SIZE:-256}"
+export EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-${BATCH_SIZE}}"
+export TRAIN_STEPS="${TRAIN_STEPS:-2000000}"
 export LOG_EVERY="${LOG_EVERY:-}"
 export METRICS_EVERY="${METRICS_EVERY:-}"
 export CHECKPOINT_EVERY="${CHECKPOINT_EVERY:-}"

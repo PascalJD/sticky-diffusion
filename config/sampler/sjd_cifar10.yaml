@@ -1,5 +1,6 @@
 # Sampler profile for SJD CIFAR-10
 # Time discretization.
+# The reverse-time grid is uniform: t_i = T - i * (T / n_steps).
 T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 256 # NFE = 2*n_steps if refresh_logits_after_em_step is true
 
@@ -8,7 +9,7 @@ alloc_mode: sample
 score_from_classifier: true
 score_scale: 1.0
 # Jump-allocation temperature only; reverse score uses raw classifier logits.
-logit_temperature: 0.75
+logit_temperature: 1.0
 
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
