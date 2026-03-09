@@ -176,9 +176,22 @@ for eta in ${ETA_VALUES}; do
       sbatch_args+=(--nodelist="${NODELIST}")
     fi
 
-    job_id="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/eval_checkpoint.slurm")"
+    sbatch_out="$(sbatch "${sbatch_args[@]}" "${SCRIPT_DIR}/eval_checkpoint.slurm")"
+    job_id="$(printf '%s\n' "${sbatch_out}" | grep -Eo '[0-9]+' | tail -n 1 || true)"
+    echo "${sbatch_out}"
     echo -e "${job_id}\t${eta}\t${tau}\t${run_dir}\t${metrics_json}\t${summary_json}" >> "${manifest}"
     echo "submitted job ${job_id} for eta=${eta}, tau=${tau}"
+    if [[ -n "${job_id}" ]] && command -v scontrol >/dev/null 2>&1; then
+      job_info="$(scontrol show job "${job_id}" 2>/dev/null | tr '\n' ' ' || true)"
+      if [[ -n "${job_info}" ]]; then
+        effective_partition="$(printf '%s\n' "${job_info}" | grep -Eo 'Partition=[^ ]+' | head -n 1 | cut -d= -f2-)"
+        effective_qos="$(printf '%s\n' "${job_info}" | grep -Eo 'QOS=[^ ]+' | head -n 1 | cut -d= -f2-)"
+        effective_time_limit="$(printf '%s\n' "${job_info}" | grep -Eo 'TimeLimit=[^ ]+' | head -n 1 | cut -d= -f2-)"
+        echo "  effective partition: ${effective_partition:-<unknown>}"
+        echo "  effective qos:       ${effective_qos:-<unknown>}"
+        echo "  effective timelimit: ${effective_time_limit:-<unknown>}"
+      fi
+    fi
   done
 done
 

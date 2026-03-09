@@ -111,6 +111,14 @@ fi
 
 export JAX_PLATFORMS="${JAX_PLATFORMS:-cuda}"
 
+run_job_step() {
+  if command -v srun >/dev/null 2>&1 && [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    srun --ntasks=1 --nodes=1 --cpu-bind=none "$@"
+  else
+    "$@"
+  fi
+}
+
 is_truthy() {
   case "${1,,}" in
     1|true|yes|on) return 0 ;;
@@ -200,7 +208,38 @@ if is_truthy "${BASELINE_ARCH_114M}"; then
   )
 fi
 
-python -m sticky.entrypoints.eval_checkpoint \
+if [[ "${JAX_PLATFORMS}" == *cuda* ]]; then
+  echo "Preflight JAX device check for offline eval"
+  preflight_out="$(
+    echo "batch_host=$(hostname)"
+    echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
+    echo "SLURM_JOB_GPUS=${SLURM_JOB_GPUS:-}"
+    echo "SLURM_STEP_GPUS=${SLURM_STEP_GPUS:-}"
+    echo "SLURM_GPUS_ON_NODE=${SLURM_GPUS_ON_NODE:-}"
+    nvidia-smi -L || true
+    XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.05 \
+    run_job_step python - <<'PY'
+import os
+import jax
+
+print(f"local_device_count={jax.local_device_count()}")
+print("devices=" + ", ".join(str(d) for d in jax.devices()))
+print("CUDA_VISIBLE_DEVICES=" + os.environ.get("CUDA_VISIBLE_DEVICES", ""))
+print("SLURM_JOB_GPUS=" + os.environ.get("SLURM_JOB_GPUS", ""))
+print("SLURM_STEP_GPUS=" + os.environ.get("SLURM_STEP_GPUS", ""))
+PY
+  )"
+  preflight_rc=$?
+  echo "${preflight_out}"
+  if (( preflight_rc != 0 )); then
+    echo "JAX preflight failed before offline eval start." >&2
+    nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv || true
+    exit 1
+  fi
+fi
+
+run_job_step python -m sticky.entrypoints.eval_checkpoint \
   experiment="${EXPERIMENT_CFG}" \
   eval="${EVAL_CFG}" \
   experiment.training.seed="${SEED}" \
