@@ -24,7 +24,7 @@ if [[ ! -f "${REPO_ROOT}/src/sticky/__init__.py" ]]; then
 fi
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 unset PYTHONHOME
-ANVIL_MODULES="${ANVIL_MODULES:-modtree/gpu cuda/12.0.1}"
+ANVIL_MODULES="${ANVIL_MODULES:-}"
 
 ensure_module_cmd() {
   if command -v module >/dev/null 2>&1; then
@@ -73,11 +73,7 @@ if [[ -n "${ANVIL_MODULES:-}" ]]; then
 fi
 
 CONDA_ENV="${CONDA_ENV:-sticky}"
-if ! ensure_conda_cmd; then
-  echo "conda command not found. Set ANVIL_MODULES (for example: anaconda/2024.02-py311)." >&2
-  exit 1
-fi
-source "$(conda info --base)/etc/profile.d/conda.sh"
+PYTHON_BIN="${PYTHON_BIN:-}"
 
 activate_conda_env() {
   local env_spec="$1"
@@ -105,8 +101,38 @@ activate_conda_env() {
   return 1
 }
 
-if ! activate_conda_env "${CONDA_ENV}"; then
-  echo "Failed to activate CONDA_ENV=${CONDA_ENV}. If this is a path-based env, pass its full path." >&2
+resolve_python_bin() {
+  if [[ -n "${PYTHON_BIN}" ]]; then
+    if [[ ! -x "${PYTHON_BIN}" ]]; then
+      echo "PYTHON_BIN is not executable: ${PYTHON_BIN}" >&2
+      return 1
+    fi
+    echo "Using explicit python: ${PYTHON_BIN}"
+    return 0
+  fi
+
+  if [[ "${CONDA_ENV}" == /* ]] && [[ -x "${CONDA_ENV}/bin/python" ]]; then
+    PYTHON_BIN="${CONDA_ENV}/bin/python"
+    echo "Using env python: ${PYTHON_BIN}"
+    return 0
+  fi
+
+  if ! ensure_conda_cmd; then
+    echo "conda command not found. Set CONDA_ENV to a full env path or set ANVIL_MODULES appropriately." >&2
+    return 1
+  fi
+  source "$(conda info --base)/etc/profile.d/conda.sh"
+  if ! activate_conda_env "${CONDA_ENV}"; then
+    echo "Failed to activate CONDA_ENV=${CONDA_ENV}. If this is a path-based env, pass its full path." >&2
+    return 1
+  fi
+
+  PYTHON_BIN="$(command -v python)"
+  echo "Using activated python: ${PYTHON_BIN}"
+  return 0
+}
+
+if ! resolve_python_bin; then
   exit 1
 fi
 
@@ -240,7 +266,7 @@ if [[ "${JAX_PLATFORMS}" == *cuda* ]]; then
     '
     XLA_PYTHON_CLIENT_PREALLOCATE=false \
     XLA_PYTHON_CLIENT_MEM_FRACTION=0.05 \
-    run_job_step python - <<'PY'
+    run_job_step "${PYTHON_BIN}" - <<'PY'
 import os
 import socket
 import jax
@@ -264,7 +290,7 @@ PY
   fi
 fi
 
-run_job_step python -m sticky.entrypoints.eval_checkpoint \
+run_job_step "${PYTHON_BIN}" -m sticky.entrypoints.eval_checkpoint \
   experiment="${EXPERIMENT_CFG}" \
   eval="${EVAL_CFG}" \
   experiment.training.seed="${SEED}" \
@@ -305,7 +331,7 @@ run_job_step python -m sticky.entrypoints.eval_checkpoint \
   hydra.run.dir="${RUN_DIR}"
 
 SUMMARY_PATH="${RUN_DIR}/summary.json"
-python - "${METRICS_PATH}" "${SUMMARY_PATH}" "${ETA}" "${TAU}" <<'PY'
+"${PYTHON_BIN}" - "${METRICS_PATH}" "${SUMMARY_PATH}" "${ETA}" "${TAU}" <<'PY'
 import json
 import pathlib
 import sys
