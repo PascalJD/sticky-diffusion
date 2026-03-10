@@ -33,6 +33,110 @@ def _resolve_path_from_original_cwd(path_like: Optional[str]) -> Optional[Path]:
     return Path(resolved)
 
 
+def _clone_cfg(cfg: DictConfig) -> DictConfig:
+    return OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+
+
+def _resolve_run_dir_from_offline_cfg(offline_cfg: DictConfig) -> Optional[Path]:
+    run_dir_cfg = offline_cfg.get("run_dir", None)
+    if _is_nullish(run_dir_cfg):
+        return None
+    run_dir = _resolve_path_from_original_cwd(str(run_dir_cfg))
+    if run_dir is None:
+        raise ValueError("offline_eval.run_dir was set but could not be resolved.")
+    return run_dir
+
+
+def _load_run_context_payload(run_dir: Path) -> Dict[str, Any]:
+    run_context_path = run_dir / "run_context.json"
+    if not run_context_path.exists():
+        raise FileNotFoundError(
+            f"offline_eval.use_run_config=true requires {run_context_path}."
+        )
+    payload = json.loads(run_context_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Malformed run context payload: {run_context_path}")
+    return payload
+
+
+def _load_experiment_cfg_from_run_context(run_dir: Path) -> tuple[DictConfig, Dict[str, Any]]:
+    payload = _load_run_context_payload(run_dir)
+    experiment_payload = payload.get("config", {}).get("experiment", None)
+    if not isinstance(experiment_payload, dict):
+        raise ValueError(
+            f"Run context for {run_dir} does not contain a resolved experiment config."
+        )
+    return OmegaConf.create(experiment_payload), payload
+
+
+def _apply_environment_overrides(
+    *,
+    effective_cfg: DictConfig,
+    fallback_cfg: DictConfig,
+) -> None:
+    dataset_cfg = fallback_cfg.get("dataset", None)
+    if dataset_cfg is not None:
+        data_dir = dataset_cfg.get("data_dir", None)
+        if not _is_nullish(data_dir):
+            effective_cfg.dataset.data_dir = data_dir
+
+    runtime_cfg = fallback_cfg.get("runtime", None)
+    if runtime_cfg is not None:
+        effective_cfg.runtime = _clone_cfg(runtime_cfg)
+
+
+def _apply_explicit_eval_overrides(
+    *,
+    effective_cfg: DictConfig,
+    offline_cfg: DictConfig,
+    sample_timesteps: int,
+) -> None:
+    effective_cfg.sampler.n_steps = int(sample_timesteps)
+
+    jump_eta_cfg = offline_cfg.get("jump_eta", None)
+    if not _is_nullish(jump_eta_cfg):
+        if effective_cfg.get("forward", None) is None:
+            raise ValueError("offline_eval.jump_eta requires experiment.forward to be configured.")
+        if effective_cfg.forward.get("jump", None) is None:
+            raise ValueError(
+                "offline_eval.jump_eta requires experiment.forward.jump to be configured."
+            )
+        effective_cfg.forward.jump.eta = float(jump_eta_cfg)
+
+    tau_cfg = offline_cfg.get("logit_temperature", None)
+    if not _is_nullish(tau_cfg):
+        effective_cfg.sampler.logit_temperature = float(tau_cfg)
+
+
+def _resolve_effective_experiment_cfg(
+    *,
+    cfg: DictConfig,
+    offline_cfg: DictConfig,
+) -> tuple[DictConfig, Optional[Path], Optional[Dict[str, Any]], str]:
+    run_dir = _resolve_run_dir_from_offline_cfg(offline_cfg)
+    use_run_config = bool(offline_cfg.get("use_run_config", False))
+    if not use_run_config:
+        return _clone_cfg(cfg), run_dir, None, "hydra_cfg"
+
+    if run_dir is None:
+        raise ValueError(
+            "offline_eval.use_run_config=true requires offline_eval.run_dir to be set."
+        )
+
+    effective_cfg, run_context_payload = _load_experiment_cfg_from_run_context(run_dir)
+    _apply_environment_overrides(effective_cfg=effective_cfg, fallback_cfg=cfg)
+    return effective_cfg, run_dir, run_context_payload, "run_context"
+
+
+def _maybe_float(value: Any) -> Optional[float]:
+    if value in (None, "", "null"):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
 def _checkpoint_root_from_run_dir(run_dir: Path, cfg: DictConfig) -> Path:
     run_context_path = run_dir / "run_context.json"
     if run_context_path.exists():
@@ -58,11 +162,8 @@ def _resolve_checkpoint_root(cfg: DictConfig, offline_cfg: DictConfig) -> Path:
             raise ValueError("offline_eval.checkpoint_dir was set but could not be resolved.")
         return out
 
-    run_dir_cfg = offline_cfg.get("run_dir", None)
-    if not _is_nullish(run_dir_cfg):
-        run_dir = _resolve_path_from_original_cwd(str(run_dir_cfg))
-        if run_dir is None:
-            raise ValueError("offline_eval.run_dir was set but could not be resolved.")
+    run_dir = _resolve_run_dir_from_offline_cfg(offline_cfg)
+    if run_dir is not None:
         return _checkpoint_root_from_run_dir(run_dir, cfg)
 
     default_ckpt = str(cfg.training.get("checkpoint_dir", "checkpoints"))
@@ -201,17 +302,32 @@ def run_offline_checkpoint_eval(
     offline_cfg: DictConfig,
     wandb_mod=None,
 ) -> Dict[str, float]:
-    task = build_task(cfg)
+    effective_cfg, run_dir, run_context_payload, experiment_cfg_source = (
+        _resolve_effective_experiment_cfg(cfg=cfg, offline_cfg=offline_cfg)
+    )
+
+    sample_timesteps_cfg = offline_cfg.get("sample_timesteps", None)
+    if _is_nullish(sample_timesteps_cfg):
+        sample_timesteps = int(effective_cfg.training.sample_timesteps)
+    else:
+        sample_timesteps = int(sample_timesteps_cfg)
+    _apply_explicit_eval_overrides(
+        effective_cfg=effective_cfg,
+        offline_cfg=offline_cfg,
+        sample_timesteps=sample_timesteps,
+    )
+
+    task = build_task(effective_cfg)
     model = build_model(
-        cfg,
+        effective_cfg,
         data_shape=task.spec.data_shape,
         vocab_size=task.spec.vocab_size,
     )
 
-    rng = jax.random.PRNGKey(int(cfg.training.seed))
-    state_template, _ = init_state(cfg, model, rng)
+    rng = jax.random.PRNGKey(int(effective_cfg.training.seed))
+    state_template, _ = init_state(effective_cfg, model, rng)
 
-    checkpoint_root = _resolve_checkpoint_root(cfg, offline_cfg)
+    checkpoint_root = _resolve_checkpoint_root(effective_cfg, offline_cfg)
     checkpoint_source = str(offline_cfg.get("checkpoint_source", "best"))
     checkpoint_dir = _resolve_checkpoint_dir(checkpoint_root, checkpoint_source)
     checkpoint_step = offline_cfg.get("checkpoint_step", None)
@@ -240,12 +356,6 @@ def run_offline_checkpoint_eval(
         params_for_eval = state.params
         param_source = "params"
 
-    sample_timesteps_cfg = offline_cfg.get("sample_timesteps", None)
-    if _is_nullish(sample_timesteps_cfg):
-        sample_timesteps = int(cfg.training.sample_timesteps)
-    else:
-        sample_timesteps = int(sample_timesteps_cfg)
-
     eval_cfg_local = _clone_eval_cfg(eval_cfg)
     eval_cfg_local.run_at_end = True
     eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
@@ -261,7 +371,7 @@ def run_offline_checkpoint_eval(
     sample_images_fid_jit = None
     if eval_mode != "sudoku":
         _, sample_images_fid_jit = build_sampling_fns(
-            cfg=cfg,
+            cfg=effective_cfg,
             task=task,
             model=model,
             num_log_images=eval_sample_batch_size,
@@ -282,11 +392,11 @@ def run_offline_checkpoint_eval(
     )
     if fid_tfds_data_dir is None:
         fid_tfds_data_dir = resolve_from_original_cwd(
-            cfg.dataset.get("data_dir", None)
+            effective_cfg.dataset.get("data_dir", None)
         )
 
     maybe_log_eval = build_eval_logger(
-        cfg=cfg,
+        cfg=effective_cfg,
         eval_cfg=eval_cfg_local,
         wandb_mod=wandb_mod,
         sample_images_fid_jit=sample_images_fid_jit,
@@ -328,7 +438,7 @@ def run_offline_checkpoint_eval(
     probe_batches = 0 if _is_nullish(probe_batches_cfg) else int(probe_batches_cfg)
     sampling_probe_payload = None
     if probe_batches > 0:
-        if (str(cfg.model.name) == "sjd") and (eval_mode != "sudoku"):
+        if (str(effective_cfg.model.name) == "sjd") and (eval_mode != "sudoku"):
             probe_batch_size_cfg = offline_cfg.get("sampler_probe_batch_size", None)
             if _is_nullish(probe_batch_size_cfg):
                 probe_batch_size = int(eval_sample_batch_size)
@@ -339,10 +449,10 @@ def run_offline_checkpoint_eval(
             probe_seed_offset = (
                 777777 if _is_nullish(probe_seed_offset_cfg) else int(probe_seed_offset_cfg)
             )
-            probe_seed = int(cfg.training.seed) + probe_seed_offset
+            probe_seed = int(effective_cfg.training.seed) + probe_seed_offset
 
             probe_metrics = _collect_sjd_sampler_probe_metrics(
-                cfg=cfg,
+                cfg=effective_cfg,
                 task=task,
                 model=model,
                 params_for_eval=params_for_eval,
@@ -364,7 +474,7 @@ def run_offline_checkpoint_eval(
                 "requested_batches": int(probe_batches),
                 "reason": (
                     "sampler probes are supported only for non-sudoku SJD runs; "
-                    f"got model={cfg.model.name!r}, eval_mode={eval_mode!r}"
+                    f"got model={effective_cfg.model.name!r}, eval_mode={eval_mode!r}"
                 ),
             }
 
@@ -376,8 +486,43 @@ def run_offline_checkpoint_eval(
         "offline_eval_metrics.json",
         base_dir=get_hydra_output_dir(),
     )
+
+    effective_logit_temperature = _maybe_float(
+        effective_cfg.sampler.get(
+            "logit_temperature",
+            effective_cfg.sampler.get("temperature", None),
+        )
+    )
+    effective_jump_eta = None
+    if effective_cfg.get("forward", None) is not None:
+        jump_cfg = effective_cfg.forward.get("jump", None)
+        if jump_cfg is not None:
+            effective_jump_eta = _maybe_float(jump_cfg.get("eta", None))
+
     payload = {
         "timestamp_utc": now_utc_iso(),
+        "experiment_config": {
+            "source": experiment_cfg_source,
+            "run_dir": None if run_dir is None else str(run_dir),
+            "run_context_path": None if run_dir is None else str(run_dir / "run_context.json"),
+            "task_name": str(effective_cfg.task.name),
+            "model_name": str(effective_cfg.model.name),
+            "forward_beta_target": str(effective_cfg.forward.beta.get("_target_", "")),
+            "forward_hazard_target": (
+                str(effective_cfg.forward.hazard.get("_target_", ""))
+                if effective_cfg.forward.get("hazard", None) is not None
+                else None
+            ),
+            "forward_jump_target": (
+                str(effective_cfg.forward.jump.get("_target_", ""))
+                if effective_cfg.forward.get("jump", None) is not None
+                else None
+            ),
+            "jump_eta": effective_jump_eta,
+            "sampler_logit_temperature": effective_logit_temperature,
+            "sampler_n_steps": int(sample_timesteps),
+            "training_seed": int(effective_cfg.training.seed),
+        },
         "checkpoint": {
             "root_dir": str(checkpoint_root),
             "source": checkpoint_source,
@@ -403,11 +548,23 @@ def run_offline_checkpoint_eval(
             "sudoku_every": int(sudoku_every),
             "sudoku_num_batches": int(eval_cfg_local.get("sudoku_num_batches", 64)),
             "sudoku_num_batches_force": int(eval_cfg_local.get("sudoku_num_batches_force", -1)),
+            "requested_jump_eta_override": _maybe_float(offline_cfg.get("jump_eta", None)),
+            "requested_logit_temperature_override": _maybe_float(
+                offline_cfg.get("logit_temperature", None)
+            ),
+            "use_run_config": bool(offline_cfg.get("use_run_config", False)),
         },
         "metrics": metrics,
     }
+    if run_context_payload is not None:
+        payload["run_context"] = {
+            "checkpoint_dir": run_context_payload.get("checkpoint_dir", None),
+            "metrics_dir": run_context_payload.get("metrics_dir", None),
+            "timestamp_utc": run_context_payload.get("timestamp_utc", None),
+        }
     if sampling_probe_payload is not None:
         payload["sampling_probe"] = sampling_probe_payload
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -417,6 +574,14 @@ def run_offline_checkpoint_eval(
     print(
         "[offline-eval] "
         f"checkpoint={selected_ckpt} step={restored_step} param_source={param_source}",
+        flush=True,
+    )
+    print(
+        "[offline-eval] "
+        f"config_source={experiment_cfg_source} "
+        f"sample_timesteps={sample_timesteps} "
+        f"jump_eta={effective_jump_eta} "
+        f"logit_temperature={effective_logit_temperature}",
         flush=True,
     )
     print(

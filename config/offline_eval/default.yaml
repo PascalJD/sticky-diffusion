@@ -28,6 +28,15 @@ force_is: true
 # Optional override for generator timesteps; null uses experiment.training.sample_timesteps.
 sample_timesteps: null
 
+# If true, rebuild model/task config from <run_dir>/run_context.json so offline
+# eval reuses the exact training backbone / anchor / hazard / jump settings.
+use_run_config: false
+
+# Optional explicit eval-time SJD overrides applied after loading the run config.
+# Leave null to preserve the training baseline.
+jump_eta: null
+logit_temperature: null
+
 # Optional sampler probe diagnostics (primarily for SJD sweeps).
 # Runs extra sampling batches and records mean sampler metrics in the report.
 sampler_probe_batches: 0

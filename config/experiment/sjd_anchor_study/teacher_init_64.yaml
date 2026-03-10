@@ -1,0 +1,12 @@
+# @package experiment
+defaults:
+  - sjd_anchor_study_cifar10
+  - override /model/anchor@model.anchor: teacher_init_64
+  - _self_
+
+task:
+  name: sjd_anchor_study_cifar10_teacher_init_64
+
+model:
+  anchor:
+    learnable: false

@@ -51,14 +51,19 @@ def build_model(
         )
 
     if name == "sjd":
+        from sticky.models.sjd.anchors import (
+            anchor_learnable_from_mapping,
+            anchor_table_config_from_mapping,
+        )
         from sticky.models.sjd.sjd_model import SJD
 
         return SJD(
             vocab_size=vocab_size,
-            anchor_dim=int(cfg.model.anchor_dim),
-            anchor_init=str(cfg.model.get("anchor_init", "normal")),
-            learnable_anchors=bool(cfg.model.get("learnable_anchors", True)),
-            anchors_init_std=float(cfg.model.get("anchors_init_std", 1.0)),
+            anchor_config=anchor_table_config_from_mapping(
+                cfg.model,
+                vocab_size=vocab_size,
+            ),
+            learnable_anchors=anchor_learnable_from_mapping(cfg.model, default=True),
             feature_dim=int(cfg.model.feature_dim),
             n_layers=int(cfg.model.n_layers),
             n_dit_layers=int(cfg.model.n_dit_layers),

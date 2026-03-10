@@ -9,6 +9,8 @@ import optax
 from flax import struct
 from omegaconf import DictConfig
 
+from sticky.models.sjd.anchors import anchor_learnable_from_mapping
+
 
 Array = jnp.ndarray
 
@@ -79,7 +81,7 @@ def make_optimizer(cfg: DictConfig, params: Any):
     base_tx: optax.GradientTransformation = adamw_tx
     if (
         str(cfg.model.name) == "sjd"
-        and not bool(cfg.model.get("learnable_anchors", True))
+        and not anchor_learnable_from_mapping(cfg.model, default=True)
     ):
         base_tx = optax.multi_transform(
             {
@@ -126,7 +128,7 @@ def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
     elif name == "sjd":
         rng, rng_params = jax.random.split(rng, 2)
 
-        anchor_dim = int(cfg.model.anchor_dim)
+        anchor_dim = int(model.anchor_config.anchor_dim)
         dummy_z = jnp.zeros(
             (batch_size,) + tuple(cfg.dataset.data_shape) + (anchor_dim,),
             dtype=jnp.float32,

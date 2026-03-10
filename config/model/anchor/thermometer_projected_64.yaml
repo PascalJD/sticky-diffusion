@@ -1,0 +1,17 @@
+# Centered 256x256 thermometer code projected deterministically to 64 dimensions.
+family: thermometer_projected
+dim: 64
+learnable: false
+init_std: 1.0
+seed: null
+order_weight: 1.0
+residual_weight: 1.0
+projection_seed: 0
+teacher_checkpoint: null
+transform:
+  center_columns: false
+  whiten: false
+  whiten_eps: 1.0e-5
+  equalize_row_norms: false
+  target_row_norm: null
+  scale: 1.0

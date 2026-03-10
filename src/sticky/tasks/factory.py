@@ -37,7 +37,7 @@ def build_task(cfg: DictConfig):
             augment_eval=aug_eval,
         )
 
-    if name == "sjd_cifar10":
+    if name == "sjd_cifar10" or str(name).startswith("sjd_anchor_study_cifar10"):
         from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
         beta = hydra.utils.instantiate(cfg.forward.beta)

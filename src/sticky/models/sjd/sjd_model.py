@@ -4,17 +4,15 @@ from collections.abc import Sequence
 import flax.linen as nn
 import jax.numpy as jnp
 
-from .anchors import TokenAnchors
+from .anchors import AnchorTableConfig, TokenAnchors
 from .classifier import ContinuousClassifier
 
 Array = jnp.ndarray
 
 
 class SJD(nn.Module):
-    anchor_dim: int = 64
-    anchor_init: str = "normal"
+    anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
-    anchors_init_std: float = 1.0
 
     feature_dim: int = 128
     num_heads: int = 12
@@ -45,12 +43,14 @@ class SJD(nn.Module):
     vocab_size: int = 256
 
     def setup(self):
+        if int(self.anchor_config.vocab_size) != int(self.vocab_size):
+            raise ValueError(
+                "SJD anchor_config.vocab_size must match model vocab_size, got "
+                f"{self.anchor_config.vocab_size} vs {self.vocab_size}."
+            )
         self.anchors = TokenAnchors(
-            vocab_size=self.vocab_size,
-            anchor_dim=self.anchor_dim,
-            anchor_init=self.anchor_init,
+            config=self.anchor_config,
             learnable=self.learnable_anchors,
-            init_std=self.anchors_init_std,
         )
         self.classifier = ContinuousClassifier(
             n_layers=self.n_layers,

@@ -1,0 +1,12 @@
+# @package experiment
+defaults:
+  - sjd_anchor_study_cifar10
+  - override /model/anchor@model.anchor: ordered_random_residual_64
+  - _self_
+
+task:
+  name: sjd_anchor_study_cifar10_learnable_ordered_random_residual_64
+
+model:
+  anchor:
+    learnable: true

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CALLER_PWD="${PWD}"
 REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/../../.." && pwd)}"
 if [[ ! -d "${REPO_ROOT}" ]]; then
   echo "REPO_ROOT not found: ${REPO_ROOT}" >&2
@@ -32,6 +33,18 @@ JOB_NAME="${JOB_NAME:-sticky_${MODEL}}"
 
 CONDA_ENV="${CONDA_ENV:-sticky}"
 ANVIL_MODULES="${ANVIL_MODULES:-}"
+EXTRA_OVERRIDES_FILE="${EXTRA_OVERRIDES_FILE:-}"
+DRY_RUN="${DRY_RUN:-0}"
+
+if [[ -n "${EXTRA_OVERRIDES_FILE}" ]]; then
+  if [[ "${EXTRA_OVERRIDES_FILE}" != /* ]]; then
+    EXTRA_OVERRIDES_FILE="${CALLER_PWD}/${EXTRA_OVERRIDES_FILE}"
+  fi
+  if [[ ! -f "${EXTRA_OVERRIDES_FILE}" ]]; then
+    echo "EXTRA_OVERRIDES_FILE not found: ${EXTRA_OVERRIDES_FILE}" >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "${SCRATCH:-}" ]]; then
   SCRATCH_ROOT="${SCRATCH}"
@@ -103,7 +116,19 @@ echo "  time:      ${TIME_LIMIT}"
 echo "  platform:  ${PLATFORM}"
 echo "  run tag:   ${RUN_TAG}"
 echo "  run dir:   ${OUTPUT_ROOT}/${RUN_TAG}"
+if [[ -n "${EXTRA_OVERRIDES_FILE}" ]]; then
+  echo "  overrides: ${EXTRA_OVERRIDES_FILE}"
+fi
 echo
+
+if [[ "${DRY_RUN}" == "1" ]]; then
+  printf 'DRY_RUN sbatch'
+  for arg in "${SBATCH_ARGS[@]}"; do
+    printf ' %q' "${arg}"
+  done
+  printf ' %q\n' "${SCRIPT_DIR}/train_model.slurm"
+  exit 0
+fi
 
 sbatch_out="$(sbatch "${SBATCH_ARGS[@]}" "${SCRIPT_DIR}/train_model.slurm")"
 sbatch_rc=$?

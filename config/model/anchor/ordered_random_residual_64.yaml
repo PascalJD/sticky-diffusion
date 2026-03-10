@@ -1,0 +1,17 @@
+# First coordinate encodes token order; remaining coordinates are Gaussian residuals.
+family: ordered_random_residual
+dim: 64
+learnable: false
+init_std: 1.0
+seed: 0
+order_weight: 1.0
+residual_weight: 1.0
+projection_seed: null
+teacher_checkpoint: null
+transform:
+  center_columns: false
+  whiten: false
+  whiten_eps: 1.0e-5
+  equalize_row_norms: false
+  target_row_norm: null
+  scale: 1.0

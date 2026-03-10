@@ -372,6 +372,23 @@ if [[ -n "${EXTRA_OVERRIDES}" ]]; then
   read -r -a EXTRA_OVERRIDES_ARR <<< "${EXTRA_OVERRIDES}"
 fi
 
+EXTRA_OVERRIDES_FILE="${EXTRA_OVERRIDES_FILE:-}"
+EXTRA_OVERRIDES_FILE_ARR=()
+if [[ -n "${EXTRA_OVERRIDES_FILE}" ]]; then
+  if [[ ! -f "${EXTRA_OVERRIDES_FILE}" ]]; then
+    echo "EXTRA_OVERRIDES_FILE not found: ${EXTRA_OVERRIDES_FILE}" >&2
+    exit 1
+  fi
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [[ -z "${line}" ]] || [[ "${line}" == \#* ]]; then
+      continue
+    fi
+    EXTRA_OVERRIDES_FILE_ARR+=("${line}")
+  done < "${EXTRA_OVERRIDES_FILE}"
+fi
+
 echo "[$(date)] Host: $(hostname)"
 echo "Model: ${MODEL}"
 echo "Experiment cfg: ${EXPERIMENT_CFG}"
@@ -383,8 +400,12 @@ echo "Data dir: ${DATA_DIR}"
 echo "Platform: ${PLATFORM}"
 echo "W&B enabled: ${WANDB_ENABLED}"
 echo "Eval enabled: ${EVAL_ENABLED}"
+if [[ -n "${EXTRA_OVERRIDES_FILE}" ]]; then
+  echo "Extra overrides file: ${EXTRA_OVERRIDES_FILE}"
+fi
 echo
 
 run_job_step "${PYTHON_BIN}" -m sticky.entrypoints.train \
   "${BASE_OVERRIDES[@]}" \
+  "${EXTRA_OVERRIDES_FILE_ARR[@]}" \
   "${EXTRA_OVERRIDES_ARR[@]}"

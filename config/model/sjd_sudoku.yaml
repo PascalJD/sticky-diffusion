@@ -1,11 +1,13 @@
+defaults:
+  - anchor: normal_64
+  - _self_
+
 # SJD model config for Sudoku (sequence tokens).
 name: sjd
 
-# Anchor table.
-anchor_dim: 64
-anchor_init: normal
-learnable_anchors: false
-anchors_init_std: 1.0
+# Anchor table. From the root training config, use `model/anchor@experiment.model.anchor=...` to swap preset families, or override
+# `model.anchor.*` directly. Legacy flat fields remain supported by the codepath
+# for older configs, but nested `model.anchor.*` is preferred.
 
 # Classifier backbone.
 # MGDM "Tiny"/6M GPT-2-like setting: 3 layers, 12 heads, hidden dim 384.

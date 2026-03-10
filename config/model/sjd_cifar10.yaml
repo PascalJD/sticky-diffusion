@@ -1,13 +1,13 @@
+defaults:
+  - anchor: ordered_scalar
+  - _self_
+
 # SJD model config for CIFAR-10.
 name: sjd
 
-# Anchor table. CADD/MDM-Prime treat images as 32 x 32 x 3 scalar-valued sites
-# with vocabulary 256 per channel, so anchor_dim=1 matches the per-channel tokenization.
-# For 8-bit images we use fixed ordered scalar anchors a_k = -1 + 2k/255.
-anchor_dim: 1
-anchor_init: ordered_scalar
-learnable_anchors: false
-anchors_init_std: 1.0  # unused unless anchor_init=normal
+# Anchor table. From the root training config, use `model/anchor@experiment.model.anchor=...` to swap preset families, or override
+# `model.anchor.*` directly. Legacy flat fields remain supported by the codepath
+# for older configs, but nested `model.anchor.*` is preferred.
 
 # Match the lighter MD4 CIFAR-10 UNet path rather than the ADM-style image model.
 feature_dim: 128

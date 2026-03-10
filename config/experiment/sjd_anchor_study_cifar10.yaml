@@ -1,0 +1,22 @@
+# Fixed-comparison CIFAR-10 anchor study for SJD.
+#
+# This keeps dataset, backbone, optimizer, training schedule, forward beta,
+# hazard, jump family, and sampler defaults aligned with the CIFAR-10 SJD path.
+# The intended study axes are:
+#   1) `model/anchor@experiment.model.anchor=...`
+#   2) `model.anchor.learnable=...`
+
+defaults:
+  - /dataset: cifar10_discrete
+  - /model: sjd_cifar10
+  - /optim: adamw
+  - /training: sjd_cifar10
+  - /runtime: default
+  - /sampler: sjd_cifar10
+  - /forward/beta: vp_linear
+  - /forward/hazard: cosine_alpha
+  - /forward/jump: vp_matched
+  - _self_
+
+task:
+  name: sjd_anchor_study_cifar10

@@ -1,0 +1,17 @@
+# Fixed ordered-scalar control: a_k = -1 + 2k / 255, shape [256, 1].
+family: ordered_scalar
+dim: 1
+learnable: false
+init_std: 1.0
+seed: null
+order_weight: 1.0
+residual_weight: 1.0
+projection_seed: null
+teacher_checkpoint: null
+transform:
+  center_columns: false
+  whiten: false
+  whiten_eps: 1.0e-5
+  equalize_row_norms: false
+  target_row_norm: null
+  scale: 1.0
