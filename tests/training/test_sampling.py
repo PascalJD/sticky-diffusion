@@ -13,12 +13,14 @@ from sticky.training.sampling import build_sampling_fns
 
 
 def test_sjd_sampling_uses_sample_timesteps(monkeypatch):
-    recorded: dict[str, int] = {}
+    recorded: dict[str, int | str] = {}
 
     class DummySamplerConfig:
         def __init__(self, **kwargs):
             recorded["n_steps"] = int(kwargs["n_steps"])
             self.n_steps = int(kwargs["n_steps"])
+            recorded["sampling_grid"] = str(kwargs["sampling_grid"])
+            self.sampling_grid = str(kwargs["sampling_grid"])
 
     class DummyAnchorTable:
         def __init__(self, table_float):
@@ -66,6 +68,7 @@ def test_sjd_sampling_uses_sample_timesteps(monkeypatch):
             "sampler": {
                 "n_steps": 999,
                 "T": 1.0,
+                "sampling_grid": "cosine",
                 "score_scale": 1.0,
                 "logit_temperature": 1.0,
             },
@@ -95,3 +98,25 @@ def test_sjd_sampling_uses_sample_timesteps(monkeypatch):
 
     assert recorded["n_steps"] == 37
     assert recorded["generate_n_steps"] == 37
+    assert recorded["sampling_grid"] == "cosine"
+
+
+def test_sjd_sampling_time_grid_supports_cosine():
+    uniform = sampler_mod.make_sampling_time_grid(
+        T=1.0,
+        n_steps=4,
+        sampling_grid="uniform",
+    )
+    cosine = sampler_mod.make_sampling_time_grid(
+        T=1.0,
+        n_steps=4,
+        sampling_grid="cosine",
+    )
+
+    assert uniform.shape == (5,)
+    assert cosine.shape == (5,)
+
+    assert jnp.allclose(uniform, jnp.asarray([1.0, 0.75, 0.5, 0.25, 0.0], dtype=jnp.float32))
+    assert jnp.allclose(cosine[[0, -1]], jnp.asarray([1.0, 0.0], dtype=jnp.float32))
+    assert bool(jnp.all(cosine[:-1] >= cosine[1:]))
+    assert float(cosine[1]) > float(uniform[1])

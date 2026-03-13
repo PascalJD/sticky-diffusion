@@ -137,7 +137,7 @@ output_path = Path(sys.argv[3])
 candidate_filter = set(sys.argv[4].split()) if sys.argv[4].strip() else None
 
 
-def read_run_context(run_dir: Path) -> dict:
+def read_run_context(run_dir):
     run_context_path = run_dir / "run_context.json"
     if not run_context_path.exists():
         return {}
@@ -147,7 +147,7 @@ def read_run_context(run_dir: Path) -> dict:
     return payload
 
 
-def baseline_from_run_context(payload: dict) -> tuple[str, str, str]:
+def baseline_from_run_context(payload):
     exp_cfg = payload.get("config", {}).get("experiment", {})
     if not isinstance(exp_cfg, dict):
         return "", "", ""
@@ -163,7 +163,7 @@ def baseline_from_run_context(payload: dict) -> tuple[str, str, str]:
     return str(seed), str(eta), str(tau)
 
 
-def normalize_row(row: dict) -> dict:
+def normalize_row(row):
     run_dir = Path(str(row.get("run_dir", ""))).expanduser().resolve()
     run_context = read_run_context(run_dir)
     resolved_seed, baseline_eta, baseline_tau = baseline_from_run_context(run_context)
@@ -183,13 +183,13 @@ def normalize_row(row: dict) -> dict:
     }
 
 
-def rows_from_training_manifest(path: Path) -> list[dict]:
+def rows_from_training_manifest(path):
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         return [normalize_row(row) for row in reader]
 
 
-def rows_from_run_dir_list(path: Path) -> list[dict]:
+def rows_from_run_dir_list(path):
     raw_lines = [line.rstrip("\n") for line in path.read_text(encoding="utf-8").splitlines()]
     lines = [line for line in raw_lines if line.strip() and not line.lstrip().startswith("#")]
     if not lines:
@@ -235,9 +235,9 @@ else:
 if candidate_filter is not None:
     rows = [row for row in rows if row["candidate"] in candidate_filter]
 
-def sort_key(row: dict) -> tuple[str, int | str]:
+def sort_key(row):
     try:
-        seed_key: int | str = int(row["seed"])
+        seed_key = int(row["seed"])
     except Exception:
         seed_key = str(row["seed"])
     return str(row["candidate"]), seed_key

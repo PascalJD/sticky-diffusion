@@ -2,6 +2,7 @@
 # TrainForWorst uses 50 reverse steps for Sudoku inference.
 T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 50
+sampling_grid: uniform
 
 # Score + anchor-allocation mode.
 alloc_mode: sample

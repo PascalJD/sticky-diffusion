@@ -40,6 +40,7 @@ class SamplerConfig:
     """Configuration for the reverse-time SJD sampler."""
     T: float = 1.0
     n_steps: int = 250
+    sampling_grid: str = "uniform"  # "uniform" | "cosine"
     score_from_classifier: bool = True
     score_scale: float = 1.0
     logit_temperature: float = 1.0
@@ -74,6 +75,29 @@ def _expand_like(v: Array, like: Array) -> Array:
     while v.ndim < like.ndim:
         v = v[..., None]
     return v
+
+
+def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Array:
+    """Return reverse-time step boundaries from T down to 0."""
+    if int(n_steps) <= 0:
+        raise ValueError(f"n_steps must be positive, got {n_steps}.")
+
+    key = str(sampling_grid).strip().lower()
+    idx = jnp.arange(int(n_steps) + 1, dtype=jnp.float32)
+    u = 1.0 - idx / jnp.asarray(float(n_steps), dtype=jnp.float32)
+
+    if key == "uniform":
+        scaled = u
+    elif key == "cosine":
+        scaled = jnp.cos(0.5 * jnp.pi * (1.0 - u))
+    else:
+        raise ValueError(
+            f"Unknown sampling_grid={sampling_grid!r}. Expected 'uniform' or 'cosine'."
+        )
+
+    scaled = scaled.at[0].set(1.0)
+    scaled = scaled.at[-1].set(0.0)
+    return jnp.asarray(float(T), dtype=jnp.float32) * jnp.clip(scaled, 0.0, 1.0)
 
 
 def reverse_sample(
@@ -116,8 +140,11 @@ def reverse_sample(
             f"logit_temperature must be > 0, got {cfg.logit_temperature}"
         )
     logit_temperature = jnp.asarray(float(cfg.logit_temperature), dtype=jnp.float32)
-
-    dt = float(cfg.T) / float(cfg.n_steps)
+    time_grid = make_sampling_time_grid(
+        T=float(cfg.T),
+        n_steps=int(cfg.n_steps),
+        sampling_grid=cfg.sampling_grid,
+    )
 
     k0, k_loop = jax.random.split(key, 2)
     y = cfg.init_std * jax.random.normal(k0, shape=(batch_size,) + tuple(shape) + (d,), dtype=jnp.float32)
@@ -162,8 +189,9 @@ def reverse_sample(
             frac_committed_pre_force,
         ) = carry
 
-        # Forward-time parameter for this reverse-time slice: t = T - i·dt.
-        t_scalar = jnp.asarray(cfg.T - dt * i, dtype=jnp.float32)
+        t_scalar = time_grid[i]
+        next_t_scalar = time_grid[i + 1]
+        dt = t_scalar - next_t_scalar
         t_img = _broadcast_time_to_batch(t_scalar, batch_size)
         is_last_step = i == int(cfg.n_steps) - 1
 
@@ -203,11 +231,7 @@ def reverse_sample(
         jump_t_img = t_img
         jump_logits = logits_score
         if cfg.refresh_logits_after_em_step:
-            refreshed_t_scalar = jnp.maximum(
-                t_scalar - jnp.asarray(dt, dtype=jnp.float32),
-                jnp.asarray(0.0, dtype=jnp.float32),
-            )
-            refreshed_t_img = _broadcast_time_to_batch(refreshed_t_scalar, batch_size)
+            refreshed_t_img = _broadcast_time_to_batch(next_t_scalar, batch_size)
             refreshed_y = y
             refreshed_logits, _ = apply_model(params, refreshed_y, refreshed_t_img)
             jump_t_img = refreshed_t_img

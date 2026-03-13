@@ -1,8 +1,9 @@
 # Sampler profile for SJD CIFAR-10
 # Time discretization.
-# The reverse-time grid is uniform: t_i = T - i * (T / n_steps).
+# Reverse-time grid: uniform or cosine-warped, following the MD4/CADD convention.
 T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 256 # NFE = 2*n_steps if refresh_logits_after_em_step is true
+sampling_grid: uniform
 
 # Score + anchor-allocation mode.
 alloc_mode: sample

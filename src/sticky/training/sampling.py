@@ -83,6 +83,7 @@ def build_sampling_fns(
         sampler_cfg = SamplerConfig(
             T=float(cfg.sampler.get("T", 1.0)),
             n_steps=int(sample_timesteps),
+            sampling_grid=str(cfg.sampler.get("sampling_grid", "uniform")),
             score_scale=float(cfg.sampler.get("score_scale", 1.0)),
             logit_temperature=float(
                 cfg.sampler.get(
