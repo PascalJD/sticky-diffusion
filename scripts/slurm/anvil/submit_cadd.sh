@@ -3,13 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-DEFAULT_EXTRA_OVERRIDES="experiment.model.corrector_enabled=false experiment.model.corrector_steps=0 experiment.model.corrector_remask_frac=0.0"
-if [[ -n "${EXTRA_OVERRIDES:-}" ]]; then
-  EXTRA_OVERRIDES="${DEFAULT_EXTRA_OVERRIDES} ${EXTRA_OVERRIDES}"
-else
-  EXTRA_OVERRIDES="${DEFAULT_EXTRA_OVERRIDES}"
-fi
-
 export MODEL="${MODEL:-cadd}"
 export EXPERIMENT_CFG="${EXPERIMENT_CFG:-cadd_cifar10}"
 export EVAL_CFG="${EVAL_CFG:-cadd_cifar10}"
@@ -37,7 +30,7 @@ export WANDB_ENABLED="${WANDB_ENABLED:-true}"
 export EVAL_ENABLED="${EVAL_ENABLED:-false}"
 export BASELINE_ARCH_114M="${BASELINE_ARCH_114M:-true}"
 export DISABLE_AUGMENT="${DISABLE_AUGMENT:-true}"
-export DISABLE_CORRECTOR="${DISABLE_CORRECTOR:-true}"
-export EXTRA_OVERRIDES
+export DISABLE_CORRECTOR="${DISABLE_CORRECTOR:-false}"
+export EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
 
 exec "${SCRIPT_DIR}/submit_train.sh"

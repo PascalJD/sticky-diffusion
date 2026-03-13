@@ -1,3 +1,7 @@
+defaults:
+  - cadd_latent: gaussian
+  - _self_
+
 # CADD model config for CIFAR-10.
 name: cadd
 
@@ -7,10 +11,12 @@ cont_time: true
 # The paper reports image results with NFE=512.
 timesteps: 512
 
-# Forward-process schedules (Appendix B.1).
+# Forward-process schedules.
 discrete_schedule_type: linear     # alpha(t)=1-t
-continuous_schedule_type: linear   # gamma_bar(t) schedule for the continuous latent
-# Strict B.1 behavior: no clipping, so alpha(t)=1-t and gamma_bar(t)=1-t.
+# Continuous latent config lives under `model.cadd_latent.*` and defaults to the
+# Gaussian latent from the main derivation.
+# No clipping: alpha(t)=1-t and, with the default linear continuous schedule,
+# gamma_bar(t)=1-t.
 schedule_eps: 0.0
 
 # Backbone / embedding.
@@ -67,10 +73,9 @@ K: 1
 force_decode_at_end: true
 
 # Sampling corrector (paper: "applied the corrector following Gat et al. (2024)").
-# Keep it OFF by default so baseline runs are strictly no-corrector unless
-# explicitly enabled in a sweep/ablation.
-corrector_enabled: false
+# Keep a lightweight single-step corrector on by default.
+corrector_enabled: true
 corrector_steps: 1
-corrector_remask_frac: 0.0
+corrector_remask_frac: 0.1
 corrector_metric: entropy
 corrector_sample_mode: sample

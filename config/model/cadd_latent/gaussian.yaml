@@ -1,0 +1,2 @@
+type: gaussian
+continuous_schedule_type: linear

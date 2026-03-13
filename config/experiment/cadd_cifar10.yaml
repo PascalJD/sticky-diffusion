@@ -2,7 +2,7 @@
 defaults:
   - /dataset: cifar10_discrete
   - /model: cadd_cifar10
-  - /optim: adamw
+  - /optim: adamw_cadd
   - /training: cadd_cifar10
   - /runtime: default
   - _self_
@@ -13,5 +13,10 @@ task:
 # Enable pixel-preserving augmentations on CIFAR-10 (Karras et al. style),
 # keeping only rotation+flip as described in the CADD paper.
 dataset:
+  batch_size: 512
+  eval_batch_size: 512
   augment:
     enabled: true
+    prob: 0.15
+    rotate: true
+    hflip: true

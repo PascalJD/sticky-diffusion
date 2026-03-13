@@ -40,6 +40,7 @@ def make_lr_schedule(cfg: DictConfig):
     warmup_steps = int(cfg.optim.warmup_steps)
     total_steps = int(cfg.training.num_train_steps)
     base_lr = float(cfg.optim.learning_rate)
+    schedule_name = str(cfg.optim.get("lr_schedule", "warmup_cosine_decay"))
 
     # Optax expects decay_steps to be the overall schedule horizon and requires
     # decay_steps > warmup_steps. Short smoke runs can otherwise fail.
@@ -47,13 +48,31 @@ def make_lr_schedule(cfg: DictConfig):
     warmup_steps = max(0, min(warmup_steps, total_steps - 1))
     decay_steps = max(total_steps, warmup_steps + 1)
 
-    return optax.warmup_cosine_decay_schedule(
-        init_value=0.0,
-        peak_value=base_lr,
-        warmup_steps=warmup_steps,
-        decay_steps=decay_steps,
-        end_value=0.0,
-    )
+    if schedule_name == "warmup_constant":
+        if warmup_steps <= 0:
+            return optax.constant_schedule(base_lr)
+        return optax.join_schedules(
+            schedules=[
+                optax.linear_schedule(
+                    init_value=0.0,
+                    end_value=base_lr,
+                    transition_steps=warmup_steps,
+                ),
+                optax.constant_schedule(base_lr),
+            ],
+            boundaries=[warmup_steps],
+        )
+
+    if schedule_name == "warmup_cosine_decay":
+        return optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=base_lr,
+            warmup_steps=warmup_steps,
+            decay_steps=decay_steps,
+            end_value=0.0,
+        )
+
+    raise ValueError(f"Unknown optim.lr_schedule={schedule_name!r}")
 
 
 def _path_keys(path: Sequence[Any]) -> tuple[Any, ...]:

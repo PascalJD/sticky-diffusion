@@ -1,0 +1,11 @@
+# AdamW settings tuned for the CADD CIFAR-10 defaults.
+name: adamw
+
+# Warm up to the paper-style 1e-4, then keep it constant.
+learning_rate: 1.0e-4
+warmup_steps: 1000
+lr_schedule: warmup_constant
+
+# Favor the paper-style high beta2 and effectively disable weight decay.
+weight_decay: 0.0
+b2: 0.999

@@ -93,6 +93,8 @@ def build_model(
     if name == "cadd":
         from sticky.models.cadd.cadd_model import CADD
 
+        latent_cfg = cfg.model.get("cadd_latent", {})
+
         return CADD(
             data_shape=data_shape,
             vocab_size=vocab_size,
@@ -100,7 +102,18 @@ def build_model(
             timesteps=int(cfg.model.get("timesteps", 512)),
             antithetic_time_sampling=bool(cfg.model.get("antithetic_time_sampling", False)),
             discrete_schedule_type=str(cfg.model.get("discrete_schedule_type", "linear")),
-            continuous_schedule_type=str(cfg.model.get("continuous_schedule_type", "linear")),
+            continuous_schedule_type=str(
+                latent_cfg.get(
+                    "continuous_schedule_type",
+                    cfg.model.get("continuous_schedule_type", "linear"),
+                )
+            ),
+            continuous_latent_type=str(
+                latent_cfg.get(
+                    "type",
+                    cfg.model.get("continuous_latent_type", "gaussian"),
+                )
+            ),
             schedule_eps=float(cfg.model.get("schedule_eps", 1e-4)),
             feature_dim=int(cfg.model.get("feature_dim", 128)),
             num_heads=int(cfg.model.get("num_heads", 12)),

@@ -78,6 +78,8 @@ class CADD(nn.Module):
 
     Notes:
       * This code focuses on the *image/token* setting used in Sticky.
+      * The continuous latent can follow either the paper's main Gaussian
+        diffusion derivation or the Appendix B.1 flow-matching path.
       * The sampling code supports the paper's cosine-decay temperature schedule.
       * Multi-sample estimation is currently implemented for K=1 only.
     """
@@ -93,7 +95,8 @@ class CADD(nn.Module):
 
     # Schedules.
     discrete_schedule_type: str = "linear"  # paper: linear
-    continuous_schedule_type: str = "linear"  # paper B.1: linear FM path
+    continuous_schedule_type: str = "linear"
+    continuous_latent_type: str = "gaussian"  # gaussian | flow_matching
     schedule_eps: float = 1e-4
 
     # Embedding/backbone.
@@ -264,23 +267,69 @@ class CADD(nn.Module):
         un_mask = jax.random.bernoulli(self.make_rng("sample"), keep_prob, x0.shape)
         return jnp.where(un_mask, x0, self.mask_token_id).astype(jnp.int32)
 
-    def _make_continuous_latent(self, *, x0: Array, x_t: Array, t: Array) -> Array:
-        """Construct z_t for masked positions with strict B.1 linear FM path.
+    def _continuous_gamma_bar(self, t: Array, *, target_ndim: int) -> Array:
+        gbar = self.gamma_bar(md4_utils.reverse_broadcast(jnp.asarray(t), target_ndim))
+        gbar = jnp.clip(gbar, a_min=0.0, a_max=1.0)
+        return gbar[..., None]
 
-        If a position is masked, we sample
-          z_t = gamma_bar(t) * z0 + (1 - gamma_bar(t)) * eps,
-        where gamma_bar(t)=1-t under the default linear schedule.
-        """
+    def _sample_masked_continuous_latent(self, *, rng: Array, z0: Array, t: Array) -> Array:
+        """Sample the masked-position continuous marginal q(z_t | x_t=m, x_0)."""
+        gbar = self._continuous_gamma_bar(t, target_ndim=z0.ndim - 1)
+        noise = jax.random.normal(rng, z0.shape)
+
+        latent_type = str(self.continuous_latent_type)
+        if latent_type == "gaussian":
+            return jnp.sqrt(gbar) * z0 + jnp.sqrt(jnp.maximum(1.0 - gbar, 0.0)) * noise
+        if latent_type == "flow_matching":
+            return gbar * z0 + (1.0 - gbar) * noise
+        raise NotImplementedError(
+            f"Unknown continuous_latent_type={self.continuous_latent_type!r}"
+        )
+
+    def _reverse_masked_continuous_latent(
+        self,
+        *,
+        rng: Array,
+        z_t: Array,
+        z0_hat: Array,
+        s: Array,
+        t: Array,
+    ) -> Array:
+        """Sample or transport the masked latent from time `t` to earlier time `s`."""
+        gbar_t = self._continuous_gamma_bar(t, target_ndim=z_t.ndim - 1)
+        gbar_s = self._continuous_gamma_bar(s, target_ndim=z_t.ndim - 1)
+
+        latent_type = str(self.continuous_latent_type)
+        if latent_type == "gaussian":
+            denom = jnp.maximum(1.0 - gbar_t, 1e-6)
+            gamma_step = jnp.clip(gbar_t / jnp.maximum(gbar_s, 1e-6), a_min=0.0, a_max=1.0)
+            mu = (
+                jnp.sqrt(gbar_s) * (1.0 - gamma_step) / denom * z0_hat
+                + jnp.sqrt(gamma_step) * (1.0 - gbar_s) / denom * z_t
+            )
+            beta_tilde = (1.0 - gbar_s) * (1.0 - gamma_step) / denom
+            noise = jax.random.normal(rng, z_t.shape)
+            return mu + jnp.sqrt(jnp.maximum(beta_tilde, 0.0)) * noise
+
+        if latent_type == "flow_matching":
+            denom = jnp.maximum(1.0 - gbar_t, 1e-6)
+            coef_t = (1.0 - gbar_s) / denom
+            coef_0 = gbar_s - coef_t * gbar_t
+            return coef_0 * z0_hat + coef_t * z_t
+
+        raise NotImplementedError(
+            f"Unknown continuous_latent_type={self.continuous_latent_type!r}"
+        )
+
+    def _make_continuous_latent(self, *, x0: Array, x_t: Array, t: Array) -> Array:
+        """Construct z_t for masked positions from the selected latent process."""
         z0 = self.token_embed(x0)
         mask = (x_t == self.mask_token_id).astype(jnp.float32)[..., None]
-
-        t_b = md4_utils.reverse_broadcast(t, x0.ndim)
-        gbar = self.gamma_bar(t_b)
-        gbar = jnp.clip(gbar, a_min=1e-6, a_max=1.0 - 1e-6)
-        gbar = gbar[..., None]
-
-        eps = jax.random.normal(self.make_rng("sample"), z0.shape)
-        z_t = gbar * z0 + (1.0 - gbar) * eps
+        z_t = self._sample_masked_continuous_latent(
+            rng=self.make_rng("sample"),
+            z0=z0,
+            t=t,
+        )
         return z_t * mask  # 0 for unmasked positions
 
     def _cross_entropy_on_masked(self, *, logits: Array, x0: Array, x_t: Array) -> tuple[Array, dict[str, Array]]:
@@ -439,12 +488,14 @@ class CADD(nn.Module):
         # 2) Remask selected tokens and re-noise their continuous latents.
         x_masked = jnp.where(remask, self.mask_token_id, x).astype(jnp.int32)
 
-        # Re-noise using strict B.1 linear FM forward path at fixed time t.
+        # Re-noise the remasked positions using the configured continuous path.
         z0 = self.token_embed(x)
-        gbar = jnp.clip(self.gamma_bar(jnp.asarray(t)), a_min=1e-6, a_max=1.0 - 1e-6)
         rng, rng_eps, rng_tok = jax.random.split(rng, 3)
-        noise = jax.random.normal(rng_eps, z.shape)
-        z_noisy = gbar * z0 + (1.0 - gbar) * noise
+        z_noisy = self._sample_masked_continuous_latent(
+            rng=rng_eps,
+            z0=z0,
+            t=jnp.asarray(t),
+        )
         z_masked = jnp.where(remask[..., None], z_noisy, z)
 
         # 3) Resample remasked positions (unmask immediately).
@@ -482,7 +533,7 @@ class CADD(nn.Module):
         x_t, z_t = state
 
         rng_body = jax.random.fold_in(rng, i)
-        rng_body, rng_flip, rng_token = jax.random.split(rng_body, 3)
+        rng_body, rng_flip, rng_token, rng_latent = jax.random.split(rng_body, 4)
 
         s, t = self.get_sampling_grid(i, timesteps)
         cond_emb = self.get_cond_embedding(conditioning)
@@ -513,19 +564,16 @@ class CADD(nn.Module):
         x_s = jnp.where(to_flip, sampled, x_t).astype(jnp.int32)
 
         # Continuous latent update for positions that remain masked.
-        # Strict B.1 behavior: deterministic bridge implied by
-        #   z_u = g(u) z0 + (1-g(u)) eps
-        # with g(u)=gamma_bar(u). No VP-style posterior noise term.
         stay_mask = x_s == self.mask_token_id
 
         z0_hat = self._estimate_z0(probs=probs)
-
-        gbar_t = jnp.clip(self.gamma_bar(jnp.asarray(t)), a_min=1e-6, a_max=1.0 - 1e-6)
-        gbar_s = jnp.clip(self.gamma_bar(jnp.asarray(s)), a_min=0.0, a_max=1.0)
-        denom = jnp.maximum(1.0 - gbar_t, 1e-6)
-        coef_t = (1.0 - gbar_s) / denom
-        coef_0 = gbar_s - coef_t * gbar_t
-        z_cont = coef_0 * z0_hat + coef_t * z_t
+        z_cont = self._reverse_masked_continuous_latent(
+            rng=rng_latent,
+            z_t=z_t,
+            z0_hat=z0_hat,
+            s=jnp.asarray(s),
+            t=jnp.asarray(t),
+        )
 
         # For unmasked positions, z is deterministically the token embedding.
         z_unmasked = self.token_embed(x_s)
