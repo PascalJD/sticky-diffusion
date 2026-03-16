@@ -12,7 +12,7 @@ def _optional_str(value):
 
 
 def build_task(cfg: DictConfig):
-    name = cfg.task.name
+    name = str(cfg.task.name)
     aug_cfg = cfg.dataset.get("augment", {})
     aug_enabled = bool(aug_cfg.get("enabled", True))
     aug_prob = float(aug_cfg.get("prob", 0.15))
@@ -20,7 +20,7 @@ def build_task(cfg: DictConfig):
     aug_hflip = bool(aug_cfg.get("hflip", True))
     aug_eval = bool(aug_cfg.get("eval", False))
 
-    if name in ("md4_cifar10", "cadd_cifar10"):
+    if name in ("md4_cifar10", "cadd_cifar10", "cadd_cifar10_paper"):
         from sticky.tasks.cifar10_discrete import CIFAR10DiscreteTask
 
         return CIFAR10DiscreteTask(
@@ -37,7 +37,7 @@ def build_task(cfg: DictConfig):
             augment_eval=aug_eval,
         )
 
-    if name == "sjd_cifar10" or str(name).startswith("sjd_anchor_study_cifar10"):
+    if name in ("sjd_cifar10", "sjd_cifar10_paper") or name.startswith("sjd_anchor_study_cifar10"):
         from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
         beta = hydra.utils.instantiate(cfg.forward.beta)
