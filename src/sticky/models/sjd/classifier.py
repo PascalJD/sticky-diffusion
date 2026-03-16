@@ -43,6 +43,7 @@ class ContinuousClassifier(nn.Module):
     adm_use_scale_shift_norm: bool = True
     adm_resblock_updown: bool = False
     adm_use_conv_skip: bool = False
+    adm_use_new_attention_order: bool = False
 
     # continuous-input specific
     project_input: bool = True
@@ -63,11 +64,15 @@ class ContinuousClassifier(nn.Module):
         cond:
           - optional conditioning vector already in embedding space (B, ?)
         """
+        time_cond = cond
+        adm_timesteps = None
         if t is not None:
             # Ensure vector time and build (time, cond) embedding as in MD4
             assert jnp.isscalar(t) or t.ndim == 0 or t.ndim == 1
             t = t * jnp.ones(z.shape[0], dtype=jnp.asarray(t).dtype)
-            cond = CondEmbedding(self.feature_dim)(t * 1000.0, cond=cond)
+            adm_timesteps = t * 1000.0
+            if str(self.image_backbone).lower() != "adm_unet5d" or z.ndim == 3:
+                time_cond = CondEmbedding(self.feature_dim)(adm_timesteps, cond=cond)
 
         # Sequence mode: (B, S, d_anchor)
         if z.ndim == 3:
@@ -84,7 +89,7 @@ class ContinuousClassifier(nn.Module):
                 cond_type=self.cond_type,
                 model_sharding=self.model_sharding,
             )
-            logits = net(z, cond=cond, train=train)
+            logits = net(z, cond=time_cond, train=train)
             return logits, {}
 
         # Image mode (no explicit channel): (B, H, W, d_anchor)
@@ -119,8 +124,14 @@ class ContinuousClassifier(nn.Module):
                 adm_use_scale_shift_norm=self.adm_use_scale_shift_norm,
                 adm_resblock_updown=self.adm_resblock_updown,
                 adm_use_conv_skip=self.adm_use_conv_skip,
+                adm_use_new_attention_order=self.adm_use_new_attention_order,
             )
-            logits = net(z, cond=cond, train=train)  # (B,H,W,C,L)
+            logits = net(
+                z,
+                cond=cond if str(self.image_backbone).lower() == "adm_unet5d" else time_cond,
+                timesteps=adm_timesteps if str(self.image_backbone).lower() == "adm_unet5d" else None,
+                train=train,
+            )  # (B,H,W,C,L)
 
             if squeeze_channel:
                 logits = logits.squeeze(axis=-2)  # (B,H,W,L)

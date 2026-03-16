@@ -21,6 +21,9 @@ ACCOUNT="${ACCOUNT:-}"
 QOS="${QOS:-}"
 CONSTRAINT="${CONSTRAINT:-}"
 EXCLUDE="${EXCLUDE:-}"
+if [[ -z "${EXCLUDE}" && -n "${BAD_NODES:-}" ]]; then
+  EXCLUDE="${BAD_NODES}"
+fi
 NODELIST="${NODELIST:-}"
 
 TIME_LIMIT="${TIME_LIMIT:-24:00:00}"
@@ -55,8 +58,15 @@ else
 fi
 
 RUN_TAG="${RUN_TAG:-${MODEL}_$(date +%Y%m%d_%H%M%S)}"
+STUDY_ROOT="${STUDY_ROOT:-}"
+if [[ -z "${OUTPUT_ROOT:-}" && -n "${STUDY_ROOT}" ]]; then
+  OUTPUT_ROOT="${STUDY_ROOT}"
+fi
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SCRATCH_ROOT}/sticky-diffusion/outputs}"
 DATA_DIR="${DATA_DIR:-${SCRATCH_ROOT}/sticky-diffusion/data/cifar10}"
+if [[ -z "${LOG_DIR:-}" && -n "${STUDY_ROOT}" ]]; then
+  LOG_DIR="${STUDY_ROOT}/slurm_logs"
+fi
 LOG_DIR="${LOG_DIR:-${SCRATCH_ROOT}/sticky-diffusion/logs}"
 
 if [[ -z "${PLATFORM:-}" ]]; then

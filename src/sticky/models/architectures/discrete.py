@@ -39,13 +39,18 @@ class DiscreteClassifier(nn.Module):
     adm_use_scale_shift_norm: bool = True
     adm_resblock_updown: bool = False
     adm_use_conv_skip: bool = False
+    adm_use_new_attention_order: bool = False
 
     @nn.compact
     def __call__(self, z, t=None, cond=None, train: bool = False):
+        time_cond = cond
+        adm_timesteps = None
         if t is not None:
             assert jnp.isscalar(t) or t.ndim == 0 or t.ndim == 1
             t = t * jnp.ones(z.shape[0], dtype=jnp.asarray(t).dtype)
-            cond = CondEmbedding(self.feature_dim)(t * 1000.0, cond=cond)
+            adm_timesteps = t * 1000.0
+            if str(self.image_backbone).lower() != "adm_unet5d" or z.ndim == 2:
+                time_cond = CondEmbedding(self.feature_dim)(adm_timesteps, cond=cond)
 
         if z.ndim == 2:
             if self.outside_embed:
@@ -66,7 +71,7 @@ class DiscreteClassifier(nn.Module):
                 embed_input=not self.outside_embed,
                 n_embed_classes=self.vocab_size + 1,
             )
-            logits = net(z, cond=cond, train=train)
+            logits = net(z, cond=time_cond, train=train)
             return logits, {}
 
         if z.ndim == 4:
@@ -90,8 +95,14 @@ class DiscreteClassifier(nn.Module):
                 adm_use_scale_shift_norm=self.adm_use_scale_shift_norm,
                 adm_resblock_updown=self.adm_resblock_updown,
                 adm_use_conv_skip=self.adm_use_conv_skip,
+                adm_use_new_attention_order=self.adm_use_new_attention_order,
             )
-            logits = net(z, cond=cond, train=train)
+            logits = net(
+                z,
+                cond=cond if str(self.image_backbone).lower() == "adm_unet5d" else time_cond,
+                timesteps=adm_timesteps if str(self.image_backbone).lower() == "adm_unet5d" else None,
+                train=train,
+            )
             return logits, {}
 
         raise NotImplementedError(

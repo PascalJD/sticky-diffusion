@@ -190,6 +190,10 @@ if [[ -z "${EVAL_CFG}" ]]; then
   esac
 fi
 
+STUDY_ROOT="${STUDY_ROOT:-}"
+if [[ -z "${OUTPUT_ROOT:-}" && -n "${STUDY_ROOT}" ]]; then
+  OUTPUT_ROOT="${STUDY_ROOT}"
+fi
 OUTPUT_ROOT="${OUTPUT_ROOT:-${SCRATCH_ROOT}/sticky-diffusion/outputs}"
 DATA_DIR="${DATA_DIR:-${SCRATCH_ROOT}/sticky-diffusion/data/cifar10}"
 RUN_TAG="${RUN_TAG:-${MODEL}_$(date +%Y%m%d_%H%M%S)}"

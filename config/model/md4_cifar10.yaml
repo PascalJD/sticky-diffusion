@@ -31,6 +31,7 @@ adm_conv_resample: true
 adm_use_scale_shift_norm: true
 adm_resblock_updown: false
 adm_use_conv_skip: false
+adm_use_new_attention_order: false
 
 # Regularization.
 dropout_rate: 0.1

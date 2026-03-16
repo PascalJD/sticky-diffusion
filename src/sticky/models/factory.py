@@ -42,6 +42,7 @@ def build_model(
             adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
             adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
             adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
             time_features=str(cfg.model.time_features),
             classes=int(cfg.model.classes),
             sampler=str(cfg.model.sampler),
@@ -88,6 +89,7 @@ def build_model(
             adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
             adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
             adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
         )
 
     if name == "cadd":
@@ -139,6 +141,7 @@ def build_model(
             adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
             adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
             adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
             time_features=str(cfg.model.get("time_features", "t")),
             classes=int(cfg.model.get("classes", -1)),
             sampling_grid=str(cfg.model.get("sampling_grid", "cosine")),

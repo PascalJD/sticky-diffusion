@@ -6,7 +6,7 @@ Fresh layout with one job = one model.
 
 - `submit_train.sh`: generic submit entrypoint for any model.
 - `train_model.slurm`: generic runtime script that executes one training run.
-- `submit_cadd.sh`: CADD wrapper with paper-style defaults.
+- `submit_cadd.sh`: CADD wrapper that defaults to the paper-matched `cadd_cifar10_paper` train/eval profiles.
 - `submit_md4.sh`: MD4 wrapper with paper-style defaults.
 - `submit_sjd.sh`: SJD wrapper that submits the default `sjd_cifar10` experiment config.
 - `submit_sjd_anchor_short_sweep.sh`: consumes a prescreen manifest and submits one short SJD anchor-study run per candidate/seed.
@@ -17,13 +17,14 @@ Fresh layout with one job = one model.
 
 ## Recommended usage
 
-### CADD baseline
+### CADD paper-matched run
 
 ```bash
 ACCOUNT=<allocation> \
 CONDA_ENV=/anvil/scratch/$USER/envs/sticky \
-EXCLUDE=<optional_bad_nodes> \
-RUN_TAG=cadd_baseline_$(date +%Y%m%d_%H%M%S) \
+STUDY_ROOT=/home/$USER/scratch/sticky-diffusion/cadd_paper \
+BAD_NODES=<optional_bad_nodes> \
+RUN_TAG=cadd_paper_$(date +%Y%m%d_%H%M%S) \
 bash scripts/slurm/anvil/submit_cadd.sh
 ```
 
@@ -142,9 +143,11 @@ bash scripts/slurm/anvil/submit_train.sh
 
 - `MODEL`: model key (`cadd`, `md4`, `sjd`, or custom with explicit `EXPERIMENT_CFG`/`EVAL_CFG`).
 - `ACCOUNT`, `PARTITION`, `QOS`, `CONSTRAINT`, `EXCLUDE`, `NODELIST`: Slurm placement/accounting.
+- `BAD_NODES`: optional alias for `EXCLUDE`.
 - `GPUS_PER_NODE`, `CPUS_PER_TASK`, `MEMORY`, `TIME_LIMIT`: Slurm resources.
 - `CONDA_ENV`, `ANVIL_MODULES`: Python environment setup.
 - `RUN_TAG`, `OUTPUT_ROOT`, `DATA_DIR`: output/data location.
+- `STUDY_ROOT`: optional alias for `OUTPUT_ROOT`; when set, Slurm logs default to `${STUDY_ROOT}/slurm_logs`.
 - `PLATFORM`: `single`, `pmap`, or `auto`.
 - `REQUIRED_LOCAL_DEVICES`: fail-fast JAX preflight threshold in `pmap`.
 - `BATCH_SIZE`, `EVAL_BATCH_SIZE`, `TRAIN_STEPS`, `CHECKPOINT_EVERY`, `LOG_IMAGES_EVERY`.

@@ -27,7 +27,8 @@ class UNet5DBackbone(nn.Module):
     dropout_rate: float = 0.0
 
     @nn.compact
-    def __call__(self, z, *, cond=None, train: bool = False):
+    def __call__(self, z, *, cond=None, timesteps=None, train: bool = False):
+        del timesteps
         h = z.reshape(list(z.shape)[:-2] + [-1])
 
         if self.n_dit_layers > 0:
@@ -76,9 +77,10 @@ class ADMUNet5DBackbone(nn.Module):
     use_scale_shift_norm: bool = True
     resblock_updown: bool = False
     use_conv_skip: bool = False
+    use_new_attention_order: bool = False
 
     @nn.compact
-    def __call__(self, z, *, cond=None, train: bool = False):
+    def __call__(self, z, *, cond=None, timesteps=None, train: bool = False):
         h = z.reshape(list(z.shape)[:-2] + [-1])
 
         h = ADMUNet2D(
@@ -96,6 +98,7 @@ class ADMUNet5DBackbone(nn.Module):
             use_scale_shift_norm=bool(self.use_scale_shift_norm),
             resblock_updown=bool(self.resblock_updown),
             use_conv_skip=bool(self.use_conv_skip),
-        )(h, cond=cond, train=train)
+            use_new_attention_order=bool(self.use_new_attention_order),
+        )(h, timesteps=timesteps, cond=cond, train=train)
 
         return h.reshape(list(z.shape)[:-1] + [self.output_channels])

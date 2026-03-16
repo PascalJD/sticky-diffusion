@@ -111,6 +111,7 @@ class MD4(nn.Module):
   adm_use_scale_shift_norm: bool = True
   adm_resblock_updown: bool = False
   adm_use_conv_skip: bool = False
+  adm_use_new_attention_order: bool = False
   time_features: str = "t"  # 't' or 'none'
   classes: int = 10 + 1  # set <=0 for unconditional
   sampler: str = "ancestral"  # ancestral, mean, topp
@@ -151,6 +152,7 @@ class MD4(nn.Module):
         adm_use_scale_shift_norm=self.adm_use_scale_shift_norm,
         adm_resblock_updown=self.adm_resblock_updown,
         adm_use_conv_skip=self.adm_use_conv_skip,
+        adm_use_new_attention_order=self.adm_use_new_attention_order,
     )
 
   # Forward (noising) process

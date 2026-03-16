@@ -1,0 +1,28 @@
+# Paper-aligned CIFAR-10 experiment config for CADD.
+#
+# The paper is ambiguous between the main-text Gaussian latent derivation and
+# the Appendix experiment path. This profile intentionally defaults to the
+# Appendix-style flow-matching latent as the reproduction target, while keeping
+# the Gaussian latent available as an explicit override.
+defaults:
+  - /dataset: cifar10_discrete
+  - /model: cadd_cifar10
+  - /optim: adamw_cadd
+  - /training: cadd_cifar10
+  - /runtime: default
+  - _self_
+  - override /model/cadd_latent@model.cadd_latent: flow_matching
+
+task:
+  name: cadd_cifar10_paper
+
+# Enable pixel-preserving augmentations on CIFAR-10 (Karras et al. style),
+# keeping only rotation+flip as described in the CADD paper.
+dataset:
+  batch_size: 512
+  eval_batch_size: 512
+  augment:
+    enabled: true
+    prob: 0.15
+    rotate: true
+    hflip: true

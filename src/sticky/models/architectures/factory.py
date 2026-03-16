@@ -87,6 +87,7 @@ def build_image_backbone(
     adm_use_scale_shift_norm: bool,
     adm_resblock_updown: bool,
     adm_use_conv_skip: bool,
+    adm_use_new_attention_order: bool,
 ) -> nn.Module:
     """Create image backbone from a Hydra-selected name."""
     key = str(name).lower()
@@ -120,6 +121,7 @@ def build_image_backbone(
             use_scale_shift_norm=bool(adm_use_scale_shift_norm),
             resblock_updown=bool(adm_resblock_updown),
             use_conv_skip=bool(adm_use_conv_skip),
+            use_new_attention_order=bool(adm_use_new_attention_order),
         )
 
     raise ValueError(

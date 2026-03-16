@@ -127,6 +127,7 @@ class CADD(nn.Module):
     adm_use_scale_shift_norm: bool = True
     adm_resblock_updown: bool = False
     adm_use_conv_skip: bool = False
+    adm_use_new_attention_order: bool = False
 
     # Conditioning / time embedding.
     time_features: str = "t"  # 't' or 'none'
@@ -213,6 +214,7 @@ class CADD(nn.Module):
             adm_use_scale_shift_norm=bool(self.adm_use_scale_shift_norm),
             adm_resblock_updown=bool(self.adm_resblock_updown),
             adm_use_conv_skip=bool(self.adm_use_conv_skip),
+            adm_use_new_attention_order=bool(self.adm_use_new_attention_order),
         )
 
     @property
@@ -248,12 +250,20 @@ class CADD(nn.Module):
         """Predict logits over the base vocabulary given fused embeddings."""
         if self.time_features == "none":
             t = None
-        time_cond = self._make_time_cond(t, cond=cond, batch_size=int(z_tilde.shape[0]))
+        use_adm_image_time_path = (z_tilde.ndim == 5) and (str(self.image_backbone).lower() == "adm_unet5d")
+        time_cond = None
+        if not use_adm_image_time_path:
+            time_cond = self._make_time_cond(t, cond=cond, batch_size=int(z_tilde.shape[0]))
 
         if z_tilde.ndim == 3:
             return self._seq_backbone(z_tilde, cond=time_cond, train=train)
         if z_tilde.ndim == 5:
-            return self._img_backbone(z_tilde, cond=time_cond, train=train)
+            return self._img_backbone(
+                z_tilde,
+                cond=cond if use_adm_image_time_path else time_cond,
+                timesteps=None if t is None else jnp.asarray(t) * 1000.0,
+                train=train,
+            )
         raise NotImplementedError(
             f"CADD expects embedded inputs with ndim in {{3,5}}, got {z_tilde.ndim} ({z_tilde.shape})."
         )

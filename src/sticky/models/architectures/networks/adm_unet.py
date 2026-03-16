@@ -1,26 +1,57 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import math
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
 
-def _num_groups(num_channels: int, preferred: int = 32) -> int:
-    """Choose a valid GroupNorm group count for the given channel width."""
-    for groups in (preferred, 16, 8, 4, 2, 1):
-        if num_channels % groups == 0:
-            return groups
-    return 1
+def openai_timestep_embedding(
+    timesteps: jnp.ndarray,
+    dim: int,
+    *,
+    max_period: int = 10_000,
+) -> jnp.ndarray:
+    """OpenAI guided-diffusion sinusoidal timestep embedding."""
+    half = dim // 2
+    freqs = jnp.exp(
+        -math.log(max_period)
+        * jnp.arange(start=0, stop=half, dtype=jnp.float32)
+        / jnp.maximum(half, 1)
+    )
+    args = jnp.asarray(timesteps, dtype=jnp.float32)[:, None] * freqs[None]
+    emb = jnp.concatenate([jnp.cos(args), jnp.sin(args)], axis=-1)
+    if dim % 2:
+        emb = jnp.concatenate([emb, jnp.zeros_like(emb[:, :1])], axis=-1)
+    return emb
+
+
+class GroupNorm32(nn.Module):
+    """OpenAI-style GroupNorm32 for NHWC tensors."""
+
+    num_channels: int
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+        if int(self.num_channels) % 32 != 0:
+            raise ValueError(
+                "ADM GroupNorm32 requires the channel count to be divisible by 32, "
+                f"got num_channels={self.num_channels}."
+            )
+        out = nn.GroupNorm(
+            num_groups=32,
+            epsilon=1e-5,
+            dtype=jnp.float32,
+            param_dtype=jnp.float32,
+            name="group_norm",
+        )(x.astype(jnp.float32))
+        return out.astype(x.dtype)
 
 
 def _group_norm(x: jnp.ndarray, *, num_channels: int, name: str) -> jnp.ndarray:
-    return nn.GroupNorm(
-        num_groups=_num_groups(int(num_channels)),
-        epsilon=1e-5,
-        name=name,
-    )(x)
+    return GroupNorm32(num_channels=int(num_channels), name=name)(x)
 
 
 class Upsample2D(nn.Module):
@@ -112,8 +143,9 @@ class ResBlock(nn.Module):
         emb_out = nn.Dense(
             2 * out_channels if self.use_scale_shift_norm else out_channels,
             name="emb_proj",
-        )(nn.silu(emb))
-        emb_out = emb_out[:, None, None, :]
+        )(nn.silu(emb)).astype(h.dtype)
+        while emb_out.ndim < h.ndim:
+            emb_out = emb_out[:, None, ...]
 
         if self.use_scale_shift_norm:
             scale, shift = jnp.split(emb_out, 2, axis=-1)
@@ -149,9 +181,52 @@ class ResBlock(nn.Module):
         return skip + h
 
 
+class QKVAttentionLegacy(nn.Module):
+    num_heads: int
+
+    @nn.compact
+    def __call__(self, qkv: jnp.ndarray) -> jnp.ndarray:
+        bs, width, length = qkv.shape
+        if width % (3 * int(self.num_heads)) != 0:
+            raise ValueError(
+                f"qkv width={width} must be divisible by 3 * num_heads={3 * int(self.num_heads)}."
+            )
+        ch = width // (3 * int(self.num_heads))
+        qkv = qkv.reshape(bs * int(self.num_heads), ch * 3, length)
+        q, k, v = jnp.split(qkv, 3, axis=1)
+        scale = 1.0 / jnp.sqrt(jnp.sqrt(jnp.asarray(ch, dtype=jnp.float32)))
+        weight = jnp.einsum("bct,bcs->bts", q * scale, k * scale)
+        weight = nn.softmax(weight.astype(jnp.float32), axis=-1).astype(weight.dtype)
+        a = jnp.einsum("bts,bcs->bct", weight, v)
+        return a.reshape(bs, -1, length)
+
+
+class QKVAttention(nn.Module):
+    num_heads: int
+
+    @nn.compact
+    def __call__(self, qkv: jnp.ndarray) -> jnp.ndarray:
+        bs, width, length = qkv.shape
+        if width % (3 * int(self.num_heads)) != 0:
+            raise ValueError(
+                f"qkv width={width} must be divisible by 3 * num_heads={3 * int(self.num_heads)}."
+            )
+        ch = width // (3 * int(self.num_heads))
+        q, k, v = jnp.split(qkv, 3, axis=1)
+        q = q.reshape(bs * int(self.num_heads), ch, length)
+        k = k.reshape(bs * int(self.num_heads), ch, length)
+        v = v.reshape(bs * int(self.num_heads), ch, length)
+        scale = 1.0 / jnp.sqrt(jnp.sqrt(jnp.asarray(ch, dtype=jnp.float32)))
+        weight = jnp.einsum("bct,bcs->bts", q * scale, k * scale)
+        weight = nn.softmax(weight.astype(jnp.float32), axis=-1).astype(weight.dtype)
+        a = jnp.einsum("bts,bcs->bct", weight, v)
+        return a.reshape(bs, -1, length)
+
+
 class AttentionBlock(nn.Module):
     num_heads: int = 1
     num_head_channels: int = -1
+    use_new_attention_order: bool = False
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
@@ -169,25 +244,18 @@ class AttentionBlock(nn.Module):
         if channels % num_heads != 0:
             raise ValueError(f"channels={channels} not divisible by num_heads={num_heads}")
 
-        head_dim = channels // num_heads
         n = h * w
 
         h_in = _group_norm(x, num_channels=channels, name="norm")
         h_in = h_in.reshape(b, n, channels)
+        qkv = nn.Dense(3 * channels, name="qkv")(h_in).transpose(0, 2, 1)
 
-        qkv = nn.Dense(3 * channels, name="qkv")(h_in)
-        q, k, v = jnp.split(qkv, 3, axis=-1)
+        if self.use_new_attention_order:
+            a = QKVAttention(num_heads=int(num_heads), name="attention")(qkv)
+        else:
+            a = QKVAttentionLegacy(num_heads=int(num_heads), name="attention")(qkv)
 
-        q = q.reshape(b, n, num_heads, head_dim)
-        k = k.reshape(b, n, num_heads, head_dim)
-        v = v.reshape(b, n, num_heads, head_dim)
-
-        scale = 1.0 / jnp.sqrt(jnp.sqrt(jnp.asarray(head_dim, dtype=jnp.float32)))
-        w_attn = jnp.einsum("bthd,bshd->bhts", q * scale, k * scale)
-        w_attn = nn.softmax(w_attn.astype(jnp.float32), axis=-1).astype(q.dtype)
-        a = jnp.einsum("bhts,bshd->bthd", w_attn, v)
-        a = a.reshape(b, n, channels)
-
+        a = a.transpose(0, 2, 1)
         a = nn.Dense(
             channels,
             kernel_init=nn.initializers.zeros,
@@ -214,31 +282,57 @@ class ADMUNet2D(nn.Module):
     use_scale_shift_norm: bool = False
     resblock_updown: bool = False
     use_conv_skip: bool = False
+    use_new_attention_order: bool = False
 
     @nn.compact
-    def __call__(self, x: jnp.ndarray, *, cond: jnp.ndarray | None = None, train: bool = False) -> jnp.ndarray:
+    def __call__(
+        self,
+        x: jnp.ndarray,
+        *,
+        timesteps: jnp.ndarray | None = None,
+        cond: jnp.ndarray | None = None,
+        train: bool = False,
+    ) -> jnp.ndarray:
         if x.ndim != 4:
             raise ValueError(f"ADMUNet2D expects NHWC input, got shape {x.shape}.")
         if int(x.shape[-1]) != int(self.in_channels):
             raise ValueError(
                 f"ADMUNet2D expected {self.in_channels} input channels, got {x.shape[-1]}."
             )
+        if timesteps is None:
+            timesteps = jnp.zeros((x.shape[0],), dtype=jnp.float32)
+        else:
+            timesteps = jnp.asarray(timesteps)
+            if jnp.isscalar(timesteps) or timesteps.ndim == 0:
+                timesteps = jnp.broadcast_to(timesteps, (x.shape[0],))
+            elif timesteps.ndim != 1 or int(timesteps.shape[0]) != int(x.shape[0]):
+                raise ValueError(
+                    "ADMUNet2D expects `timesteps` to be a scalar or shape [batch], "
+                    f"got {timesteps.shape}."
+                )
 
         num_heads_upsample = (
             int(self.num_heads) if int(self.num_heads_upsample) == -1 else int(self.num_heads_upsample)
         )
+        input_ch = int(self.channel_mult[0]) * int(self.model_channels)
         time_embed_dim = int(self.model_channels) * 4
 
-        if cond is None:
-            cond_in = jnp.zeros((x.shape[0], int(self.model_channels)), dtype=x.dtype)
-        else:
-            cond_in = cond
-
-        emb = nn.Dense(time_embed_dim, name="time_embed_0")(cond_in)
+        emb = openai_timestep_embedding(timesteps, int(self.model_channels))
+        emb = nn.Dense(time_embed_dim, name="time_embed_0")(emb)
         emb = nn.silu(emb)
         emb = nn.Dense(time_embed_dim, name="time_embed_1")(emb)
+        if cond is not None:
+            if cond.ndim != 2 or int(cond.shape[0]) != int(x.shape[0]):
+                raise ValueError(
+                    "ADMUNet2D expects `cond` to have shape [batch, dim], "
+                    f"got {cond.shape}."
+                )
+            cond_add = cond
+            if int(cond_add.shape[-1]) != time_embed_dim:
+                cond_add = nn.Dense(time_embed_dim, name="cond_proj")(cond_add)
+            emb = emb + cond_add.astype(emb.dtype)
 
-        ch = int(self.channel_mult[0]) * int(self.model_channels)
+        ch = input_ch
         h = nn.Conv(
             ch,
             kernel_size=(3, 3),
@@ -268,6 +362,7 @@ class ADMUNet2D(nn.Module):
                     h = AttentionBlock(
                         num_heads=int(self.num_heads),
                         num_head_channels=int(self.num_head_channels),
+                        use_new_attention_order=bool(self.use_new_attention_order),
                         name=f"input_attn_{level}_{block_idx}",
                     )(h)
                 hs.append(h)
@@ -306,6 +401,7 @@ class ADMUNet2D(nn.Module):
         h = AttentionBlock(
             num_heads=int(self.num_heads),
             num_head_channels=int(self.num_head_channels),
+            use_new_attention_order=bool(self.use_new_attention_order),
             name="middle_attn",
         )(h)
         h = ResBlock(
@@ -337,6 +433,7 @@ class ADMUNet2D(nn.Module):
                     h = AttentionBlock(
                         num_heads=num_heads_upsample,
                         num_head_channels=int(self.num_head_channels),
+                        use_new_attention_order=bool(self.use_new_attention_order),
                         name=f"output_attn_{level}_{block_idx}",
                     )(h)
 
