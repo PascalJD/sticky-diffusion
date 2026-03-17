@@ -11,6 +11,7 @@ from sticky.models.architectures.factory import (
     build_image_backbone,
     build_sequence_backbone,
 )
+from sticky.models.discrete_mixture import sample_mixture_categorical
 from sticky.models.architectures.networks.conditioning import CondEmbedding
 from sticky.models.md4 import utils as md4_utils
 
@@ -543,7 +544,7 @@ class CADD(nn.Module):
         x_t, z_t = state
 
         rng_body = jax.random.fold_in(rng, i)
-        rng_body, rng_flip, rng_token, rng_latent = jax.random.split(rng_body, 4)
+        rng_body, rng_token, rng_latent = jax.random.split(rng_body, 3)
 
         s, t = self.get_sampling_grid(i, timesteps)
         cond_emb = self.get_cond_embedding(conditioning)
@@ -564,14 +565,18 @@ class CADD(nn.Module):
         logits = logits / self.temperature(jnp.asarray(t))
         probs = jax.nn.softmax(logits, axis=-1)
 
-        # Decide which masked positions to unmask this step.
-        to_flip = jax.random.bernoulli(rng_flip, rho_flip, x_t.shape) & (
-            x_t == self.mask_token_id
+        sampled, keep_mask = sample_mixture_categorical(
+            rng_token,
+            destination_probs=probs,
+            stay_prob=1.0 - rho_flip,
+            change_prob=rho_flip,
         )
-
-        # Sample new tokens at flip positions.
-        sampled = jax.random.categorical(rng_token, logits, axis=-1).astype(jnp.int32)
-        x_s = jnp.where(to_flip, sampled, x_t).astype(jnp.int32)
+        masked_proposal = jnp.where(
+            keep_mask,
+            self.mask_token_id,
+            sampled,
+        ).astype(jnp.int32)
+        x_s = jnp.where(x_t == self.mask_token_id, masked_proposal, x_t).astype(jnp.int32)
 
         # Continuous latent update for positions that remain masked.
         stay_mask = x_s == self.mask_token_id

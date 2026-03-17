@@ -177,7 +177,7 @@ def build_sudoku_eval_logger(
         ),
         hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
         alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
-        intensity_mode=str(cfg.sampler.get("intensity_mode", "chunked")),
+        intensity_mode=str(cfg.sampler.get("intensity_mode", "full")),
         log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
         intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
         init_std=float(cfg.sampler.get("init_std", 1.0)),

@@ -26,6 +26,10 @@ import jax
 import jax.numpy as jnp
 
 from sticky.models.architectures import DiscreteClassifier
+from sticky.models.discrete_mixture import (
+    categorical_sample_from_probs,
+    sample_mixture_categorical,
+)
 
 from . import binary_search
 from . import utils
@@ -35,9 +39,7 @@ Array = jnp.ndarray
 
 def _categorical_sample_from_probs(rng: Array, probs: Array) -> Array:
   """Sample categorical indices from probability tensor [..., K]."""
-  # jax.random.categorical expects logits; log(probs) is fine as long as probs>0.
-  logits = jnp.log(jnp.clip(probs, a_min=1e-20))
-  return jax.random.categorical(rng, logits, axis=-1)
+  return categorical_sample_from_probs(rng, probs)
 
 
 class MaskingSchedule(nn.Module):
@@ -114,7 +116,7 @@ class MD4(nn.Module):
   adm_use_new_attention_order: bool = False
   time_features: str = "t"  # 't' or 'none'
   classes: int = 10 + 1  # set <=0 for unconditional
-  sampler: str = "ancestral"  # ancestral, mean, topp
+  sampler: str = "ancestral"  # ancestral, mean (legacy JAX-unsafe), topp
   sampling_grid: str = "cosine"  # uniform, cosine
   topp: float = 0.98
   model_sharding: bool = False
@@ -278,13 +280,15 @@ class MD4(nn.Module):
     mean_preds = jax.nn.softmax(logits, axis=-1)
 
     unmask_prob = (alpha_s - alpha_t) / (1 - alpha_t)
-    probs_vocab = unmask_prob * mean_preds
-    probs_mask = jnp.ones(list(zt.shape) + [1]) * (1 - unmask_prob)
-    probs = jnp.concatenate([probs_vocab, probs_mask], axis=-1)
-
-    to_unmask = _categorical_sample_from_probs(rng_body, probs).astype(jnp.int32)
+    to_unmask, keep_mask = sample_mixture_categorical(
+        rng_body,
+        destination_probs=mean_preds,
+        stay_prob=1.0 - unmask_prob,
+        change_prob=unmask_prob,
+    )
+    sampled = jnp.where(keep_mask, self.vocab_size, to_unmask).astype(jnp.int32)
     is_mask = zt == self.vocab_size
-    return jnp.where(is_mask, to_unmask, zt)
+    return jnp.where(is_mask, sampled, zt)
 
   def topp_sample_step(
       self,
@@ -308,15 +312,23 @@ class MD4(nn.Module):
     mean_preds = jax.nn.softmax(logits, axis=-1)
 
     unmask_prob = (alpha_s - alpha_t) / (1 - alpha_t)
-    probs_vocab = unmask_prob * mean_preds
-    probs_mask = jnp.ones(list(zt.shape) + [1]) * (1 - unmask_prob)
-    probs = jnp.concatenate([probs_vocab, probs_mask], axis=-1)
-
-    to_unmask = _categorical_sample_from_probs(rng_body, probs).astype(jnp.int32)
+    to_unmask, keep_mask = sample_mixture_categorical(
+        rng_body,
+        destination_probs=mean_preds,
+        stay_prob=1.0 - unmask_prob,
+        change_prob=unmask_prob,
+    )
+    sampled = jnp.where(keep_mask, self.vocab_size, to_unmask).astype(jnp.int32)
     is_mask = zt == self.vocab_size
-    return jnp.where(is_mask, to_unmask, zt)
+    return jnp.where(is_mask, sampled, zt)
 
   def mean_sample_step(self, rng: Array, i: int, timesteps: int, zt: Array, *, conditioning: Array | None = None) -> Array:
+    """Legacy split sampler retained for backwards compatibility.
+
+    MD4 Appendix G notes that in JAX this Bernoulli + categorical
+    decomposition can produce worse sample quality than the one-shot mixture
+    used by `ancestral_sample_step`. Keep it only for explicit legacy runs.
+    """
     rng_body = jax.random.fold_in(rng, i)
     s, t = self.get_sampling_grid(i, timesteps)
     cond = self.get_cond_embedding(conditioning)

@@ -14,8 +14,9 @@ logit_temperature: 0.8
 
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
-intensity_mode: chunked
+intensity_mode: full
 log_ratio_clip: 10.0
+# Deprecated compatibility field; ignored while only the full backend is active.
 intensity_chunk_size: 256
 refresh_logits_after_em_step: false
 

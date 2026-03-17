@@ -16,6 +16,7 @@ logit_temperature: 1.0
 hazard_mode: plugin
 intensity_mode: full
 log_ratio_clip: 10.0
+# Deprecated compatibility field; ignored while only the full backend is active.
 intensity_chunk_size: 256
 refresh_logits_after_em_step: true
 

@@ -26,9 +26,11 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
+from sticky.models.discrete_mixture import sample_mixture_categorical
+
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
-from .plugin_intensity import plugin_intensity_and_choice
+from .plugin_intensity import plugin_intensity_and_choice, plugin_intensity_and_probs
 from .sdes import alpha_sigma
 
 
@@ -46,9 +48,9 @@ class SamplerConfig:
     logit_temperature: float = 1.0
     alloc_mode: str = "sample"  # "argmax" | "sample"
     hazard_mode: str = "plugin"
-    intensity_mode: str = "chunked"  # "chunked" | "full"
+    intensity_mode: str = "full"  # Only "full" is implemented; "chunked" is a deprecated alias.
     log_ratio_clip: float = 10.0
-    intensity_chunk_size: int = 256
+    intensity_chunk_size: int = 256  # Deprecated compatibility knob; ignored by the full backend.
     init_std: float = 1.0
     eps_denom: float = 1e-12
     force_classify_at_end: bool = True  # legacy name: force final plug-in jump at t=dt
@@ -119,7 +121,7 @@ def reverse_sample(
     This is a splitting scheme:
         1) Evaluate classifier once at current state y_t.
         2) Euler-Maruyama reverse VP diffusion step (only on uncommitted sites).
-        3) Bernoulli jump step to commit sites to anchors.
+        3) Sample a one-step stay/commit transition for uncommitted sites.
 
     By default the reverse score uses the raw classifier distribution, while
     `logit_temperature` only affects jump-time anchor allocation. If
@@ -200,7 +202,10 @@ def reverse_sample(
             raise NotImplementedError("Only classifier-induced score is implemented.")
 
         y_for_model = y
-        key, k_eps, k_u, k_a = jax.random.split(key, 4)
+        if cfg.alloc_mode == "sample":
+            key, k_eps, k_mix = jax.random.split(key, 3)
+        else:
+            key, k_eps, k_u, k_a = jax.random.split(key, 4)
         logits_score, _ = apply_model(params, y_for_model, t_img)
         probs = jax.nn.softmax(logits_score, axis=-1)
 
@@ -243,21 +248,36 @@ def reverse_sample(
                 jump_logits = jnp.where(is_last_step, logits_score, jump_logits)
 
         # Jump step (plugin hazard). Temperature only changes allocation.
-        lam_total, a_idx = plugin_intensity_and_choice(
-            key=k_a,
-            logits=jump_logits,
-            y=jump_y,
-            t_img=jump_t_img,
-            anchors=anchors,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            alloc_mode=cfg.alloc_mode,
-            logit_temperature=float(cfg.logit_temperature),
-            intensity_mode=cfg.intensity_mode,
-            log_ratio_clip=float(cfg.log_ratio_clip),
-            chunk_size=int(cfg.intensity_chunk_size),
-        )
+        if cfg.alloc_mode == "sample":
+            lam_total, choice_probs = plugin_intensity_and_probs(
+                logits=jump_logits,
+                y=jump_y,
+                t_img=jump_t_img,
+                anchors=anchors,
+                beta=beta,
+                hazard=hazard,
+                jump=jump,
+                logit_temperature=float(cfg.logit_temperature),
+                intensity_mode=cfg.intensity_mode,
+                log_ratio_clip=float(cfg.log_ratio_clip),
+                chunk_size=int(cfg.intensity_chunk_size),
+            )
+        else:
+            lam_total, a_idx = plugin_intensity_and_choice(
+                key=k_a,
+                logits=jump_logits,
+                y=jump_y,
+                t_img=jump_t_img,
+                anchors=anchors,
+                beta=beta,
+                hazard=hazard,
+                jump=jump,
+                alloc_mode=cfg.alloc_mode,
+                logit_temperature=float(cfg.logit_temperature),
+                intensity_mode=cfg.intensity_mode,
+                log_ratio_clip=float(cfg.log_ratio_clip),
+                chunk_size=int(cfg.intensity_chunk_size),
+            )
 
         # No jumps once committed.
         active = (~committed).astype(jnp.float32)
@@ -268,15 +288,34 @@ def reverse_sample(
         p_jump_sum_active = p_jump_sum_active + jnp.sum(p_jump * active)
         active_count_total = active_count_total + jnp.sum(active)
 
-        u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
-        jump_mask = (~committed) & (u < p_jump)
         if cfg.force_classify_at_end:
             frac_committed_pre_force = jnp.where(
                 is_last_step,
                 jnp.mean(committed.astype(jnp.float32)),
                 frac_committed_pre_force,
             )
-            jump_mask = jnp.where(is_last_step, ~committed, jump_mask)
+
+        if cfg.alloc_mode == "sample":
+            p_jump_sample = jnp.where(
+                is_last_step & bool(cfg.force_classify_at_end),
+                active,
+                p_jump,
+            )
+            # Intentionally draw once from the joint {stay} U {anchors} mixture.
+            # In JAX we do not factor this into jump/no-jump plus anchor choice,
+            # so we preserve the categorical behavior that motivated the SJD fix.
+            a_idx, stay_mask = sample_mixture_categorical(
+                k_mix,
+                destination_probs=choice_probs,
+                stay_prob=1.0 - p_jump_sample,
+                change_prob=p_jump_sample,
+            )
+            jump_mask = (~committed) & (~stay_mask)
+        else:
+            u = jax.random.uniform(k_u, shape=committed.shape, minval=0.0, maxval=1.0)
+            jump_mask = (~committed) & (u < p_jump)
+            if cfg.force_classify_at_end:
+                jump_mask = jnp.where(is_last_step, ~committed, jump_mask)
 
         # Commit: set discrete index + snap y to the chosen anchor vector.
         k_idx = jnp.where(jump_mask, a_idx, k_idx)
