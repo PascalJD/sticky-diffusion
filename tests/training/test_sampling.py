@@ -4,9 +4,11 @@ from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
+import pytest
 from omegaconf import OmegaConf
 
 import sticky.models.sjd.anchors as anchor_mod
+import sticky.models.ddpm.sampling as ddpm_sampling_mod
 import sticky.models.sjd.sampler as sampler_mod
 import sticky.models.sjd.sampling as sjd_sampling_mod
 from sticky.training.sampling import build_sampling_fns
@@ -117,6 +119,78 @@ def test_sjd_sampling_time_grid_supports_cosine():
     assert cosine.shape == (5,)
 
     assert jnp.allclose(uniform, jnp.asarray([1.0, 0.75, 0.5, 0.25, 0.0], dtype=jnp.float32))
-    assert jnp.allclose(cosine[[0, -1]], jnp.asarray([1.0, 0.0], dtype=jnp.float32))
+    assert jnp.allclose(
+        cosine[jnp.asarray([0, -1])],
+        jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+    )
     assert bool(jnp.all(cosine[:-1] >= cosine[1:]))
     assert float(cosine[1]) > float(uniform[1])
+
+
+def test_ddpm_sampling_uses_sample_timesteps(monkeypatch):
+    recorded: dict[str, int] = {}
+
+    def fake_simple_generate(
+        rng,
+        train_state,
+        *,
+        model,
+        batch_size,
+        conditioning=None,
+        timesteps=None,
+        use_ema=True,
+    ):
+        del rng, train_state, model, conditioning, use_ema
+        recorded["batch_size"] = int(batch_size)
+        recorded["timesteps"] = int(timesteps)
+        return jnp.zeros((batch_size, 32, 32, 3), dtype=jnp.float32)
+
+    monkeypatch.setattr(ddpm_sampling_mod, "simple_generate", fake_simple_generate)
+
+    cfg = OmegaConf.create({"model": {"name": "ddpm"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(timesteps=17)
+
+    _, sample_images_fid_jit = build_sampling_fns(
+        cfg=cfg,
+        task=task,
+        model=model,
+        num_log_images=4,
+        sample_timesteps=17,
+        fid_every=1,
+        fid_batch_size=4,
+    )
+
+    assert sample_images_fid_jit is not None
+    out = sample_images_fid_jit({}, jax.random.PRNGKey(0))
+    jax.block_until_ready(out)
+
+    assert recorded["batch_size"] == 4
+    assert recorded["timesteps"] == 17
+
+
+def test_ddpm_sampling_rejects_mismatched_timesteps():
+    cfg = OmegaConf.create({"model": {"name": "ddpm"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(timesteps=32)
+
+    with pytest.raises(ValueError, match="sample_timesteps == model.timesteps"):
+        build_sampling_fns(
+            cfg=cfg,
+            task=task,
+            model=model,
+            num_log_images=4,
+            sample_timesteps=16,
+            fid_every=1,
+            fid_batch_size=4,
+        )

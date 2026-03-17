@@ -1,0 +1,32 @@
+# Continuous-state Gaussian DDPM model config for CIFAR-10.
+name: ddpm
+
+# Classical DDPM setup.
+timesteps: 1000
+beta_schedule: linear
+beta_start: 1.0e-4
+beta_end: 2.0e-2
+prediction_type: eps
+variance_type: fixed_small
+clip_x0: true
+
+# Backbone.
+image_backbone: adm_unet2d
+feature_dim: 96
+ch_mult: [3, 4, 4]
+adm_num_res_blocks: 4
+adm_attention_resolutions: [2, 4]
+adm_num_heads: 4
+adm_num_head_channels: 64
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+adm_use_new_attention_order: false
+
+# Regularization.
+dropout_rate: 0.1
+
+# Conditioning.
+classes: -1

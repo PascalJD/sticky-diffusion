@@ -91,7 +91,9 @@ def _apply_explicit_eval_overrides(
     offline_cfg: DictConfig,
     sample_timesteps: int,
 ) -> None:
-    effective_cfg.sampler.n_steps = int(sample_timesteps)
+    sampler_cfg = effective_cfg.get("sampler", None)
+    if sampler_cfg is not None:
+        effective_cfg.sampler.n_steps = int(sample_timesteps)
 
     jump_eta_cfg = offline_cfg.get("jump_eta", None)
     if not _is_nullish(jump_eta_cfg):

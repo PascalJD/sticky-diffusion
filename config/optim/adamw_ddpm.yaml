@@ -1,0 +1,9 @@
+# AdamW settings for the CIFAR-10 DDPM baseline.
+name: adamw
+
+learning_rate: 1.0e-4
+warmup_steps: 1000
+lr_schedule: warmup_constant
+
+weight_decay: 0.0
+b2: 0.999

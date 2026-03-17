@@ -69,6 +69,33 @@ def build_sampling_fns(
                     lambda p, r: _sample_images_cadd(p, r, fid_batch_size)
                 )
 
+    elif str(cfg.model.name) == "ddpm":
+        from sticky.models.ddpm import sampling as ddpm_sampling
+
+        ddpm_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
+
+        def _sample_images_ddpm(params, rng, batch_size: int):
+            sample_state = {"params": params, "ema_params": None}
+            return ddpm_sampling.simple_generate(
+                rng,
+                sample_state,
+                model=model,
+                batch_size=batch_size,
+                timesteps=sample_timesteps,
+                conditioning=None,
+                use_ema=False,
+            )
+
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_ddpm(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(
+                    lambda p, r: _sample_images_ddpm(p, r, fid_batch_size)
+                )
+
     elif str(cfg.model.name) == "sjd":
         from sticky.models.sjd import sampling as sjd_sampling
         from sticky.models.sjd.anchors import AnchorTable

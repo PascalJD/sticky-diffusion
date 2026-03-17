@@ -102,3 +102,45 @@ class ADMUNet5DBackbone(nn.Module):
         )(h, timesteps=timesteps, cond=cond, train=train)
 
         return h.reshape(list(z.shape)[:-1] + [self.output_channels])
+
+
+class ContinuousADMBackbone(nn.Module):
+    """ADM-style UNet for continuous NHWC image inputs."""
+
+    in_channels: int
+    output_channels: int
+    feature_dim: int = 128
+
+    num_res_blocks: int = 2
+    attention_resolutions: Sequence[int] = (2, 4, 8)
+    channel_mult: Sequence[int] = (1, 2, 2, 2)
+    num_heads: int = 4
+    num_head_channels: int = -1
+    num_heads_upsample: int = -1
+
+    dropout_rate: float = 0.0
+    conv_resample: bool = True
+    use_scale_shift_norm: bool = True
+    resblock_updown: bool = False
+    use_conv_skip: bool = False
+    use_new_attention_order: bool = False
+
+    @nn.compact
+    def __call__(self, x, *, cond=None, timesteps=None, train: bool = False):
+        return ADMUNet2D(
+            in_channels=int(self.in_channels),
+            model_channels=int(self.feature_dim),
+            out_channels=int(self.output_channels),
+            num_res_blocks=int(self.num_res_blocks),
+            attention_resolutions=tuple(int(v) for v in self.attention_resolutions),
+            dropout_rate=float(self.dropout_rate),
+            channel_mult=tuple(int(v) for v in self.channel_mult),
+            conv_resample=bool(self.conv_resample),
+            num_heads=int(self.num_heads),
+            num_head_channels=int(self.num_head_channels),
+            num_heads_upsample=int(self.num_heads_upsample),
+            use_scale_shift_norm=bool(self.use_scale_shift_norm),
+            resblock_updown=bool(self.resblock_updown),
+            use_conv_skip=bool(self.use_conv_skip),
+            use_new_attention_order=bool(self.use_new_attention_order),
+        )(x, timesteps=timesteps, cond=cond, train=train)

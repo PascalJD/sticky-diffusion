@@ -159,4 +159,33 @@ def build_model(
             corrector_sample_mode=str(cfg.model.get("corrector_sample_mode", "sample")),
         )
 
+    if name == "ddpm":
+        from sticky.models.ddpm.ddpm_model import DDPM
+
+        return DDPM(
+            data_shape=data_shape,
+            timesteps=int(cfg.model.get("timesteps", 1000)),
+            beta_schedule=str(cfg.model.get("beta_schedule", "linear")),
+            beta_start=float(cfg.model.get("beta_start", 1e-4)),
+            beta_end=float(cfg.model.get("beta_end", 2e-2)),
+            prediction_type=str(cfg.model.get("prediction_type", "eps")),
+            variance_type=str(cfg.model.get("variance_type", "fixed_small")),
+            clip_x0=bool(cfg.model.get("clip_x0", True)),
+            feature_dim=int(cfg.model.get("feature_dim", 96)),
+            ch_mult=tuple(cfg.model.get("ch_mult", (3, 4, 4))),
+            dropout_rate=float(cfg.model.get("dropout_rate", 0.1)),
+            image_backbone=str(cfg.model.get("image_backbone", "adm_unet2d")),
+            adm_num_res_blocks=int(cfg.model.get("adm_num_res_blocks", 4)),
+            adm_attention_resolutions=tuple(cfg.model.get("adm_attention_resolutions", (2, 4))),
+            adm_num_heads=int(cfg.model.get("adm_num_heads", 4)),
+            adm_num_head_channels=int(cfg.model.get("adm_num_head_channels", 64)),
+            adm_num_heads_upsample=int(cfg.model.get("adm_num_heads_upsample", -1)),
+            adm_conv_resample=bool(cfg.model.get("adm_conv_resample", True)),
+            adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
+            adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
+            adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
+            classes=int(cfg.model.get("classes", -1)),
+        )
+
     raise ValueError(f"Unknown model.name={name}")

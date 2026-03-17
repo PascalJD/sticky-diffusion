@@ -54,6 +54,41 @@ def test_build_task_accepts_cadd_paper_alias(monkeypatch):
     assert task.kwargs["augment_enabled"] is True
 
 
+def test_build_task_accepts_ddpm_paper_alias(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.cifar10_discrete",
+        SimpleNamespace(CIFAR10DiscreteTask=_DummyDiscreteTask),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "ddpm_cifar10_paper"},
+            "dataset": {
+                "data_dir": "/tmp/cifar10",
+                "batch_size": 512,
+                "eval_batch_size": 512,
+                "vocab_size": 256,
+                "num_classes": -1,
+                "augment": {
+                    "enabled": True,
+                    "prob": 0.15,
+                    "rotate": True,
+                    "hflip": True,
+                    "eval": False,
+                },
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummyDiscreteTask)
+    assert task.kwargs["task_name"] == "ddpm_cifar10_paper"
+    assert task.kwargs["batch_size"] == 512
+    assert task.kwargs["augment_enabled"] is True
+
+
 def test_build_task_accepts_sjd_paper_alias(monkeypatch):
     monkeypatch.setitem(
         sys.modules,

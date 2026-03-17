@@ -20,7 +20,13 @@ def build_task(cfg: DictConfig):
     aug_hflip = bool(aug_cfg.get("hflip", True))
     aug_eval = bool(aug_cfg.get("eval", False))
 
-    if name in ("md4_cifar10", "cadd_cifar10", "cadd_cifar10_paper"):
+    if name in (
+        "md4_cifar10",
+        "cadd_cifar10",
+        "cadd_cifar10_paper",
+        "ddpm_cifar10",
+        "ddpm_cifar10_paper",
+    ):
         from sticky.tasks.cifar10_discrete import CIFAR10DiscreteTask
 
         return CIFAR10DiscreteTask(
