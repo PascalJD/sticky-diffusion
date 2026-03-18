@@ -24,6 +24,7 @@ def test_canonical_cifar10_experiments_compose():
 
         assert cfg.experiment.task.name == experiment
         assert cfg.experiment.model.name == model_name
+        assert cfg.experiment.training.sample_timesteps == cfg.experiment.sampler.n_steps
         assert cfg.eval.enabled is True
         assert cfg.eval.run_at_end is True
         assert cfg.eval.fid_every == 10000
@@ -54,6 +55,10 @@ def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
     cfg = _compose(["experiment=cadd_cifar10", "eval=cifar10"])
     assert cfg.experiment.model.cadd_latent.type == "gaussian"
     assert cfg.experiment.model.cadd_latent.continuous_schedule_type == "linear"
+    assert cfg.experiment.sampler.sampling_grid == "cosine"
+    assert cfg.experiment.sampler.temperature_schedule == "cosine_decay"
+    assert cfg.experiment.sampler.corrector_remask_frac == 0.1
+    assert cfg.experiment.training.sample_timesteps == 512
 
     override_cfg = _compose(
         [
@@ -92,7 +97,17 @@ def test_md4_cifar10_uses_md4_architecture_bundle():
     assert cfg.experiment.model.sequence_backbone == "auto"
     assert cfg.experiment.model.feature_dim == 128
     assert cfg.experiment.model.ch_mult == [1]
+    assert cfg.experiment.sampler.method == "ancestral"
+    assert cfg.experiment.sampler.sampling_grid == "cosine"
+    assert cfg.experiment.sampler.topp == 0.98
     assert cfg.experiment.training.sample_timesteps == 256
+
+
+def test_ddpm_cifar10_sampler_tracks_model_timesteps():
+    cfg = _compose(["experiment=ddpm_cifar10", "eval=cifar10"])
+
+    assert cfg.experiment.sampler.n_steps == cfg.experiment.model.timesteps
+    assert cfg.experiment.training.sample_timesteps == 1000
 
 
 def test_cifar10_report_eval_profile_composes_for_all_canonical_experiments():

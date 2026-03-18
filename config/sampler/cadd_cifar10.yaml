@@ -1,0 +1,19 @@
+defaults:
+  - base
+  - _self_
+
+# CADD decode policy.
+sampling_grid: cosine
+temperature_schedule: cosine_decay
+tau_max: 2.5
+logit_temperature: 1.0
+
+z0_estimator: hard
+force_decode_at_end: true
+
+# See Gat et al. 2024
+corrector_enabled: false
+corrector_steps: 1
+corrector_remask_frac: 0.1
+corrector_metric: entropy
+corrector_sample_mode: sample

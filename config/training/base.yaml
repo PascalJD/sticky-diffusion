@@ -21,4 +21,4 @@ metrics_dir: metrics
 metrics_every_steps: 1000
 save_final_metrics: true
 
-sample_timesteps: ${..model.timesteps}
+sample_timesteps: ${..sampler.n_steps}

@@ -4,6 +4,7 @@ defaults:
   - /dataset: cifar10_discrete
   - /model: ddpm_cifar10
   - /optim: adamw_cifar10
+  - /sampler: ddpm_cifar10
   - /training: cifar10
   - /runtime: default
   - _self_

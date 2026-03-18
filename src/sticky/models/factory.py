@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from omegaconf import DictConfig
 
+
 def build_model(
     cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 ):
     name = cfg.model.name
+    sampler_cfg = cfg.get("sampler", {})
 
     if name == "md4":
         from sticky.models.md4.md4_model import MD4
@@ -45,9 +47,9 @@ def build_model(
             adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
             time_features=str(cfg.model.time_features),
             classes=int(cfg.model.classes),
-            sampler=str(cfg.model.sampler),
-            sampling_grid=str(cfg.model.sampling_grid),
-            topp=float(cfg.model.topp),
+            sampler=str(sampler_cfg.get("method", sampler_cfg.get("sampler", cfg.model.get("sampler", "ancestral")))),
+            sampling_grid=str(sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "cosine"))),
+            topp=float(sampler_cfg.get("topp", cfg.model.get("topp", 0.98))),
             model_sharding=bool(cfg.model.model_sharding),
         )
 
@@ -144,19 +146,44 @@ def build_model(
             adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
             time_features=str(cfg.model.get("time_features", "t")),
             classes=int(cfg.model.get("classes", -1)),
-            sampling_grid=str(cfg.model.get("sampling_grid", "cosine")),
-            temperature_schedule=str(cfg.model.get("temperature_schedule", "cosine_decay")),
-            tau_max=float(cfg.model.get("tau_max", 2.5)),
-            logit_temperature=float(cfg.model.get("logit_temperature", 1.0)),
-            z0_estimator=str(cfg.model.get("z0_estimator", "hard")),
+            sampling_grid=str(sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "cosine"))),
+            temperature_schedule=str(
+                sampler_cfg.get(
+                    "temperature_schedule",
+                    cfg.model.get("temperature_schedule", "cosine_decay"),
+                )
+            ),
+            tau_max=float(sampler_cfg.get("tau_max", cfg.model.get("tau_max", 2.5))),
+            logit_temperature=float(
+                sampler_cfg.get("logit_temperature", cfg.model.get("logit_temperature", 1.0))
+            ),
+            z0_estimator=str(sampler_cfg.get("z0_estimator", cfg.model.get("z0_estimator", "hard"))),
             K=int(cfg.model.get("K", 1)),
-            force_decode_at_end=bool(cfg.model.get("force_decode_at_end", True)),
+            force_decode_at_end=bool(
+                sampler_cfg.get("force_decode_at_end", cfg.model.get("force_decode_at_end", True))
+            ),
 
-            corrector_enabled=bool(cfg.model.get("corrector_enabled", False)),
-            corrector_steps=int(cfg.model.get("corrector_steps", 1)),
-            corrector_remask_frac=float(cfg.model.get("corrector_remask_frac", 0.0)),
-            corrector_metric=str(cfg.model.get("corrector_metric", "entropy")),
-            corrector_sample_mode=str(cfg.model.get("corrector_sample_mode", "sample")),
+            corrector_enabled=bool(
+                sampler_cfg.get("corrector_enabled", cfg.model.get("corrector_enabled", False))
+            ),
+            corrector_steps=int(
+                sampler_cfg.get("corrector_steps", cfg.model.get("corrector_steps", 1))
+            ),
+            corrector_remask_frac=float(
+                sampler_cfg.get(
+                    "corrector_remask_frac",
+                    cfg.model.get("corrector_remask_frac", 0.0),
+                )
+            ),
+            corrector_metric=str(
+                sampler_cfg.get("corrector_metric", cfg.model.get("corrector_metric", "entropy"))
+            ),
+            corrector_sample_mode=str(
+                sampler_cfg.get(
+                    "corrector_sample_mode",
+                    cfg.model.get("corrector_sample_mode", "sample"),
+                )
+            ),
         )
 
     if name == "ddpm":

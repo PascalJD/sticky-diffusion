@@ -1,0 +1,2 @@
+# Shared sampler defaults for CIFAR image experiments.
+n_steps: ${..model.timesteps}
