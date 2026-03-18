@@ -1,19 +1,19 @@
-# CIFAR-10 training schedule for SJD.
+# Paper-style CIFAR-10 training schedule for SJD.
 name: sjd_cifar10
 
 # Randomness.
 seed: 0
 
 # Optimization length and EMA.
-num_train_steps: 2000000
+num_train_steps: 400000
 ema_rate: 0.9999
 
 # Logging/eval/checkpoint cadence.
 log_every_steps: 500
-timing_warn_seconds: 15
-eval_every_steps: 50000
+timing_warn_seconds: 30
+eval_every_steps: 0
 checkpoint_every_steps: 10000
-log_images_every_steps: 2500
+log_images_every_steps: 10000
 num_log_images: 16
 
 # Artifact persistence.

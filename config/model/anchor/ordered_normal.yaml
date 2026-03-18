@@ -1,9 +1,9 @@
-# First 64 non-constant low-frequency DCT/path-graph basis vectors over token ids 0..255.
-family: spectral_dct
+# First coordinate encodes token order; remaining coordinates are Gaussian residuals.
+family: ordered_normal
 dim: 64
-learnable: false
+learnable: true
 init_std: 1.0
-seed: null
+seed: 0
 order_weight: 1.0
 residual_weight: 1.0
 projection_seed: null

@@ -1,25 +1,16 @@
+# The paper is ambiguous between the main-text Gaussian latent and
+# the Appendix flow-matching latent. 
 defaults:
   - cadd_latent: gaussian
   - _self_
 
-# CADD model config for CIFAR-10.
 name: cadd
 
-# Core diffusion setup.
 cont_time: true
-
-# The paper reports image results with NFE=512.
 timesteps: 512
-
-# Forward-process schedules.
-discrete_schedule_type: linear     # alpha(t)=1-t
-# Continuous latent config lives under `model.cadd_latent.*` and defaults to the
-# Gaussian latent from the main derivation.
-# No clipping: alpha(t)=1-t and, with the default linear continuous schedule,
-# gamma_bar(t)=1-t.
+discrete_schedule_type: linear  # alpha(t)=1-t
 schedule_eps: 0.0
 
-# Backbone / embedding.
 # MDM-Prime Appendix A.4.2 uses embedding dimension 96 for image experiments.
 feature_dim: 96
 n_layers: 32
@@ -31,7 +22,6 @@ dit_hidden_size: 768
 image_backbone: adm_unet5d
 sequence_backbone: auto
 
-# ADM / MDM-Prime style knobs.
 # MDM-Prime Appendix A.4.2 reports channel multipliers [3,4,4].
 ch_mult: [3, 4, 4]
 # Paper reports depth=5. In this implementation the decoder has (num_res_blocks + 1)
@@ -75,7 +65,7 @@ force_decode_at_end: true
 
 # Sampling corrector (paper: "applied the corrector following Gat et al. (2024)").
 # Keep a lightweight single-step corrector on by default.
-corrector_enabled: true
+corrector_enabled: false
 corrector_steps: 1
 corrector_remask_frac: 0.1
 corrector_metric: entropy

@@ -1,7 +1,7 @@
-# Deterministic Gaussian anchor table for 256 tokens in 64 dimensions.
+# Gaussian anchor table for 256 tokens in 64 dimensions.
 family: normal
 dim: 64
-learnable: false
+learnable: true
 init_std: 1.0
 seed: 0
 order_weight: 1.0

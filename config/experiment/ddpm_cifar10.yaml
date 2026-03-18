@@ -9,13 +9,4 @@ defaults:
   - _self_
 
 task:
-  name: ddpm_cifar10_paper
-
-dataset:
-  batch_size: 512
-  eval_batch_size: 512
-  augment:
-    enabled: true
-    prob: 0.15
-    rotate: true
-    hflip: true
+  name: ddpm_cifar10

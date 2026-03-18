@@ -1,6 +1,4 @@
-# CIFAR-10 evaluation setup for CADD.
-# (Same as sjd_cifar10; kept separate for explicit experiment configs.)
-
+# Training-time evaluation setup for CIFAR-10.
 enabled: true
 prefix: eval
 log_at_step_zero: false

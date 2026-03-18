@@ -1,24 +1,14 @@
 defaults:
-  - anchor: ordered_scalar
+  - anchor: ordered_normal
   - _self_
-
-# SJD model config for CIFAR-10.
 name: sjd
 
-# Anchor table. From the root training config, use `model/anchor@experiment.model.anchor=...` to swap preset families, or override
-# `model.anchor.*` directly. Legacy flat fields remain supported by the codepath
-# for older configs, but nested `model.anchor.*` is preferred.
-
-# Match the lighter MD4 CIFAR-10 UNet path rather than the ADM-style image model.
-feature_dim: 128
+feature_dim: 96
 num_heads: 12
 n_layers: 32
 n_dit_layers: 0
 dit_num_heads: 12
 dit_hidden_size: 768
-
-# Regularization / architectural options.
-# Match the MD4 image configuration.
 dropout_rate: 0.1
 use_attn_dropout: true
 mlp_type: swiglu
@@ -27,18 +17,16 @@ cond_type: adaln_zero
 outside_embed: false
 time_features: t
 
-# Backbone selection (Hydra-overridable).
+# Backbone selection.
 # sequence_backbone: auto | transformer | sharded_transformer
 # image_backbone: auto | unet5d | adm_unet5d
 sequence_backbone: auto
-image_backbone: unet5d
+image_backbone: adm_unet5d
 
-# Match the MD4 UNet width/depth multiplier path.
-ch_mult: [1]
-# ADM-only knobs remain available for overrides, but are inactive when
-# image_backbone=unet5d.
+# Match the ADM image width/depth settings used by the paper-style CADD profile.
+ch_mult: [3, 4, 4]
 adm_num_res_blocks: 4
-adm_attention_resolutions: [2]
+adm_attention_resolutions: [2, 4]
 adm_num_heads: 4
 adm_num_head_channels: 64
 adm_num_heads_upsample: -1

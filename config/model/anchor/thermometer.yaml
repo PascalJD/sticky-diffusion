@@ -1,5 +1,5 @@
 # Centered 256x256 thermometer code projected deterministically to 64 dimensions.
-family: thermometer_projected
+family: thermometer
 dim: 64
 learnable: false
 init_std: 1.0

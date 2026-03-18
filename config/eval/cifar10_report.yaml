@@ -1,5 +1,4 @@
-# Final reporting evaluation setup for the CADD paper-style CIFAR-10 recipe.
-
+# Final reporting evaluation setup for CIFAR-10.
 enabled: true
 prefix: eval
 log_at_step_zero: false
