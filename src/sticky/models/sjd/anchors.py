@@ -21,8 +21,6 @@ _LEGACY_ANCHOR_KEYS = (
     "anchor_order_weight",
     "anchor_residual_weight",
     "anchor_projection_seed",
-    "anchor_teacher_checkpoint",
-    "anchor_teacher_checkpoint_path",
     "anchor_transform",
     "anchor_center_columns",
     "anchor_whiten",
@@ -31,6 +29,10 @@ _LEGACY_ANCHOR_KEYS = (
     "anchor_target_row_norm",
     "anchor_scale",
 )
+_LEGACY_ANCHOR_FAMILY_ALIASES = {
+    "ordered_random_residual": "ordered_normal",
+    "thermometer_projected": "thermometer",
+}
 
 
 def _ordered_scalar_table(vocab_size: int, dtype: jnp.dtype) -> Array:
@@ -75,13 +77,6 @@ def _maybe_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
-
-
-def _maybe_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    value_str = str(value)
-    return value_str if value_str else None
 
 
 def _unwrap_model_cfg(cfg: Any) -> Any:
@@ -157,6 +152,11 @@ def _resolve_anchor_transform_value(
     return default
 
 
+def _normalize_anchor_family(value: Any) -> str:
+    family = str(value).lower()
+    return _LEGACY_ANCHOR_FAMILY_ALIASES.get(family, family)
+
+
 def _ensure_positive_int(name: str, value: int) -> int:
     if int(value) <= 0:
         raise ValueError(f"{name} must be positive, got {value}")
@@ -222,7 +222,7 @@ def _build_normal_table(
     )
 
 
-def _build_ordered_random_residual_table(
+def _build_ordered_normal_table(
     *,
     vocab_size: int,
     anchor_dim: int,
@@ -235,7 +235,7 @@ def _build_ordered_random_residual_table(
 ) -> Array:
     if anchor_dim < 2:
         raise ValueError(
-            "ordered_random_residual anchors require anchor_dim >= 2, "
+            "ordered_normal anchors require anchor_dim >= 2, "
             f"got anchor_dim={anchor_dim}."
         )
     ordered = (
@@ -254,7 +254,7 @@ def _build_ordered_random_residual_table(
     return jnp.concatenate([ordered, residual], axis=1)
 
 
-def _build_thermometer_projected_table(
+def _build_thermometer_table(
     *,
     vocab_size: int,
     anchor_dim: int,
@@ -270,7 +270,7 @@ def _build_thermometer_projected_table(
     key = _resolve_random_key(
         seed=projection_seed if projection_seed is not None else seed,
         rng=rng,
-        context="thermometer_projected anchors",
+        context="thermometer anchors",
     )
     projection = _orthogonal_projection_matrix(
         input_dim=vocab_size,
@@ -279,28 +279,6 @@ def _build_thermometer_projected_table(
         dtype=dtype,
     )
     return thermometer @ projection
-
-
-def _build_spectral_dct_table(
-    *,
-    vocab_size: int,
-    anchor_dim: int,
-    dtype: jnp.dtype,
-) -> Array:
-    max_dim = vocab_size - 1
-    if anchor_dim > max_dim:
-        raise ValueError(
-            "spectral_dct anchors only provide vocab_size - 1 non-constant basis "
-            f"vectors; got anchor_dim={anchor_dim} with vocab_size={vocab_size}."
-        )
-
-    work_dtype = jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
-    ids = jnp.arange(vocab_size, dtype=work_dtype)
-    freqs = jnp.arange(1, anchor_dim + 1, dtype=work_dtype)
-    scale = jnp.sqrt(jnp.asarray(2.0 / float(vocab_size), dtype=work_dtype))
-    phase = jnp.pi * (ids[:, None] + 0.5) * freqs[None, :] / float(vocab_size)
-    basis = scale * jnp.cos(phase)
-    return basis.astype(dtype)
 
 
 @dataclass(frozen=True)
@@ -323,7 +301,6 @@ class AnchorTableConfig:
     order_weight: float = 1.0
     residual_weight: float = 1.0
     projection_seed: int | None = None
-    teacher_checkpoint_path: str | None = None
     transform: AnchorTransformConfig = field(default_factory=AnchorTransformConfig)
 
 
@@ -337,7 +314,7 @@ class AnchorsSpec:
 
 @dataclass(frozen=True)
 class AnchorTableViews:
-    """Anchor table snapshots for prescreening and analysis."""
+    """Anchor table snapshots for debugging and offline inspection."""
 
     raw: Array
     transformed: Array
@@ -361,7 +338,7 @@ def anchor_table_config_from_mapping(
         )
 
     return AnchorTableConfig(
-        family=str(
+        family=_normalize_anchor_family(
             _resolve_anchor_value(
                 model_cfg,
                 nested_key="family",
@@ -419,14 +396,6 @@ def anchor_table_config_from_mapping(
                 nested_key="projection_seed",
                 flat_key="anchor_projection_seed",
                 default=None,
-            )
-        ),
-        teacher_checkpoint_path=_maybe_str(
-            _resolve_anchor_value(
-                model_cfg,
-                nested_key="teacher_checkpoint",
-                flat_key="anchor_teacher_checkpoint",
-                default=_cfg_get(model_cfg, "anchor_teacher_checkpoint_path", None),
             )
         ),
         transform=AnchorTransformConfig(
@@ -571,7 +540,7 @@ def _build_anchor_base_table(
     dtype: jnp.dtype = jnp.float32,
     rng: Array | None = None,
 ) -> Array:
-    family = str(config.family).lower()
+    family = _normalize_anchor_family(config.family)
     vocab_size = _ensure_positive_int("vocab_size", int(config.vocab_size))
     anchor_dim = _ensure_positive_int("anchor_dim", int(config.anchor_dim))
 
@@ -591,8 +560,8 @@ def _build_anchor_base_table(
             rng=rng,
             dtype=dtype,
         )
-    elif family == "ordered_random_residual":
-        table = _build_ordered_random_residual_table(
+    elif family == "ordered_normal":
+        table = _build_ordered_normal_table(
             vocab_size=vocab_size,
             anchor_dim=anchor_dim,
             init_std=config.init_std,
@@ -602,8 +571,8 @@ def _build_anchor_base_table(
             residual_weight=config.residual_weight,
             dtype=dtype,
         )
-    elif family == "thermometer_projected":
-        table = _build_thermometer_projected_table(
+    elif family == "thermometer":
+        table = _build_thermometer_table(
             vocab_size=vocab_size,
             anchor_dim=anchor_dim,
             projection_seed=config.projection_seed,
@@ -611,29 +580,10 @@ def _build_anchor_base_table(
             rng=rng,
             dtype=dtype,
         )
-    elif family == "spectral_dct":
-        table = _build_spectral_dct_table(
-            vocab_size=vocab_size,
-            anchor_dim=anchor_dim,
-            dtype=dtype,
-        )
-    elif family == "teacher_init":
-        checkpoint_path = config.teacher_checkpoint_path
-        if not checkpoint_path:
-            raise NotImplementedError(
-                "teacher_init anchors require `anchor_teacher_checkpoint` (or "
-                "`anchor_teacher_checkpoint_path`) to be set. Checkpoint loading "
-                "is not implemented yet."
-            )
-        raise NotImplementedError(
-            "teacher_init checkpoint extraction is not implemented yet. "
-            f"Received checkpoint path: {checkpoint_path}"
-        )
     else:
         raise ValueError(
             f"Unknown anchor initializer {config.family!r}. Expected one of: "
-            "normal, ordered_scalar, ordered_random_residual, "
-            "thermometer_projected, spectral_dct, teacher_init."
+            "normal, ordered_normal, ordered_scalar, thermometer."
         )
 
     expected_shape = (vocab_size, anchor_dim)
@@ -724,7 +674,7 @@ def make_anchor_initializer(
                 "`name`, `vocab_size`, and `anchor_dim` arguments."
             )
         config = AnchorTableConfig(
-            family=str(name),
+            family=_normalize_anchor_family(name),
             vocab_size=int(vocab_size),
             anchor_dim=int(anchor_dim),
             init_std=float(init_std),

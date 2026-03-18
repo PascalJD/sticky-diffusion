@@ -1,10 +1,10 @@
-# Paper-style CIFAR-10 experiment bundle for the continuous DDPM baseline.
+# Canonical CIFAR-10 experiment bundle for the continuous DDPM baseline.
 
 defaults:
   - /dataset: cifar10_discrete
   - /model: ddpm_cifar10
-  - /optim: adamw_ddpm
-  - /training: ddpm_cifar10_paper
+  - /optim: adamw_cifar10
+  - /training: cifar10
   - /runtime: default
   - _self_
 

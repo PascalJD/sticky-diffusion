@@ -19,77 +19,43 @@ class _DummySJDTask:
         self.kwargs = kwargs
 
 
-def test_build_task_accepts_cadd_paper_alias(monkeypatch):
+def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "sticky.tasks.cifar10_discrete",
         SimpleNamespace(CIFAR10DiscreteTask=_DummyDiscreteTask),
     )
 
-    cfg = OmegaConf.create(
-        {
-            "task": {"name": "cadd_cifar10_paper"},
-            "dataset": {
-                "data_dir": "/tmp/cifar10",
-                "batch_size": 512,
-                "eval_batch_size": 512,
-                "vocab_size": 256,
-                "num_classes": -1,
-                "augment": {
-                    "enabled": True,
-                    "prob": 0.15,
-                    "rotate": True,
-                    "hflip": True,
-                    "eval": False,
+    for task_name in ("cadd_cifar10", "ddpm_cifar10", "md4_cifar10"):
+        cfg = OmegaConf.create(
+            {
+                "task": {"name": task_name},
+                "dataset": {
+                    "data_dir": "/tmp/cifar10",
+                    "batch_size": 512,
+                    "eval_batch_size": 512,
+                    "vocab_size": 256,
+                    "num_classes": -1,
+                    "augment": {
+                        "enabled": False,
+                        "prob": 0.15,
+                        "rotate": True,
+                        "hflip": True,
+                        "eval": False,
+                    },
                 },
-            },
-        }
-    )
+            }
+        )
 
-    task = build_task(cfg)
+        task = build_task(cfg)
 
-    assert isinstance(task, _DummyDiscreteTask)
-    assert task.kwargs["task_name"] == "cadd_cifar10_paper"
-    assert task.kwargs["batch_size"] == 512
-    assert task.kwargs["augment_enabled"] is True
-
-
-def test_build_task_accepts_ddpm_paper_alias(monkeypatch):
-    monkeypatch.setitem(
-        sys.modules,
-        "sticky.tasks.cifar10_discrete",
-        SimpleNamespace(CIFAR10DiscreteTask=_DummyDiscreteTask),
-    )
-
-    cfg = OmegaConf.create(
-        {
-            "task": {"name": "ddpm_cifar10_paper"},
-            "dataset": {
-                "data_dir": "/tmp/cifar10",
-                "batch_size": 512,
-                "eval_batch_size": 512,
-                "vocab_size": 256,
-                "num_classes": -1,
-                "augment": {
-                    "enabled": True,
-                    "prob": 0.15,
-                    "rotate": True,
-                    "hflip": True,
-                    "eval": False,
-                },
-            },
-        }
-    )
-
-    task = build_task(cfg)
-
-    assert isinstance(task, _DummyDiscreteTask)
-    assert task.kwargs["task_name"] == "ddpm_cifar10_paper"
-    assert task.kwargs["batch_size"] == 512
-    assert task.kwargs["augment_enabled"] is True
+        assert isinstance(task, _DummyDiscreteTask)
+        assert task.kwargs["task_name"] == task_name
+        assert task.kwargs["batch_size"] == 512
+        assert task.kwargs["augment_enabled"] is False
 
 
-def test_build_task_accepts_sjd_paper_alias(monkeypatch):
+def test_build_task_accepts_canonical_sjd_name(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "sticky.tasks.cifar10_sjd",
@@ -106,7 +72,7 @@ def test_build_task_accepts_sjd_paper_alias(monkeypatch):
 
     cfg = OmegaConf.create(
         {
-            "task": {"name": "sjd_cifar10_paper"},
+            "task": {"name": "sjd_cifar10"},
             "dataset": {
                 "data_dir": "/tmp/cifar10",
                 "batch_size": 512,
@@ -115,7 +81,7 @@ def test_build_task_accepts_sjd_paper_alias(monkeypatch):
                 "vocab_size": 256,
                 "num_classes": -1,
                 "augment": {
-                    "enabled": True,
+                    "enabled": False,
                     "prob": 0.15,
                     "rotate": True,
                     "hflip": True,
@@ -142,7 +108,7 @@ def test_build_task_accepts_sjd_paper_alias(monkeypatch):
 
     assert isinstance(task, _DummySJDTask)
     assert task.kwargs["batch_size"] == 512
-    assert task.kwargs["augment_enabled"] is True
+    assert task.kwargs["augment_enabled"] is False
     assert task.kwargs["beta"] == {"cfg": {"name": "vp_linear"}}
     assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 3.0}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched"}, "beta": {"cfg": {"name": "vp_linear"}}}

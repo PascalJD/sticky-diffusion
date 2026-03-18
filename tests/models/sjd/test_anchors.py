@@ -41,7 +41,7 @@ VOCAB_SIZE = 256
         ),
         (
             AnchorTableConfig(
-                family="ordered_random_residual",
+                family="ordered_normal",
                 vocab_size=VOCAB_SIZE,
                 anchor_dim=8,
                 seed=7,
@@ -52,18 +52,10 @@ VOCAB_SIZE = 256
         ),
         (
             AnchorTableConfig(
-                family="thermometer_projected",
+                family="thermometer",
                 vocab_size=VOCAB_SIZE,
                 anchor_dim=8,
                 projection_seed=11,
-            ),
-            8,
-        ),
-        (
-            AnchorTableConfig(
-                family="spectral_dct",
-                vocab_size=VOCAB_SIZE,
-                anchor_dim=8,
             ),
             8,
         ),
@@ -89,21 +81,16 @@ def test_anchor_family_shapes(config: AnchorTableConfig, expected_dim: int):
             seed=17,
         ),
         AnchorTableConfig(
-            family="ordered_random_residual",
+            family="ordered_normal",
             vocab_size=VOCAB_SIZE,
             anchor_dim=8,
             seed=17,
         ),
         AnchorTableConfig(
-            family="thermometer_projected",
+            family="thermometer",
             vocab_size=VOCAB_SIZE,
             anchor_dim=8,
             projection_seed=17,
-        ),
-        AnchorTableConfig(
-            family="spectral_dct",
-            vocab_size=VOCAB_SIZE,
-            anchor_dim=8,
         ),
     ],
 )
@@ -223,21 +210,10 @@ def test_ordered_scalar_scale_applies_in_final_view_only():
     )
 
 
-def test_teacher_init_without_checkpoint_is_explicit():
-    with pytest.raises(NotImplementedError, match="anchor_teacher_checkpoint"):
-        build_anchor_table(
-            AnchorTableConfig(
-                family="teacher_init",
-                vocab_size=VOCAB_SIZE,
-                anchor_dim=8,
-            )
-        )
-
-
 def test_nested_anchor_config_takes_precedence_and_logs_warning(caplog):
     cfg = {
         "anchor": {
-            "family": "spectral_dct",
+            "family": "thermometer",
             "dim": 8,
             "learnable": False,
         },
@@ -250,7 +226,7 @@ def test_nested_anchor_config_takes_precedence_and_logs_warning(caplog):
         parsed = anchor_table_config_from_mapping(cfg, vocab_size=VOCAB_SIZE)
         learnable = anchor_learnable_from_mapping(cfg)
 
-    assert parsed.family == "spectral_dct"
+    assert parsed.family == "thermometer"
     assert parsed.anchor_dim == 8
     assert learnable is False
     assert "nested `model.anchor.*` config" in caplog.text
@@ -258,7 +234,7 @@ def test_nested_anchor_config_takes_precedence_and_logs_warning(caplog):
 
 def test_flat_anchor_config_still_parses():
     cfg = {
-        "anchor_init": "ordered_random_residual",
+        "anchor_init": "ordered_normal",
         "anchor_dim": 6,
         "anchors_init_std": 0.25,
         "anchor_seed": 9,
@@ -272,7 +248,7 @@ def test_flat_anchor_config_still_parses():
     }
 
     parsed = anchor_table_config_from_mapping(cfg, vocab_size=VOCAB_SIZE)
-    assert parsed.family == "ordered_random_residual"
+    assert parsed.family == "ordered_normal"
     assert parsed.anchor_dim == 6
     assert parsed.init_std == pytest.approx(0.25)
     assert parsed.seed == 9
@@ -281,3 +257,25 @@ def test_flat_anchor_config_still_parses():
     assert parsed.transform.equalize_row_norms is True
     assert parsed.transform.target_row_norm == pytest.approx(1.5)
     assert anchor_learnable_from_mapping(cfg) is False
+
+
+def test_legacy_anchor_family_aliases_normalize_to_canonical_names():
+    ordered_cfg = {
+        "anchor_init": "ordered_random_residual",
+        "anchor_dim": 6,
+        "anchor_seed": 9,
+    }
+    thermometer_cfg = {
+        "anchor_init": "thermometer_projected",
+        "anchor_dim": 6,
+        "anchor_projection_seed": 11,
+    }
+
+    ordered = anchor_table_config_from_mapping(ordered_cfg, vocab_size=VOCAB_SIZE)
+    thermometer = anchor_table_config_from_mapping(
+        thermometer_cfg,
+        vocab_size=VOCAB_SIZE,
+    )
+
+    assert ordered.family == "ordered_normal"
+    assert thermometer.family == "thermometer"

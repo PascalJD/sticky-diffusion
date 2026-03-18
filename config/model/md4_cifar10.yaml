@@ -1,4 +1,8 @@
 # MD4 model config for CIFAR-10.
+defaults:
+  - architecture@_here_: md4_unet
+  - _self_
+
 name: md4
 
 # Core diffusion setup.
@@ -6,44 +10,6 @@ cont_time: true
 timesteps: 256
 noise_schedule_type: linear
 time_features: t
-
-# Classifier backbone.
-feature_dim: 128
-n_layers: 32
-n_dit_layers: 0
-dit_num_heads: 12
-dit_hidden_size: 768
-ch_mult: [1]
-
-# Shared architecture selection (matches SJD).
-# sequence_backbone: auto | transformer | sharded_transformer
-# image_backbone: auto | unet5d | adm_unet5d
-sequence_backbone: auto
-image_backbone: unet5d
-
-# ADM-style image UNet knobs (used when image_backbone=adm_unet5d).
-adm_num_res_blocks: 2
-adm_attention_resolutions: [2, 4, 8]
-adm_num_heads: 4
-adm_num_head_channels: -1
-adm_num_heads_upsample: -1
-adm_conv_resample: true
-adm_use_scale_shift_norm: true
-adm_resblock_updown: false
-adm_use_conv_skip: false
-adm_use_new_attention_order: false
-
-# Regularization.
-dropout_rate: 0.1
-use_attn_dropout: true
-
-# Transformer-only fields (unused for the UNet path).
-num_heads: 12
-mlp_type: swiglu
-depth_scaled_init: true
-cond_type: adaln_zero
-outside_embed: false
-model_sharding: false
 
 # Conditioning.
 classes: -1  # set to 11 if you want CIFAR10 + null class for CFG-style unconditional drop

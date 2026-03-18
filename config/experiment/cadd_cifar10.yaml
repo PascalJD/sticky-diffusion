@@ -1,14 +1,9 @@
-# Paper-aligned CIFAR-10 experiment config for CADD.
-#
-# The paper is ambiguous between the main-text Gaussian latent and
-# the Appendix flow-matching latent. This profile defaults to the
-# Appendix-style flow-matching latent as the reproduction target, while keeping
-# the Gaussian latent available as an explicit override.
+# Canonical CIFAR-10 experiment bundle for CADD.
 defaults:
   - /dataset: cifar10_discrete
   - /model: cadd_cifar10
-  - /optim: adamw_cadd
-  - /training: cadd_cifar10
+  - /optim: adamw_cifar10
+  - /training: cifar10
   - /runtime: default
   - _self_
 

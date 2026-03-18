@@ -1,0 +1,9 @@
+defaults:
+  - transform: default
+  - _self_
+
+# Gaussian anchor table for 256 tokens in 64 dimensions.
+family: normal
+dim: 64
+learnable: true
+seed: 0

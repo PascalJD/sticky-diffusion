@@ -1,0 +1,7 @@
+# Shared anchor preprocessing defaults.
+center_columns: false
+whiten: false
+whiten_eps: 1.0e-5
+equalize_row_norms: false
+target_row_norm: null
+scale: 1.0
