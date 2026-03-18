@@ -60,7 +60,6 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
                 "adm_use_new_attention_order": False,
                 "time_features": "t",
                 "classes": -1,
-                "K": 1,
                 "cadd_latent": {
                     "type": "gaussian",
                     "continuous_schedule_type": "linear",
@@ -72,6 +71,7 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
                 "tau_max": 3.5,
                 "logit_temperature": 0.7,
                 "z0_estimator": "soft",
+                "K": 3,
                 "force_decode_at_end": False,
                 "corrector_enabled": True,
                 "corrector_steps": 2,
@@ -90,6 +90,7 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["tau_max"] == 3.5
     assert model.kwargs["logit_temperature"] == 0.7
     assert model.kwargs["z0_estimator"] == "soft"
+    assert model.kwargs["K"] == 3
     assert model.kwargs["force_decode_at_end"] is False
     assert model.kwargs["corrector_enabled"] is True
     assert model.kwargs["corrector_steps"] == 2

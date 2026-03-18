@@ -9,6 +9,8 @@ tau_max: 2.5
 logit_temperature: 1.0
 
 z0_estimator: hard
+# Appendix C.3 shows most of the multi-sample gain by K=3.
+K: 3
 force_decode_at_end: true
 
 # See Gat et al. 2024

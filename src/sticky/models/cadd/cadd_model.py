@@ -82,7 +82,7 @@ class CADD(nn.Module):
       * The continuous latent can follow either the paper's main Gaussian
         diffusion derivation or the Appendix B.1 flow-matching path.
       * The sampling code supports the paper's cosine-decay temperature schedule.
-      * Multi-sample estimation is currently implemented for K=1 only.
+      * Sampling can average K continuous latent hints per reverse step.
     """
 
     # Data / discretization.
@@ -140,7 +140,7 @@ class CADD(nn.Module):
     tau_max: float = 2.5  # paper: 2.5
     logit_temperature: float = 1.0  # used when temperature_schedule=constant
     z0_estimator: str = "hard"  # hard | soft
-    K: int = 1
+    K: int = 1  # number of continuous latent hints averaged per reverse step
     force_decode_at_end: bool = True
 
     # Optional sampling-time corrector (in the spirit of Gat et al., 2024).
@@ -153,10 +153,8 @@ class CADD(nn.Module):
     corrector_sample_mode: str = "sample"  # sample | argmax
 
     def setup(self):
-        if int(self.K) != 1:
-            raise NotImplementedError(
-                "CADD multi-sample estimation with K>1 is not implemented yet."
-            )
+        if int(self.K) < 1:
+            raise ValueError(f"CADD requires K>=1, got K={self.K}.")
 
         # Schedules.
         self.alpha = ClippedSchedule(
@@ -423,11 +421,78 @@ class CADD(nn.Module):
     def prior_sample(self, batch_size: int) -> tuple[Array, Array]:
         """Sample the CADD prior: x_T=mask, z_T~N(0,I)."""
         x = self.mask_token_id * jnp.ones((batch_size,) + tuple(self.data_shape), dtype=jnp.int32)
+        latent_shape = (batch_size,) + tuple(self.data_shape) + (int(self.feature_dim),)
+        if int(self.K) > 1:
+            latent_shape = (int(self.K),) + latent_shape
         z = jax.random.normal(
             self.make_rng("sample"),
-            (batch_size,) + tuple(self.data_shape) + (int(self.feature_dim),),
+            latent_shape,
         )
         return x, z
+
+    def _token_probs_per_latent(
+        self,
+        *,
+        x_t: Array,
+        z_samples: Array,
+        t: Array,
+        cond_emb: Array | None,
+    ) -> Array:
+        """Return p_theta(x0 | x_t, z_t^(k)) for each latent hint sample."""
+        if z_samples.ndim == x_t.ndim + 1:
+            z_samples = z_samples[None, ...]
+        elif z_samples.ndim != x_t.ndim + 2:
+            raise ValueError(
+                "CADD z_samples must have either a single latent shape "
+                f"{x_t.ndim + 1}D or a leading-K latent batch, got {z_samples.shape}."
+            )
+
+        z_disc = self.token_embed(x_t)
+        mask = (x_t == self.mask_token_id).astype(jnp.float32)[..., None]
+        t_arr = jnp.asarray(t)
+        temp = self.temperature(t_arr)
+
+        def _single_probs(z_sample: Array) -> Array:
+            z_tilde = z_disc + z_sample * mask
+            logits = self.predict_logits(z_tilde, t_arr, cond=cond_emb, train=False)
+            return jax.nn.softmax(logits / temp, axis=-1)
+
+        return jax.vmap(_single_probs)(z_samples)
+
+    def _token_probs_from_latents(
+        self,
+        *,
+        x_t: Array,
+        z_samples: Array,
+        t: Array,
+        cond_emb: Array | None,
+    ) -> Array:
+        """Average token probabilities across one or more latent hints."""
+        return jnp.mean(
+            self._token_probs_per_latent(
+                x_t=x_t,
+                z_samples=z_samples,
+                t=t,
+                cond_emb=cond_emb,
+            ),
+            axis=0,
+        )
+
+    def _sampling_probs(
+        self,
+        *,
+        x_t: Array,
+        z_t: Array,
+        t: Array,
+        cond_emb: Array | None,
+    ) -> Array:
+        """Approximate E[p_theta(x0 | x_t, z_t)] with K latent hints."""
+        return self._token_probs_from_latents(
+            x_t=x_t,
+            z_samples=z_t,
+            t=t,
+            cond_emb=cond_emb,
+        )
 
     def _estimate_z0(self, *, probs: Array) -> Array:
         """Estimate z0 embedding from token probabilities."""
@@ -459,12 +524,14 @@ class CADD(nn.Module):
             return x, z
 
         # 1) Score current tokens by uncertainty (entropy).
-        z_disc = self.token_embed(x)
-        is_mask = (x == self.mask_token_id)
-        z_tilde = z_disc + z * is_mask.astype(jnp.float32)[..., None]
-        logits = self.predict_logits(z_tilde, jnp.asarray(t), cond=cond_emb, train=False)
-        logits = logits / self.temperature(jnp.asarray(t))
-        probs = jax.nn.softmax(logits, axis=-1)
+        is_mask = x == self.mask_token_id
+        rng_eps, rng_tok = jax.random.split(rng, 2)
+        probs = self._sampling_probs(
+            x_t=x,
+            z_t=z,
+            t=jnp.asarray(t),
+            cond_emb=cond_emb,
+        )
 
         eps = 1e-20
         ent = -jnp.sum(probs * jnp.log(jnp.clip(probs, eps, 1.0)), axis=-1)
@@ -501,34 +568,43 @@ class CADD(nn.Module):
 
         # Re-noise the remasked positions using the configured continuous path.
         z0 = self.token_embed(x)
-        rng, rng_eps, rng_tok = jax.random.split(rng, 3)
+        remask_latent = remask[..., None]
+        if z.ndim == x.ndim + 2:
+            z0 = jnp.broadcast_to(z0[None, ...], z.shape)
+            remask_latent = remask[None, ..., None]
         z_noisy = self._sample_masked_continuous_latent(
             rng=rng_eps,
             z0=z0,
             t=jnp.asarray(t),
         )
-        z_masked = jnp.where(remask[..., None], z_noisy, z)
+        z_masked = jnp.where(remask_latent, z_noisy, z)
 
         # 3) Resample remasked positions (unmask immediately).
-        z_disc2 = self.token_embed(x_masked)
-        is_mask2 = x_masked == self.mask_token_id
-        z_tilde2 = z_disc2 + z_masked * is_mask2.astype(jnp.float32)[..., None]
-        logits2 = self.predict_logits(
-            z_tilde2, jnp.asarray(t), cond=cond_emb, train=False
+        probs2 = self._sampling_probs(
+            x_t=x_masked,
+            z_t=z_masked,
+            t=jnp.asarray(t),
+            cond_emb=cond_emb,
         )
-        logits2 = logits2 / self.temperature(jnp.asarray(t))
 
         if self.corrector_sample_mode == "argmax":
-            sampled = jnp.argmax(logits2, axis=-1).astype(jnp.int32)
+            sampled = jnp.argmax(probs2, axis=-1).astype(jnp.int32)
         elif self.corrector_sample_mode == "sample":
-            sampled = jax.random.categorical(rng_tok, logits2, axis=-1).astype(jnp.int32)
+            sampled = jax.random.categorical(
+                rng_tok,
+                jnp.log(jnp.clip(probs2, a_min=1e-20, a_max=1.0)),
+                axis=-1,
+            ).astype(jnp.int32)
         else:
             raise NotImplementedError(
                 f"Unknown corrector_sample_mode={self.corrector_sample_mode!r}"
             )
 
         x_new = jnp.where(remask, sampled, x).astype(jnp.int32)
-        z_new = jnp.where(remask[..., None], self.token_embed(x_new), z_masked)
+        z_new_tokens = self.token_embed(x_new)
+        if z.ndim == x.ndim + 2:
+            z_new_tokens = jnp.broadcast_to(z_new_tokens[None, ...], z.shape)
+        z_new = jnp.where(remask_latent, z_new_tokens, z_masked)
         return x_new, z_new
 
     def sample_step(
@@ -556,14 +632,12 @@ class CADD(nn.Module):
         rho_flip = (alpha_s - alpha_t) / (1.0 - alpha_t)
         rho_flip = jnp.clip(rho_flip, a_min=0.0, a_max=1.0)
 
-        # Model logits p_theta(x0 | x_t, z_t).
-        z_disc = self.token_embed(x_t)
-        mask = (x_t == self.mask_token_id).astype(jnp.float32)[..., None]
-        z_tilde = z_disc + z_t * mask
-
-        logits = self.predict_logits(z_tilde, jnp.asarray(t), cond=cond_emb, train=False)
-        logits = logits / self.temperature(jnp.asarray(t))
-        probs = jax.nn.softmax(logits, axis=-1)
+        probs = self._sampling_probs(
+            x_t=x_t,
+            z_t=z_t,
+            t=jnp.asarray(t),
+            cond_emb=cond_emb,
+        )
 
         sampled, keep_mask = sample_mixture_categorical(
             rng_token,
@@ -582,17 +656,24 @@ class CADD(nn.Module):
         stay_mask = x_s == self.mask_token_id
 
         z0_hat = self._estimate_z0(probs=probs)
+        z0_hat_particles = z0_hat
+        if z_t.ndim == x_t.ndim + 2:
+            z0_hat_particles = jnp.broadcast_to(z0_hat[None, ...], z_t.shape)
         z_cont = self._reverse_masked_continuous_latent(
             rng=rng_latent,
             z_t=z_t,
-            z0_hat=z0_hat,
+            z0_hat=z0_hat_particles,
             s=jnp.asarray(s),
             t=jnp.asarray(t),
         )
 
         # For unmasked positions, z is deterministically the token embedding.
         z_unmasked = self.token_embed(x_s)
-        z_s = jnp.where(stay_mask[..., None], z_cont, z_unmasked)
+        stay_mask_latent = stay_mask[..., None]
+        if z_t.ndim == x_t.ndim + 2:
+            z_unmasked = jnp.broadcast_to(z_unmasked[None, ...], z_t.shape)
+            stay_mask_latent = stay_mask[None, ..., None]
+        z_s = jnp.where(stay_mask_latent, z_cont, z_unmasked)
 
         # Optional remasking-based corrector (keeps time fixed at `s`).
         if self.corrector_enabled and (self.corrector_steps > 0) and (self.corrector_remask_frac > 0.0):
@@ -621,8 +702,11 @@ class CADD(nn.Module):
         if not self.force_decode_at_end:
             return x
         cond_emb = self.get_cond_embedding(conditioning)
-        z_disc = self.token_embed(x)
-        z_tilde = z_disc + z * mask.astype(jnp.float32)[..., None]
-        logits = self.predict_logits(z_tilde, jnp.asarray(0.0), cond=cond_emb, train=False)
-        pred = jnp.argmax(logits, axis=-1).astype(jnp.int32)
+        probs = self._sampling_probs(
+            x_t=x,
+            z_t=z,
+            t=jnp.asarray(0.0),
+            cond_emb=cond_emb,
+        )
+        pred = jnp.argmax(probs, axis=-1).astype(jnp.int32)
         return jnp.where(mask, pred, x).astype(jnp.int32)

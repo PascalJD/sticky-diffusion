@@ -11,6 +11,5 @@ use_attn_dropout: true
 mlp_type: swiglu
 depth_scaled_init: true
 cond_type: adaln_zero
-outside_embed: false
 time_features: t
 model_sharding: false

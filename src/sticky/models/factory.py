@@ -158,7 +158,7 @@ def build_model(
                 sampler_cfg.get("logit_temperature", cfg.model.get("logit_temperature", 1.0))
             ),
             z0_estimator=str(sampler_cfg.get("z0_estimator", cfg.model.get("z0_estimator", "hard"))),
-            K=int(cfg.model.get("K", 1)),
+            K=int(sampler_cfg.get("K", cfg.model.get("K", 1))),
             force_decode_at_end=bool(
                 sampler_cfg.get("force_decode_at_end", cfg.model.get("force_decode_at_end", True))
             ),

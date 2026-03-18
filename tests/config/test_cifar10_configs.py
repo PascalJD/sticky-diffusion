@@ -57,6 +57,7 @@ def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
     assert cfg.experiment.model.cadd_latent.continuous_schedule_type == "linear"
     assert cfg.experiment.sampler.sampling_grid == "cosine"
     assert cfg.experiment.sampler.temperature_schedule == "cosine_decay"
+    assert cfg.experiment.sampler.K == 3
     assert cfg.experiment.sampler.corrector_remask_frac == 0.1
     assert cfg.experiment.training.sample_timesteps == 512
 
@@ -76,17 +77,18 @@ def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
     assert cfg.experiment.training.sample_timesteps == 256
     assert cfg.experiment.training.log_state_dependency is True
     assert cfg.experiment.training.state_dep_log_ratio_clip == cfg.experiment.sampler.log_ratio_clip
-    assert cfg.experiment.model.anchor.family == "ordered_normal"
-    assert cfg.experiment.model.anchor.learnable is True
+    assert cfg.experiment.model.anchor.family == "thermometer"
+    assert cfg.experiment.model.anchor.learnable is False
+    assert "outside_embed" not in cfg.experiment.model
 
     override_cfg = _compose(
         [
             "experiment=sjd_cifar10",
             "eval=cifar10",
-            "model/anchor@experiment.model.anchor=normal",
+            "model/anchor@experiment.model.anchor=ordered_normal",
         ]
     )
-    assert override_cfg.experiment.model.anchor.family == "normal"
+    assert override_cfg.experiment.model.anchor.family == "ordered_normal"
     assert override_cfg.experiment.model.anchor.learnable is True
 
 

@@ -23,5 +23,3 @@ time_features: t
 
 # Conditioning.
 classes: -1
-
-K: 1
