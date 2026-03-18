@@ -1,6 +1,6 @@
 defaults:
   - architecture@_here_: adm_unet
-  - anchor: ordered_normal
+  - anchor: thermometer
   - _self_
 
 # Canonical SJD model for CIFAR-10.
@@ -13,5 +13,4 @@ depth_scaled_init: true
 cond_type: adaln_zero
 outside_embed: false
 time_features: t
-
 model_sharding: false

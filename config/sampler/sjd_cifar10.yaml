@@ -1,7 +1,7 @@
 # Sampler profile for SJD CIFAR-10
 T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 256 # NFE = 2*n_steps if refresh_logits_after_em_step is true
-sampling_grid: uniform  # uniform or cosine-warped
+sampling_grid: cosine  # uniform or cosine-warped
 
 alloc_mode: sample
 score_from_classifier: true

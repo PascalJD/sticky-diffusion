@@ -128,8 +128,7 @@ def reverse_sample(
     `refresh_logits_after_em_step=True`, the jump step makes a second classifier
     call on the post-EM state at the next time slice. If
     `force_classify_at_end=True`, the final strictly positive slice forces a
-    plug-in jump for any remaining uncommitted sites; no separate t=0
-    classifier projection is applied in that path.
+    plug-in jump for any remaining uncommitted sites.
 
     Returns:
         ReverseSampleResult with indices and sampling metrics.
