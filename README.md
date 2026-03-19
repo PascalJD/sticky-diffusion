@@ -79,6 +79,19 @@ Notes:
 - `offline_eval.run_dir=...` auto-discovers checkpoint paths from `run_context.json` when available.
 - JSON metrics are written to `offline_eval.output_path` (default: `offline_eval_metrics.json` in Hydra output dir).
 
+Anvil SJD temperature sweep:
+```bash
+sbatch scripts/anvil_sjd_logit_temperature_sweep.sbatch
+```
+
+The sweep script evaluates `logit_temperature` over `0.70, 0.75, 0.80, 0.85, 0.90, 0.95` with `offline_eval.jump_eta=0.8`, `eval.fid_num_samples=10000`, and `eval.is_enabled=false`. It defaults to the SJD checkpoint / FID stats / TFDS paths used on Anvil, auto-reuses `run_context.json` when available, and writes one `offline_eval_metrics.json` per temperature under `/home/x-pjutrasdube/scratch/sticky-diffusion/evals`.
+
+To rank completed runs:
+```bash
+python scripts/collect_sjd_temperature_sweep.py \
+  /home/x-pjutrasdube/scratch/sticky-diffusion/evals/sjd_logit_temperature_sweep_<jobid>
+```
+
 ## Contribute 
 
 Below is the general format for commit log messages:

@@ -21,6 +21,23 @@ def _sqrtm_psd(mat: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return (v * np.sqrt(w)) @ v.T
 
 
+def _normalize_tfds_data_dir(data_dir: Optional[str], dataset_name: str) -> Optional[str]:
+    """Accept either a TFDS root or a dataset/version leaf path."""
+    if data_dir in (None, "", "null"):
+        return None
+
+    path = Path(str(data_dir))
+    dataset_leaf = str(dataset_name).split("/", 1)[0].split(":", 1)[0]
+
+    if path.name == dataset_leaf:
+        return str(path.parent)
+
+    if path.parent.name == dataset_leaf and path.name[:1].isdigit():
+        return str(path.parent.parent)
+
+    return str(path)
+
+
 def fid_from_stats(
     mu1: np.ndarray,
     sigma1: np.ndarray,
@@ -43,7 +60,9 @@ def fid_from_stats(
     cov_prod = sqrt_sigma1 @ sigma2_eps @ sqrt_sigma1
     covmean = _sqrtm_psd(cov_prod, eps=eps)
 
-    fid = float(diff @ diff + np.trace(sigma1_eps) + np.trace(sigma2_eps) - 2.0 * np.trace(covmean))
+    # Keep the trace terms on the original covariances; eps only stabilizes
+    # the square-root path.
+    fid = float(diff @ diff + np.trace(sigma1) + np.trace(sigma2) - 2.0 * np.trace(covmean))
     return max(0.0, fid)
 
 
@@ -165,7 +184,7 @@ class FIDCalculator:
             self.dataset_name,
             split=self.split,
             shuffle_files=False,
-            data_dir=self.tfds_data_dir,
+            data_dir=_normalize_tfds_data_dir(self.tfds_data_dir, self.dataset_name),
             as_supervised=False,
         )
         ds = tfds.as_numpy(ds)
