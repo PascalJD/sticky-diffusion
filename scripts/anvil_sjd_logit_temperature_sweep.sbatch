@@ -5,13 +5,15 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --time=08:00:00
+#SBATCH --mem=32G
+#SBATCH --time=03:00:00
 #SBATCH --job-name=sjd-logit-temp
 #SBATCH --array=0-5
 
 set -euo pipefail
 
-TEMPERATURES=(0.70 0.75 0.80 0.85 0.90 0.95)
+TEMPERATURES_CSV="${TEMPERATURES_CSV:-0.70,0.75,0.80,0.85,0.90,0.95}"
+IFS=',' read -r -a TEMPERATURES <<< "${TEMPERATURES_CSV}"
 TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
 if (( TASK_ID < 0 || TASK_ID >= ${#TEMPERATURES[@]} )); then
   echo "SLURM_ARRAY_TASK_ID=${TASK_ID} is out of range for ${#TEMPERATURES[@]} temperatures." >&2
@@ -94,6 +96,7 @@ fi
 echo "repo_root=${REPO_ROOT}"
 echo "results_root=${RESULTS_ROOT}"
 echo "logit_temperature=${LOGIT_TEMPERATURE}"
+echo "temperatures_csv=${TEMPERATURES_CSV}"
 echo "jump_eta=${ETA}"
 echo "fid_num_samples=${FID_NUM_SAMPLES}"
 echo "best_checkpoint_dir=${BEST_CHECKPOINT_DIR}"
