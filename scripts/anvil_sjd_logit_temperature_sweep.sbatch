@@ -26,7 +26,8 @@ BEST_CHECKPOINT_DIR="${BEST_CHECKPOINT_DIR:-/home/x-pjutrasdube/scratch/sticky-d
 FID_STATS_DIR="${FID_STATS_DIR:-/home/x-pjutrasdube/scratch/sticky-diffusion/fid_stats}"
 TFDS_DATA_DIR="${TFDS_DATA_DIR:-/home/x-pjutrasdube/scratch/sticky-diffusion/tfds/cifar10/3.0.2}"
 REPO_ROOT="${REPO_ROOT:-$SLURM_SUBMIT_DIR}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+ENV_PREFIX="${ENV_PREFIX:-/anvil/scratch/x-pjutrasdube/envs/sticky}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-sticky}"
 SWEEP_ID="${SWEEP_ID:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-manual}}}"
 RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-/home/x-pjutrasdube/scratch/sticky-diffusion/evals}"
@@ -39,9 +40,35 @@ HYDRA_DIR="${TASK_OUTPUT_DIR}/hydra"
 mkdir -p "${TASK_OUTPUT_DIR}"
 cd "${REPO_ROOT}"
 
-if command -v conda >/dev/null 2>&1; then
+if [[ -d "${ENV_PREFIX}" ]]; then
+  export PATH="${ENV_PREFIX}/bin:${PATH}"
+  if [[ -f "${ENV_PREFIX}/bin/activate" ]]; then
+    # shellcheck disable=SC1090
+    source "${ENV_PREFIX}/bin/activate"
+  fi
+  PYTHON_BIN="${PYTHON_BIN:-${ENV_PREFIX}/bin/python}"
+elif command -v conda >/dev/null 2>&1; then
   eval "$(conda shell.bash hook)"
   conda activate "${CONDA_ENV_NAME}"
+  PYTHON_BIN="${PYTHON_BIN:-$(command -v python || true)}"
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="$(command -v python || true)"
+fi
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+  echo "Could not find python. Set ENV_PREFIX or PYTHON_BIN explicitly." >&2
+  exit 1
+fi
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  RESOLVED_PYTHON="$(command -v "${PYTHON_BIN}" || true)"
+  if [[ -z "${RESOLVED_PYTHON}" ]]; then
+    echo "Python executable is not available: ${PYTHON_BIN}" >&2
+    exit 1
+  fi
+  PYTHON_BIN="${RESOLVED_PYTHON}"
 fi
 
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
@@ -70,6 +97,8 @@ echo "logit_temperature=${LOGIT_TEMPERATURE}"
 echo "jump_eta=${ETA}"
 echo "fid_num_samples=${FID_NUM_SAMPLES}"
 echo "best_checkpoint_dir=${BEST_CHECKPOINT_DIR}"
+echo "env_prefix=${ENV_PREFIX}"
+echo "python_bin=${PYTHON_BIN}"
 
 "${PYTHON_BIN}" -m sticky.entrypoints.eval_checkpoint \
   experiment=sjd_cifar10 \
