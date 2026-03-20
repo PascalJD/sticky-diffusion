@@ -207,10 +207,13 @@ def main_train_loop(
     eval_mode = str(eval_cfg.get("mode", "fid_is")).lower()
 
     sudoku_every = 0
+    text_every = 0
     fid_every = 0
     is_every = 0
     if eval_enabled and eval_mode == "sudoku":
         sudoku_every = int(eval_cfg.get("sudoku_every", eval_every_steps))
+    elif eval_enabled and eval_mode == "text_basic":
+        text_every = int(eval_cfg.get("text_every", eval_every_steps))
     elif eval_enabled:
         fid_every = int(eval_cfg.get("fid_every", eval_every_steps))
         is_every = int(eval_cfg.get("is_every", fid_every))
@@ -220,13 +223,18 @@ def main_train_loop(
     is_batch_size = int(eval_cfg.get("is_batch_size", fid_batch_size))
     fid_prefix = str(eval_cfg.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg.get("log_at_step_zero", False))
-    eval_sample_needed = (
-        eval_enabled
-        and eval_mode != "sudoku"
-        and ((max(fid_every, is_every) > 0) or run_eval_at_end)
-    )
-    eval_sample_every = max(fid_every, is_every) if max(fid_every, is_every) > 0 else (1 if eval_sample_needed else 0)
-    eval_sample_batch_size = max(fid_batch_size, is_batch_size, 1)
+    if eval_mode == "text_basic":
+        eval_sample_needed = eval_enabled and ((text_every > 0) or run_eval_at_end)
+        eval_sample_every = text_every if text_every > 0 else (1 if eval_sample_needed else 0)
+        eval_sample_batch_size = max(1, int(eval_cfg.get("text_batch_size", num_log_images)))
+    else:
+        eval_sample_needed = (
+            eval_enabled
+            and eval_mode != "sudoku"
+            and ((max(fid_every, is_every) > 0) or run_eval_at_end)
+        )
+        eval_sample_every = max(fid_every, is_every) if max(fid_every, is_every) > 0 else (1 if eval_sample_needed else 0)
+        eval_sample_batch_size = max(fid_batch_size, is_batch_size, 1)
 
     fid_cache_dir = resolve_from_original_cwd(str(eval_cfg.get("fid_cache_dir", "data/fid_stats")))
     fid_tfds_data_dir = resolve_from_original_cwd(eval_cfg.get("fid_tfds_data_dir", None))
@@ -257,7 +265,11 @@ def main_train_loop(
         fid_tfds_data_dir=fid_tfds_data_dir,
         task=task,
         model=model,
-        eval_every=(sudoku_every if eval_mode == "sudoku" else max(fid_every, is_every)),
+        eval_every=(
+            sudoku_every
+            if eval_mode == "sudoku"
+            else (text_every if eval_mode == "text_basic" else max(fid_every, is_every))
+        ),
     )
 
     train_step_fn = make_train_step_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
@@ -281,7 +293,7 @@ def main_train_loop(
             t_fetch0 = time.perf_counter()
             batch = next(train_iter)
             t_fetch = time.perf_counter() - t_fetch0
-            gt_images = batch["image"][:num_log_images]
+            gt_images = batch["image"][:num_log_images] if task.spec.task_type == "image" else None
             batch = shard_batch(batch)
 
             t_step0 = time.perf_counter()
@@ -329,8 +341,13 @@ def main_train_loop(
             ):
                 metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
-            if (wandb_mod is not None) and (log_images_every_steps > 0) and (
+            if (
+                (task.spec.task_type == "image")
+                and (wandb_mod is not None)
+                and (log_images_every_steps > 0)
+                and (
                 step_i % log_images_every_steps == 0
+                )
             ):
                 state_s = unreplicate(state)
                 params = params_for_sampling(state_s)
@@ -357,6 +374,13 @@ def main_train_loop(
                     and (maybe_log_eval is not None)
                     and (sudoku_every > 0)
                     and (step_i % sudoku_every == 0)
+                )
+            elif eval_mode == "text_basic":
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (text_every > 0)
+                    and (step_i % text_every == 0)
                 )
             else:
                 eval_due = (
@@ -428,7 +452,7 @@ def main_train_loop(
             t_fetch0 = time.perf_counter()
             batch = next(train_iter)
             t_fetch = time.perf_counter() - t_fetch0
-            gt_images = batch["image"][:num_log_images]
+            gt_images = batch["image"][:num_log_images] if task.spec.task_type == "image" else None
             t_step0 = time.perf_counter()
             state, metrics = train_step_jit(state, batch)
             _ = jax.block_until_ready(metrics["train/loss"])
@@ -460,8 +484,13 @@ def main_train_loop(
             if (metrics_writer is not None) and metrics_writer.should_write(step_i):
                 metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
-            if (wandb_mod is not None) and (log_images_every_steps > 0) and (
+            if (
+                (task.spec.task_type == "image")
+                and (wandb_mod is not None)
+                and (log_images_every_steps > 0)
+                and (
                 step_i % log_images_every_steps == 0
+                )
             ):
                 params = params_for_sampling(state)
                 samples, sjd_sample_metrics = sample_for_logging(
@@ -487,6 +516,13 @@ def main_train_loop(
                     and (maybe_log_eval is not None)
                     and (sudoku_every > 0)
                     and (step_i % sudoku_every == 0)
+                )
+            elif eval_mode == "text_basic":
+                eval_due = (
+                    eval_enabled
+                    and (maybe_log_eval is not None)
+                    and (text_every > 0)
+                    and (step_i % text_every == 0)
                 )
             else:
                 eval_due = (

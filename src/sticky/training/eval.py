@@ -10,6 +10,7 @@ import numpy as np
 from omegaconf import DictConfig
 
 from sticky.training.logging import numpy_available, to_numpy
+from sticky.training.persistence import get_hydra_output_dir
 
 
 def resolve_from_original_cwd(path_like: Optional[str]) -> Optional[str]:
@@ -189,6 +190,84 @@ def build_eval_logger(
             log_at_step_zero=bool(fid_log_at_step_zero),
             sample_timesteps_override=sample_timesteps_override,
         )
+
+    if mode == "text_basic":
+        if sample_images_fid_jit is None:
+            return None
+
+        text_every = int(eval_cfg.get("text_every", eval_every))
+        text_num_samples = int(eval_cfg.get("text_num_samples", 16))
+        text_batch_size = int(eval_cfg.get("text_batch_size", max(1, text_num_samples)))
+        run_at_end = bool(eval_cfg.get("run_at_end", True))
+        if (text_every <= 0) and (not run_at_end):
+            return None
+
+        output_dir = get_hydra_output_dir()
+        output_prefix = str(eval_cfg.get("text_output_prefix", "text_samples"))
+
+        def maybe_eval(
+            step_i: int,
+            params_for_sampling,
+            *,
+            force_fid: bool = False,
+            force_is: bool = False,
+        ) -> Dict[str, float]:
+            del force_is
+            run_text = bool(force_fid) or _should_run_eval(
+                step_i=step_i,
+                every=text_every,
+                log_at_step_zero=fid_log_at_step_zero,
+            )
+            if not run_text:
+                return {}
+
+            num_samples = max(1, int(text_num_samples))
+            batch_size = max(1, int(text_batch_size))
+            lines: list[str] = []
+            base_rng = jax.random.fold_in(
+                jax.random.PRNGKey(int(cfg.training.seed) + 17_071),
+                int(step_i),
+            )
+
+            batch_idx = 0
+            while len(lines) < num_samples:
+                sample_rng = jax.random.fold_in(base_rng, batch_idx)
+                samples = sample_images_fid_jit(params_for_sampling, sample_rng)
+                sample_np = np.asarray(to_numpy(jax.block_until_ready(samples)))
+                remaining = num_samples - len(lines)
+                sample_np = sample_np[: min(remaining, batch_size)]
+
+                formatter = getattr(task, "format_samples_for_logging", None)
+                if callable(formatter):
+                    rendered = formatter(sample_np)
+                else:
+                    rendered = None
+
+                if rendered is None:
+                    decoded = task.decode(jnp.asarray(sample_np)) if task is not None else sample_np
+                    decoded_np = np.asarray(to_numpy(decoded))
+                    if decoded_np.ndim == 1:
+                        decoded_np = decoded_np[None, :]
+                    rendered = [
+                        " ".join(str(int(tok)) for tok in row.reshape(-1))
+                        for row in decoded_np
+                    ]
+
+                lines.extend(rendered)
+                batch_idx += 1
+
+            out_path = output_dir / f"{output_prefix}_step_{int(step_i):07d}.txt"
+            out_path.write_text(
+                "\n".join(lines[:num_samples]) + "\n",
+                encoding="utf-8",
+            )
+            print(
+                f"[eval] Wrote {num_samples} text samples to {out_path}",
+                flush=True,
+            )
+            return {f"{fid_prefix}/text_samples_written": float(num_samples)}
+
+        return maybe_eval
 
     if sample_images_fid_jit is None:
         return None

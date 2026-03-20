@@ -13,6 +13,7 @@ from sticky.models.architectures.factory import (
 )
 from sticky.models.discrete_mixture import sample_mixture_categorical
 from sticky.models.architectures.networks.conditioning import CondEmbedding
+from sticky.models import masked_discrete_core as masked_core
 from sticky.models.md4 import utils as md4_utils
 
 
@@ -33,19 +34,18 @@ class ClippedSchedule(nn.Module):
     eps: float = 1e-4
 
     def _base(self, t: Array) -> Array:
-        key = str(self.schedule_fn_type)
-        if key == "linear":
-            return 1.0 - t
-        if key == "cosine":
-            # Matches the MD4 cosine schedule shape: alpha(0)=1, alpha(1)=0.
-            return 1.0 - jnp.cos(math.pi / 2.0 * (1.0 - t))
-        if key.startswith("poly"):
-            exponent = float(key.replace("poly", ""))
-            return 1.0 - t**exponent
-        raise NotImplementedError(f"Unknown schedule_fn_type={self.schedule_fn_type!r}")
+        return masked_core.clipped_schedule_alpha(
+            t,
+            schedule_fn_type=self.schedule_fn_type,
+            eps=0.0,
+        )
 
     def __call__(self, t: Array) -> Array:
-        return (1.0 - 2.0 * float(self.eps)) * self._base(t) + float(self.eps)
+        return masked_core.clipped_schedule_alpha(
+            t,
+            schedule_fn_type=self.schedule_fn_type,
+            eps=self.eps,
+        )
 
 
 class TokenEmbedding(nn.Module):
@@ -218,7 +218,7 @@ class CADD(nn.Module):
 
     @property
     def mask_token_id(self) -> int:
-        return int(self.vocab_size)
+        return masked_core.mask_token_id(self.vocab_size)
 
     # ------------------------- Conditioning helpers -------------------------
 
@@ -271,13 +271,16 @@ class CADD(nn.Module):
 
     def forward_sample_discrete(self, x0: Array, t: Array) -> Array:
         """Sample x_t from the absorbing masking process."""
-        t_b = md4_utils.reverse_broadcast(t, x0.ndim)
-        keep_prob = self.alpha(t_b)
-        un_mask = jax.random.bernoulli(self.make_rng("sample"), keep_prob, x0.shape)
-        return jnp.where(un_mask, x0, self.mask_token_id).astype(jnp.int32)
+        keep_prob = self.alpha(masked_core.reverse_broadcast(t, x0.ndim))
+        return masked_core.sample_masked_discrete_forward(
+            self.make_rng("sample"),
+            x0,
+            keep_prob=keep_prob,
+            mask_token_id=self.mask_token_id,
+        )
 
     def _continuous_gamma_bar(self, t: Array, *, target_ndim: int) -> Array:
-        gbar = self.gamma_bar(md4_utils.reverse_broadcast(jnp.asarray(t), target_ndim))
+        gbar = self.gamma_bar(masked_core.reverse_broadcast(jnp.asarray(t), target_ndim))
         gbar = jnp.clip(gbar, a_min=0.0, a_max=1.0)
         return gbar[..., None]
 
@@ -343,18 +346,8 @@ class CADD(nn.Module):
 
     def _cross_entropy_on_masked(self, *, logits: Array, x0: Array, x_t: Array) -> tuple[Array, dict[str, Array]]:
         """Compute -log p(x0 | x_t, z_t) restricted to masked positions."""
-        log_p = jax.nn.log_softmax(logits, axis=-1)
-        # Gather log-prob for the true token at each position.
-        x0_gather = jnp.expand_dims(x0, axis=-1)
-        lp_true = jnp.take_along_axis(log_p, x0_gather, axis=-1)[..., 0]
-        neg_logp = -lp_true
-
-        mask = (x_t == self.mask_token_id).astype(jnp.float32)
-        loss_pos = neg_logp * mask
-
-        # Sum over all token positions.
-        sum_axes = tuple(range(1, x0.ndim))
-        per_ex = jnp.sum(loss_pos, axis=sum_axes)
+        mask = masked_core.masked_positions(x_t, mask_token_id=self.mask_token_id)
+        per_ex = masked_core.masked_cross_entropy_sums(logits, x0, mask=mask)
         loss = jnp.mean(per_ex)
 
         metrics = {
@@ -399,12 +392,11 @@ class CADD(nn.Module):
 
     def get_sampling_grid(self, i: int, timesteps: int) -> tuple[Array, Array]:
         """Return (s, t) with t decreasing from ~1 to ~0."""
-        t = (timesteps - i) / timesteps
-        s = t - 1.0 / timesteps
-        if self.sampling_grid == "cosine":
-            t = jnp.cos(math.pi / 2.0 * (1.0 - t))
-            s = jnp.cos(math.pi / 2.0 * (1.0 - s))
-        return s, t
+        return masked_core.make_sampling_time_pair(
+            i,
+            timesteps,
+            sampling_grid=self.sampling_grid,
+        )
 
     def temperature(self, t: Array) -> Array:
         if self.temperature_schedule == "constant":
@@ -420,7 +412,11 @@ class CADD(nn.Module):
 
     def prior_sample(self, batch_size: int) -> tuple[Array, Array]:
         """Sample the CADD prior: x_T=mask, z_T~N(0,I)."""
-        x = self.mask_token_id * jnp.ones((batch_size,) + tuple(self.data_shape), dtype=jnp.int32)
+        x = masked_core.make_masked_token_prior(
+            batch_size=batch_size,
+            data_shape=self.data_shape,
+            vocab_size=self.vocab_size,
+        )
         latent_shape = (batch_size,) + tuple(self.data_shape) + (int(self.feature_dim),)
         if int(self.K) > 1:
             latent_shape = (int(self.K),) + latent_shape
@@ -650,7 +646,11 @@ class CADD(nn.Module):
             self.mask_token_id,
             sampled,
         ).astype(jnp.int32)
-        x_s = jnp.where(x_t == self.mask_token_id, masked_proposal, x_t).astype(jnp.int32)
+        x_s = masked_core.carry_over_unmasked(
+            x_t,
+            masked_proposal,
+            mask_token_id=self.mask_token_id,
+        )
 
         # Continuous latent update for positions that remain masked.
         stay_mask = x_s == self.mask_token_id

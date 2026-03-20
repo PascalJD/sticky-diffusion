@@ -41,6 +41,26 @@ def build_task(cfg: DictConfig):
             augment_eval=aug_eval,
         )
 
+    if name == "openwebtext_discrete":
+        from sticky.tasks.openwebtext_discrete import OpenWebTextDiscreteTask
+
+        return OpenWebTextDiscreteTask(
+            task_name=name,
+            train_tokens_path=str(cfg.dataset.get("train_tokens_path")),
+            eval_tokens_path=_optional_str(cfg.dataset.get("eval_tokens_path", None)),
+            batch_size=int(cfg.dataset.get("batch_size")),
+            eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+            seq_len=int(cfg.dataset.get("seq_len")),
+            vocab_size=int(cfg.dataset.get("vocab_size")),
+            tokenizer_name=_optional_str(cfg.dataset.get("tokenizer_name", None)),
+            num_classes=int(cfg.dataset.get("num_classes", -1)),
+            drop_remainder=bool(cfg.dataset.get("drop_remainder", True)),
+            shuffle=bool(cfg.dataset.get("shuffle", True)),
+            mmap=bool(cfg.dataset.get("mmap", True)),
+            max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
+            max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
+        )
+
     if name == "sjd_cifar10":
         from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 

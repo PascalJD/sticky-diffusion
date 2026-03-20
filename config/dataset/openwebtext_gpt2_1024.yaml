@@ -1,0 +1,23 @@
+# Pretokenized OpenWebText chunks for fixed-length GPT-2 context training.
+name: openwebtext_gpt2_1024
+
+train_tokens_path: data/openwebtext/openwebtext_gpt2_1024_train.npy
+eval_tokens_path: data/openwebtext/openwebtext_gpt2_1024_eval.npy
+
+batch_size: 256
+eval_batch_size: 256
+per_device_batch_size: -1
+
+seq_len: 1024
+data_shape:
+  - 1024
+vocab_size: 50257
+num_classes: -1
+tokenizer_name: gpt2
+
+drop_remainder: true
+shuffle: true
+mmap: true
+
+max_train_examples: -1
+max_eval_examples: -1

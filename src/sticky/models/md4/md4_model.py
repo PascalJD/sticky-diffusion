@@ -30,6 +30,7 @@ from sticky.models.discrete_mixture import (
     categorical_sample_from_probs,
     sample_mixture_categorical,
 )
+from sticky.models import masked_discrete_core as masked_core
 
 from . import binary_search
 from . import utils
@@ -49,36 +50,46 @@ class MaskingSchedule(nn.Module):
   eps: float = 1e-4
 
   def __call__(self, t: Array) -> Array:
-    return jnp.log(self.alpha(t) / (1.0 - self.alpha(t)))
+    return masked_core.masked_logit_schedule(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=self.eps,
+    )
 
   def _dalpha(self, t: Array) -> Array:
-    if self.schedule_fn_type == "cosine":
-      return -math.pi / 2.0 * jax.lax.sin(math.pi / 2.0 * (1.0 - t))
-    if self.schedule_fn_type == "linear":
-      return -jnp.ones_like(t)
-    if "poly" in self.schedule_fn_type:
-      exponent = float(self.schedule_fn_type.replace("poly", ""))
-      return -exponent * t ** (exponent - 1.0)
-    raise NotImplementedError(f"Unknown schedule_fn_type={self.schedule_fn_type}")
+    return masked_core.clipped_schedule_dalpha(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=0.0,
+    )
 
   def dalpha(self, t: Array) -> Array:
-    return (1.0 - 2 * self.eps) * self._dalpha(t)
+    return masked_core.clipped_schedule_dalpha(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=self.eps,
+    )
 
   def _alpha(self, t: Array) -> Array:
-    if self.schedule_fn_type == "linear":
-      return 1.0 - t
-    if "poly" in self.schedule_fn_type:
-      exponent = float(self.schedule_fn_type.replace("poly", ""))
-      return 1.0 - t**exponent
-    if self.schedule_fn_type == "cosine":
-      return 1.0 - jax.lax.cos(math.pi / 2.0 * (1.0 - t))
-    raise NotImplementedError(f"Unknown schedule_fn_type={self.schedule_fn_type}")
+    return masked_core.clipped_schedule_alpha(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=0.0,
+    )
 
   def alpha(self, t: Array) -> Array:
-    return (1.0 - 2 * self.eps) * self._alpha(t) + self.eps
+    return masked_core.clipped_schedule_alpha(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=self.eps,
+    )
 
   def dgamma_times_alpha(self, t: Array) -> Array:
-    return self.dalpha(t) / (1.0 - self.alpha(t))
+    return masked_core.masked_dgamma_times_alpha(
+        t,
+        schedule_fn_type=self.schedule_fn_type,
+        eps=self.eps,
+    )
 
 
 class MD4(nn.Module):
@@ -157,16 +168,27 @@ class MD4(nn.Module):
         adm_use_new_attention_order=self.adm_use_new_attention_order,
     )
 
+  @property
+  def mask_token_id(self) -> int:
+    return masked_core.mask_token_id(self.vocab_size)
+
   # Forward (noising) process
 
   def forward_sample(self, x: Array, t: Array) -> Array:
-    t = utils.reverse_broadcast(t, x.ndim)
-    a = self.noise_schedule.alpha(t)
-    un_mask = jax.random.bernoulli(self.make_rng("sample"), a, x.shape)
-    return jnp.where(un_mask, x, self.vocab_size)
+    keep_prob = self.noise_schedule.alpha(masked_core.reverse_broadcast(t, x.ndim))
+    return masked_core.sample_masked_discrete_forward(
+        self.make_rng("sample"),
+        x,
+        keep_prob=keep_prob,
+        mask_token_id=self.mask_token_id,
+    )
 
   def prior_sample(self, batch_size: int) -> Array:
-    return self.vocab_size * jnp.ones([batch_size] + list(self.data_shape), dtype=jnp.int32)
+    return masked_core.make_masked_token_prior(
+        batch_size=batch_size,
+        data_shape=self.data_shape,
+        vocab_size=self.vocab_size,
+    )
 
   # Conditioning helpers
 
@@ -183,7 +205,7 @@ class MD4(nn.Module):
 
   def decode(self, z0: Array, *, conditioning: Array | None = None) -> Array:
     """Map tokens to final tokens (replace any remaining mask tokens)."""
-    masked = z0 == self.vocab_size
+    masked = z0 == self.mask_token_id
     z0_clipped = jnp.where(masked, jnp.zeros_like(z0), z0)
 
     cond = self.get_cond_embedding(conditioning)
@@ -209,16 +231,8 @@ class MD4(nn.Module):
     zt = self.forward_sample(x, t)
     logits, _ = self.predict_x(zt, t, cond=cond, train=train)
 
-    log_p = jax.nn.log_softmax(logits, axis=-1)
-    one_hot_x = jax.nn.one_hot(x, self.vocab_size)
-
-    neg_cross_ent = one_hot_x * log_p
-    neg_cross_ent = jnp.where(one_hot_x, neg_cross_ent, 0.0)
-    neg_cross_ent = jnp.sum(neg_cross_ent, axis=-1)
-
-    mask = (zt == self.vocab_size).astype(jnp.float32)
-    remaining_axis = list(range(x.ndim)[1:])
-    masked_neg_cross_ent = jnp.sum(mask * neg_cross_ent, axis=remaining_axis)
+    mask = masked_core.masked_positions(zt, mask_token_id=self.mask_token_id)
+    masked_neg_cross_ent = masked_core.masked_logprob_sums(logits, x, mask=mask)
 
     if not self.cont_time:
       s = t - (1.0 / self.timesteps)
@@ -261,12 +275,11 @@ class MD4(nn.Module):
   # Sampling utilities
 
   def get_sampling_grid(self, i: int, timesteps: int) -> tuple[Array, Array]:
-    t = (timesteps - i) / timesteps
-    s = t - 1.0 / timesteps
-    if self.sampling_grid == "cosine":
-      t = jnp.cos(math.pi / 2.0 * (1.0 - t))
-      s = jnp.cos(math.pi / 2.0 * (1.0 - s))
-    return s, t
+    return masked_core.make_sampling_time_pair(
+        i,
+        timesteps,
+        sampling_grid=self.sampling_grid,
+    )
 
   def ancestral_sample_step(self, rng: Array, i: int, timesteps: int, zt: Array, *, conditioning: Array | None = None) -> Array:
     rng_body = jax.random.fold_in(rng, i)
@@ -286,9 +299,12 @@ class MD4(nn.Module):
         stay_prob=1.0 - unmask_prob,
         change_prob=unmask_prob,
     )
-    sampled = jnp.where(keep_mask, self.vocab_size, to_unmask).astype(jnp.int32)
-    is_mask = zt == self.vocab_size
-    return jnp.where(is_mask, sampled, zt)
+    sampled = jnp.where(keep_mask, self.mask_token_id, to_unmask).astype(jnp.int32)
+    return masked_core.carry_over_unmasked(
+        zt,
+        sampled,
+        mask_token_id=self.mask_token_id,
+    )
 
   def topp_sample_step(
       self,
@@ -344,10 +360,12 @@ class MD4(nn.Module):
 
     rng_body, _ = jax.random.split(rng)
     unmask = jax.random.bernoulli(rng_body, unmask_prob, zt.shape)
-
-    to_unmask = jnp.where(unmask, z0, zt)
-    is_mask = zt == self.vocab_size
-    return jnp.where(is_mask, to_unmask, zt)
+    proposal = jnp.where(unmask, z0, self.mask_token_id).astype(jnp.int32)
+    return masked_core.carry_over_unmasked(
+        zt,
+        proposal,
+        mask_token_id=self.mask_token_id,
+    )
 
   def sample_step(
       self,

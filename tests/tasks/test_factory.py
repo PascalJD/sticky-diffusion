@@ -19,6 +19,11 @@ class _DummySJDTask:
         self.kwargs = kwargs
 
 
+class _DummyOpenWebTextTask:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -113,3 +118,44 @@ def test_build_task_accepts_canonical_sjd_name(monkeypatch):
     assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 3.0}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched"}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["state_dep_log_ratio_clip"] == 7.0
+
+
+def test_build_task_accepts_openwebtext_discrete_name(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.openwebtext_discrete",
+        SimpleNamespace(OpenWebTextDiscreteTask=_DummyOpenWebTextTask),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "openwebtext_discrete"},
+            "dataset": {
+                "train_tokens_path": "/tmp/owt_train.npy",
+                "eval_tokens_path": "/tmp/owt_eval.npz",
+                "batch_size": 32,
+                "eval_batch_size": 16,
+                "seq_len": 1024,
+                "vocab_size": 50257,
+                "tokenizer_name": "gpt2",
+                "num_classes": -1,
+                "drop_remainder": True,
+                "shuffle": True,
+                "mmap": True,
+                "max_train_examples": 128,
+                "max_eval_examples": 64,
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummyOpenWebTextTask)
+    assert task.kwargs["task_name"] == "openwebtext_discrete"
+    assert task.kwargs["train_tokens_path"] == "/tmp/owt_train.npy"
+    assert task.kwargs["eval_tokens_path"] == "/tmp/owt_eval.npz"
+    assert task.kwargs["batch_size"] == 32
+    assert task.kwargs["eval_batch_size"] == 16
+    assert task.kwargs["seq_len"] == 1024
+    assert task.kwargs["vocab_size"] == 50257
+    assert task.kwargs["tokenizer_name"] == "gpt2"

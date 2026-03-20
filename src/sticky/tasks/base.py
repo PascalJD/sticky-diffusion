@@ -45,3 +45,7 @@ class Task:
     def decode(self, x: Array) -> Array:
         """TODO: Convert model samples to uint8 images etc."""
         return x
+
+    def format_samples_for_logging(self, x: Array) -> list[str] | None:
+        """Optional text/task-specific rendering for generated samples."""
+        return None
