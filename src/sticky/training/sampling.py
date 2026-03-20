@@ -44,6 +44,59 @@ def build_sampling_fns(
                     lambda p, r: _sample_images_md4(p, r, fid_batch_size)
                 )
 
+    elif str(cfg.model.name) == "mdlm":
+        from sticky.models.mdlm import sampling as mdlm_sampling
+
+        def _sample_images_mdlm(params, rng, batch_size: int):
+            sample_state = {"params": params, "ema_params": None}
+            return mdlm_sampling.simple_generate(
+                rng,
+                sample_state,
+                model=model,
+                batch_size=batch_size,
+                timesteps=sample_timesteps,
+                conditioning=None,
+                use_ema=False,
+            )
+
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_mdlm(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(
+                    lambda p, r: _sample_images_mdlm(p, r, fid_batch_size)
+                )
+
+    elif str(cfg.model.name) == "d3pm":
+        from sticky.models.d3pm import sampling as d3pm_sampling
+
+        d3pm_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
+        d3pm_sampling.validate_sampling_grid(model=model)
+
+        def _sample_images_d3pm(params, rng, batch_size: int):
+            sample_state = {"params": params, "ema_params": None}
+            return d3pm_sampling.simple_generate(
+                rng,
+                sample_state,
+                model=model,
+                batch_size=batch_size,
+                timesteps=sample_timesteps,
+                conditioning=None,
+                use_ema=False,
+            )
+
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_d3pm(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(
+                    lambda p, r: _sample_images_d3pm(p, r, fid_batch_size)
+                )
+
     elif str(cfg.model.name) == "cadd":
         from sticky.models.cadd import sampling as cadd_sampling
 
@@ -117,6 +170,9 @@ def build_sampling_fns(
                     "logit_temperature",
                     cfg.sampler.get("temperature", 1.0),
                 )
+            ),
+            categorical_sampling_policy=str(
+                cfg.sampler.get("categorical_sampling_policy", "legacy_low")
             ),
             hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
             alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),

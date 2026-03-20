@@ -26,7 +26,11 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from sticky.models.discrete_mixture import sample_mixture_categorical
+from sticky.models.discrete_mixture import (
+    categorical_sample_from_logits,
+    sample_mixture_categorical,
+)
+from sticky.rng import PRNGKey
 
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
@@ -47,6 +51,7 @@ class SamplerConfig:
     score_scale: float = 1.0
     logit_temperature: float = 1.0
     alloc_mode: str = "sample"  # "argmax" | "sample"
+    categorical_sampling_policy: str = "legacy_low"  # legacy_low | jax_high | exact
     hazard_mode: str = "plugin"
     intensity_mode: str = "full"  # Only "full" is implemented; "chunked" is a deprecated alias.
     log_ratio_clip: float = 10.0
@@ -103,7 +108,7 @@ def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Ar
 
 
 def reverse_sample(
-    key: jax.random.PRNGKey,
+    key: PRNGKey,
     *,
     params: Any,
     apply_model: Callable[[Any, Array, Array], Tuple[Array, Any]],
@@ -272,6 +277,7 @@ def reverse_sample(
                 hazard=hazard,
                 jump=jump,
                 alloc_mode=cfg.alloc_mode,
+                categorical_sampling_policy=cfg.categorical_sampling_policy,
                 logit_temperature=float(cfg.logit_temperature),
                 intensity_mode=cfg.intensity_mode,
                 log_ratio_clip=float(cfg.log_ratio_clip),
@@ -308,6 +314,7 @@ def reverse_sample(
                 destination_probs=choice_probs,
                 stay_prob=1.0 - p_jump_sample,
                 change_prob=p_jump_sample,
+                policy=cfg.categorical_sampling_policy,
             )
             jump_mask = (~committed) & (~stay_mask)
         else:
@@ -377,7 +384,11 @@ def reverse_sample(
         logits_end, _ = apply_model(params, y, t0)
         key, k_end = jax.random.split(key)
         if cfg.alloc_mode == "sample":
-            k_fill = jax.random.categorical(k_end, logits_end, axis=-1).astype(jnp.int32)
+            k_fill = categorical_sample_from_logits(
+                k_end,
+                logits_end,
+                policy=cfg.categorical_sampling_policy,
+            )
         else:
             k_fill = jnp.argmax(logits_end, axis=-1).astype(jnp.int32)
         k_filled = jnp.where(committed, k_idx, k_fill)

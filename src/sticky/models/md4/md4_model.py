@@ -27,7 +27,7 @@ import jax.numpy as jnp
 
 from sticky.models.architectures import DiscreteClassifier
 from sticky.models.discrete_mixture import (
-    categorical_sample_from_probs,
+    categorical_sample_from_logits,
     sample_mixture_categorical,
 )
 from sticky.models import masked_discrete_core as masked_core
@@ -36,11 +36,6 @@ from . import binary_search
 from . import utils
 
 Array = jnp.ndarray
-
-
-def _categorical_sample_from_probs(rng: Array, probs: Array) -> Array:
-  """Sample categorical indices from probability tensor [..., K]."""
-  return categorical_sample_from_probs(rng, probs)
 
 
 class MaskingSchedule(nn.Module):
@@ -130,6 +125,7 @@ class MD4(nn.Module):
   sampler: str = "ancestral"  # ancestral, mean (legacy JAX-unsafe), topp
   sampling_grid: str = "cosine"  # uniform, cosine
   topp: float = 0.98
+  categorical_sampling_policy: str = "legacy_low"  # legacy_low, jax_high, exact
   model_sharding: bool = False
 
   def setup(self):
@@ -290,14 +286,14 @@ class MD4(nn.Module):
     alpha_s = self.noise_schedule.alpha(s)
 
     logits, _ = self.predict_x(zt, t, cond=cond, train=False)
-    mean_preds = jax.nn.softmax(logits, axis=-1)
 
     unmask_prob = (alpha_s - alpha_t) / (1 - alpha_t)
     to_unmask, keep_mask = sample_mixture_categorical(
         rng_body,
-        destination_probs=mean_preds,
+        destination_logits=logits,
         stay_prob=1.0 - unmask_prob,
         change_prob=unmask_prob,
+        policy=self.categorical_sampling_policy,
     )
     sampled = jnp.where(keep_mask, self.mask_token_id, to_unmask).astype(jnp.int32)
     return masked_core.carry_over_unmasked(
@@ -325,14 +321,14 @@ class MD4(nn.Module):
 
     logits, _ = self.predict_x(zt, t, cond=cond, train=False)
     logits = binary_search.topp_mask(logits, topp, replace_val=jnp.array(-1e7))
-    mean_preds = jax.nn.softmax(logits, axis=-1)
 
     unmask_prob = (alpha_s - alpha_t) / (1 - alpha_t)
     to_unmask, keep_mask = sample_mixture_categorical(
         rng_body,
-        destination_probs=mean_preds,
+        destination_logits=logits,
         stay_prob=1.0 - unmask_prob,
         change_prob=unmask_prob,
+        policy=self.categorical_sampling_policy,
     )
     sampled = jnp.where(keep_mask, self.vocab_size, to_unmask).astype(jnp.int32)
     is_mask = zt == self.vocab_size
@@ -356,7 +352,11 @@ class MD4(nn.Module):
     unmask_prob = (alpha_s - alpha_t) / (1 - alpha_t)
 
     rng_body, rng = jax.random.split(rng_body)
-    z0 = jax.random.categorical(rng_body, logits, axis=-1).astype(jnp.int32)
+    z0 = categorical_sample_from_logits(
+        rng_body,
+        logits,
+        policy=self.categorical_sampling_policy,
+    )
 
     rng_body, _ = jax.random.split(rng)
     unmask = jax.random.bernoulli(rng_body, unmask_prob, zt.shape)

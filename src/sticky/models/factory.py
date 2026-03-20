@@ -50,7 +50,131 @@ def build_model(
             sampler=str(sampler_cfg.get("method", sampler_cfg.get("sampler", cfg.model.get("sampler", "ancestral")))),
             sampling_grid=str(sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "cosine"))),
             topp=float(sampler_cfg.get("topp", cfg.model.get("topp", 0.98))),
+            categorical_sampling_policy=str(
+                sampler_cfg.get(
+                    "categorical_sampling_policy",
+                    cfg.model.get("categorical_sampling_policy", "legacy_low"),
+                )
+            ),
             model_sharding=bool(cfg.model.model_sharding),
+        )
+
+    if name == "mdlm":
+        from sticky.models.mdlm.mdlm_model import MDLM
+
+        return MDLM(
+            data_shape=data_shape,
+            cont_time=bool(cfg.model.cont_time),
+            timesteps=int(cfg.model.timesteps),
+            feature_dim=int(cfg.model.feature_dim),
+            num_heads=int(cfg.model.num_heads),
+            antithetic_time_sampling=bool(cfg.model.antithetic_time_sampling),
+            n_layers=int(cfg.model.n_layers),
+            n_dit_layers=int(cfg.model.n_dit_layers),
+            dit_num_heads=int(cfg.model.dit_num_heads),
+            dit_hidden_size=int(cfg.model.dit_hidden_size),
+            ch_mult=tuple(cfg.model.ch_mult),
+            vocab_size=vocab_size,
+            noise_schedule_type=str(cfg.model.noise_schedule_type),
+            dropout_rate=float(cfg.model.dropout_rate),
+            use_attn_dropout=bool(cfg.model.use_attn_dropout),
+            mlp_type=str(cfg.model.mlp_type),
+            depth_scaled_init=bool(cfg.model.depth_scaled_init),
+            cond_type=str(cfg.model.cond_type),
+            outside_embed=bool(cfg.model.outside_embed),
+            sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+            image_backbone=str(cfg.model.get("image_backbone", "adm_unet5d")),
+            adm_num_res_blocks=int(cfg.model.get("adm_num_res_blocks", 2)),
+            adm_attention_resolutions=tuple(cfg.model.get("adm_attention_resolutions", (2, 4, 8))),
+            adm_num_heads=int(cfg.model.get("adm_num_heads", 4)),
+            adm_num_head_channels=int(cfg.model.get("adm_num_head_channels", -1)),
+            adm_num_heads_upsample=int(cfg.model.get("adm_num_heads_upsample", -1)),
+            adm_conv_resample=bool(cfg.model.get("adm_conv_resample", True)),
+            adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
+            adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
+            adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
+            time_features=str(cfg.model.time_features),
+            classes=int(cfg.model.classes),
+            sampler=str(sampler_cfg.get("method", sampler_cfg.get("sampler", cfg.model.get("sampler", "ancestral")))),
+            sampling_grid=str(sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "cosine"))),
+            topp=float(sampler_cfg.get("topp", cfg.model.get("topp", 0.98))),
+            categorical_sampling_policy=str(
+                sampler_cfg.get(
+                    "categorical_sampling_policy",
+                    cfg.model.get("categorical_sampling_policy", "legacy_low"),
+                )
+            ),
+            cache_predictions=bool(
+                sampler_cfg.get(
+                    "cache_predictions",
+                    cfg.model.get("cache_predictions", False),
+                )
+            ),
+            model_sharding=bool(cfg.model.model_sharding),
+        )
+
+    if name == "d3pm":
+        from sticky.models.d3pm.d3pm_model import D3PM
+
+        return D3PM(
+            data_shape=data_shape,
+            timesteps=int(cfg.model.get("timesteps", 256)),
+            transition_type=str(cfg.model.get("transition_type", "gaussian")),
+            transition_beta_schedule=str(
+                cfg.model.get("transition_beta_schedule", "linear")
+            ),
+            beta_start=float(cfg.model.get("beta_start", 1e-4)),
+            beta_end=float(cfg.model.get("beta_end", 2e-2)),
+            cosine_s=float(cfg.model.get("cosine_s", 0.008)),
+            max_beta=float(cfg.model.get("max_beta", 0.999)),
+            auxiliary_loss_weight=float(cfg.model.get("auxiliary_loss_weight", 1e-3)),
+            absorbing_state=int(cfg.model.get("absorbing_state", 128)),
+            feature_dim=int(cfg.model.get("feature_dim", 96)),
+            num_heads=int(cfg.model.get("num_heads", 12)),
+            antithetic_time_sampling=bool(cfg.model.get("antithetic_time_sampling", True)),
+            n_layers=int(cfg.model.get("n_layers", 32)),
+            n_dit_layers=int(cfg.model.get("n_dit_layers", 0)),
+            dit_num_heads=int(cfg.model.get("dit_num_heads", 12)),
+            dit_hidden_size=int(cfg.model.get("dit_hidden_size", 768)),
+            ch_mult=tuple(cfg.model.get("ch_mult", (3, 4, 4))),
+            vocab_size=vocab_size,
+            dropout_rate=float(cfg.model.get("dropout_rate", 0.1)),
+            use_attn_dropout=bool(cfg.model.get("use_attn_dropout", True)),
+            mlp_type=str(cfg.model.get("mlp_type", "swiglu")),
+            depth_scaled_init=bool(cfg.model.get("depth_scaled_init", True)),
+            cond_type=str(cfg.model.get("cond_type", "adaln_zero")),
+            outside_embed=bool(cfg.model.get("outside_embed", False)),
+            sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+            image_backbone=str(cfg.model.get("image_backbone", "adm_unet5d")),
+            adm_num_res_blocks=int(cfg.model.get("adm_num_res_blocks", 4)),
+            adm_attention_resolutions=tuple(cfg.model.get("adm_attention_resolutions", (2, 4))),
+            adm_num_heads=int(cfg.model.get("adm_num_heads", 4)),
+            adm_num_head_channels=int(cfg.model.get("adm_num_head_channels", 64)),
+            adm_num_heads_upsample=int(cfg.model.get("adm_num_heads_upsample", -1)),
+            adm_conv_resample=bool(cfg.model.get("adm_conv_resample", True)),
+            adm_use_scale_shift_norm=bool(cfg.model.get("adm_use_scale_shift_norm", True)),
+            adm_resblock_updown=bool(cfg.model.get("adm_resblock_updown", False)),
+            adm_use_conv_skip=bool(cfg.model.get("adm_use_conv_skip", False)),
+            adm_use_new_attention_order=bool(cfg.model.get("adm_use_new_attention_order", False)),
+            time_features=str(cfg.model.get("time_features", "t")),
+            classes=int(cfg.model.get("classes", -1)),
+            sampler=str(
+                sampler_cfg.get(
+                    "method",
+                    sampler_cfg.get("sampler", cfg.model.get("sampler", "ancestral")),
+                )
+            ),
+            sampling_grid=str(
+                sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "uniform"))
+            ),
+            categorical_sampling_policy=str(
+                sampler_cfg.get(
+                    "categorical_sampling_policy",
+                    cfg.model.get("categorical_sampling_policy", "legacy_low"),
+                )
+            ),
+            model_sharding=bool(cfg.model.get("model_sharding", False)),
         )
 
     if name == "sjd":
@@ -161,6 +285,12 @@ def build_model(
             K=int(sampler_cfg.get("K", cfg.model.get("K", 1))),
             force_decode_at_end=bool(
                 sampler_cfg.get("force_decode_at_end", cfg.model.get("force_decode_at_end", True))
+            ),
+            categorical_sampling_policy=str(
+                sampler_cfg.get(
+                    "categorical_sampling_policy",
+                    cfg.model.get("categorical_sampling_policy", "legacy_low"),
+                )
             ),
 
             corrector_enabled=bool(

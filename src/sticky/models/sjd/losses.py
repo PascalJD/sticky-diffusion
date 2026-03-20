@@ -5,6 +5,8 @@ from typing import Callable, Dict, Optional, Tuple
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import PRNGKey
+
 from .sdes import vp_perturb
 from .state_dependency import state_dependency_metrics
 
@@ -13,7 +15,7 @@ Metrics = Dict[str, Array]
 
 
 def ce_allocation_loss(
-    key: jax.random.PRNGKey,
+    key: PRNGKey,
     params,
     apply_fn: Callable[[object, Array, Array], Tuple[Array, dict]],
     x0_anchor: Array,

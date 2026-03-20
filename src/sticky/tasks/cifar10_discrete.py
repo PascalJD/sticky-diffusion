@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from sticky.data.cifar10_discrete import make_cifar10_iterator
+from sticky.rng import PRNGKey
 from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
 
 
@@ -77,7 +78,7 @@ class CIFAR10DiscreteTask(Task):
     def loss_fn(
         self,
         *,
-        rng: jax.random.PRNGKey,
+        rng: PRNGKey,
         model,
         params,
         batch: Batch,

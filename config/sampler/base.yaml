@@ -1,2 +1,11 @@
 # Shared sampler defaults for CIFAR image experiments.
 n_steps: ${..model.timesteps}
+
+# Default to legacy_low because MD4 Appendix G reports better sample quality
+# from the one-shot mixture sampler under JAX's low-range categorical behavior,
+# which implicitly truncates tiny probabilities.
+# Categorical sampling policy:
+# - legacy_low: better-performing MD4 Appendix G behavior and current default.
+# - jax_high: explicit higher-range Gumbel sampling, at about 2x categorical cost.
+# - exact: log-space inverse-CDF sampling with exact zeros and better tiny-mass behavior.
+categorical_sampling_policy: legacy_low

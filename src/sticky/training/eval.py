@@ -9,6 +9,7 @@ import jax
 import numpy as np
 from omegaconf import DictConfig
 
+from sticky.rng import make_rng
 from sticky.training.logging import numpy_available, to_numpy
 from sticky.training.persistence import get_hydra_output_dir
 
@@ -33,7 +34,7 @@ def sample_for_logging(
         return None, None
 
     sample_rng = jax.random.fold_in(
-        jax.random.PRNGKey(int(cfg.training.seed) + 999), step
+        make_rng(int(cfg.training.seed) + 999), step
     )
     out = sample_images_jit(params_for_sampling, sample_rng)
 
@@ -225,7 +226,7 @@ def build_eval_logger(
             batch_size = max(1, int(text_batch_size))
             lines: list[str] = []
             base_rng = jax.random.fold_in(
-                jax.random.PRNGKey(int(cfg.training.seed) + 17_071),
+                make_rng(int(cfg.training.seed) + 17_071),
                 int(step_i),
             )
 
@@ -347,7 +348,7 @@ def build_eval_logger(
                 )
 
         base_rng = jax.random.fold_in(
-            jax.random.PRNGKey(int(cfg.training.seed) + 12345), step_i
+            make_rng(int(cfg.training.seed) + 12345), step_i
         )
 
         def make_sample_fn(seed_offset: int):

@@ -9,6 +9,8 @@ from flax import struct
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import ensure_prng_key, make_rng
+
 Array = jnp.ndarray
 LOGGER = logging.getLogger(__name__)
 _WARNED_MIXED_ANCHOR_CONFIG_IDS: set[int] = set()
@@ -170,9 +172,9 @@ def _resolve_random_key(
     context: str,
 ) -> Array:
     if seed is not None:
-        return jax.random.PRNGKey(int(seed))
+        return make_rng(int(seed))
     if rng is not None:
-        return rng
+        return ensure_prng_key(rng)
     raise ValueError(
         f"{context} requires either an explicit seed in the anchor config or "
         "an RNG key supplied at build time."

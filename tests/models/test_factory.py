@@ -18,6 +18,16 @@ class _DummyMD4:
         self.kwargs = kwargs
 
 
+class _DummyMDLM:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class _DummyD3PM:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -73,6 +83,7 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
                 "z0_estimator": "soft",
                 "K": 3,
                 "force_decode_at_end": False,
+                "categorical_sampling_policy": "exact",
                 "corrector_enabled": True,
                 "corrector_steps": 2,
                 "corrector_remask_frac": 0.2,
@@ -92,6 +103,7 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["z0_estimator"] == "soft"
     assert model.kwargs["K"] == 3
     assert model.kwargs["force_decode_at_end"] is False
+    assert model.kwargs["categorical_sampling_policy"] == "exact"
     assert model.kwargs["corrector_enabled"] is True
     assert model.kwargs["corrector_steps"] == 2
     assert model.kwargs["corrector_remask_frac"] == 0.2
@@ -147,6 +159,7 @@ def test_build_model_reads_md4_sampling_knobs_from_sampler_config(monkeypatch):
                 "method": "topp",
                 "sampling_grid": "uniform",
                 "topp": 0.91,
+                "categorical_sampling_policy": "jax_high",
             },
         }
     )
@@ -157,3 +170,139 @@ def test_build_model_reads_md4_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["sampler"] == "topp"
     assert model.kwargs["sampling_grid"] == "uniform"
     assert model.kwargs["topp"] == 0.91
+    assert model.kwargs["categorical_sampling_policy"] == "jax_high"
+
+
+def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.mdlm.mdlm_model",
+        SimpleNamespace(MDLM=_DummyMDLM),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "mdlm",
+                "cont_time": True,
+                "timesteps": 256,
+                "feature_dim": 96,
+                "num_heads": 12,
+                "antithetic_time_sampling": True,
+                "n_layers": 32,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 768,
+                "ch_mult": [3, 4, 4],
+                "noise_schedule_type": "linear",
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "swiglu",
+                "depth_scaled_init": True,
+                "cond_type": "adaln_zero",
+                "outside_embed": False,
+                "sequence_backbone": "auto",
+                "image_backbone": "adm_unet5d",
+                "adm_num_res_blocks": 4,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": 64,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+                "time_features": "none",
+                "classes": -1,
+                "cache_predictions": False,
+                "model_sharding": False,
+            },
+            "sampler": {
+                "method": "ancestral",
+                "sampling_grid": "uniform",
+                "topp": 0.95,
+                "categorical_sampling_policy": "exact",
+                "cache_predictions": True,
+            },
+        }
+    )
+
+    model = build_model(cfg, data_shape=(32, 32, 3), vocab_size=256)
+
+    assert isinstance(model, _DummyMDLM)
+    assert model.kwargs["image_backbone"] == "adm_unet5d"
+    assert model.kwargs["sampler"] == "ancestral"
+    assert model.kwargs["sampling_grid"] == "uniform"
+    assert model.kwargs["topp"] == 0.95
+    assert model.kwargs["categorical_sampling_policy"] == "exact"
+    assert model.kwargs["cache_predictions"] is True
+
+
+def test_build_model_reads_d3pm_config_and_sampler_knobs(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.d3pm.d3pm_model",
+        SimpleNamespace(D3PM=_DummyD3PM),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "d3pm",
+                "timesteps": 256,
+                "transition_type": "gaussian",
+                "transition_beta_schedule": "linear",
+                "beta_start": 1.0e-4,
+                "beta_end": 2.0e-2,
+                "cosine_s": 0.008,
+                "max_beta": 0.999,
+                "auxiliary_loss_weight": 1.0e-3,
+                "absorbing_state": 128,
+                "feature_dim": 96,
+                "num_heads": 12,
+                "antithetic_time_sampling": True,
+                "n_layers": 32,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 768,
+                "ch_mult": [3, 4, 4],
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "swiglu",
+                "depth_scaled_init": True,
+                "cond_type": "adaln_zero",
+                "outside_embed": False,
+                "sequence_backbone": "auto",
+                "image_backbone": "adm_unet5d",
+                "adm_num_res_blocks": 4,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": 64,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+                "time_features": "t",
+                "classes": -1,
+                "model_sharding": False,
+            },
+            "sampler": {
+                "method": "ancestral",
+                "sampling_grid": "uniform",
+                "categorical_sampling_policy": "exact",
+            },
+        }
+    )
+
+    model = build_model(cfg, data_shape=(32, 32, 3), vocab_size=256)
+
+    assert isinstance(model, _DummyD3PM)
+    assert model.kwargs["transition_type"] == "gaussian"
+    assert model.kwargs["transition_beta_schedule"] == "linear"
+    assert model.kwargs["image_backbone"] == "adm_unet5d"
+    assert model.kwargs["sampler"] == "ancestral"
+    assert model.kwargs["sampling_grid"] == "uniform"
+    assert model.kwargs["categorical_sampling_policy"] == "exact"

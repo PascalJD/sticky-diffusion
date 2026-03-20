@@ -10,6 +10,7 @@ from flax import struct
 from omegaconf import DictConfig
 
 from sticky.models.sjd.anchors import anchor_learnable_from_mapping
+from sticky.rng import PRNGKey, ensure_prng_key
 
 
 Array = jnp.ndarray
@@ -119,7 +120,8 @@ def make_optimizer(cfg: DictConfig, params: Any):
     return base_tx
 
 
-def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
+def init_state(cfg: DictConfig, model, rng: PRNGKey):
+    rng = ensure_prng_key(rng)
     name = str(cfg.model.name)
     batch_size = (
         int(cfg.dataset.per_device_batch_size)
@@ -127,7 +129,7 @@ def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
         else 1
     )
 
-    if name in ("md4", "cadd", "ddpm"):
+    if name in ("md4", "mdlm", "d3pm", "cadd", "ddpm"):
         rng, rng_params, rng_sample = jax.random.split(rng, 3)
         dummy_x = jnp.zeros(
             (batch_size,) + tuple(cfg.dataset.data_shape), dtype=jnp.int32
@@ -153,18 +155,14 @@ def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
             dtype=jnp.float32,
         )
         dummy_t = jnp.zeros((batch_size,), dtype=jnp.float32)
-        variables = model.init({"params": rng_params}, dummy_z, dummy_t, train=False)
         dummy_ids = jnp.zeros(tuple(dummy_z.shape[:-1]), dtype=jnp.int32)
-
-        rng, rng_anchors = jax.random.split(rng, 2)
-        _, mutated = model.apply(
-            variables,
-            dummy_ids,
-            method=model.embed,
-            mutable=["params"],
-            rngs={"params": rng_anchors},
+        variables = model.init(
+            {"params": rng_params},
+            dummy_z,
+            dummy_t,
+            anchor_token_ids=dummy_ids,
+            train=False,
         )
-        variables = {**variables, "params": mutated["params"]}
 
     else:
         raise ValueError(f"Unknown model.name={name!r} for init")
@@ -175,7 +173,10 @@ def init_state(cfg: DictConfig, model, rng: jax.random.PRNGKey):
 
     ema_rate = float(cfg.training.ema_rate)
     if ema_rate > 0.0:
-        ema_params = jax.tree_util.tree_map(lambda x: x, params)
+        # Keep EMA numerically identical to params at init while ensuring the
+        # buffers are distinct, so TrainState donation can safely donate the
+        # whole state tuple.
+        ema_params = jax.tree_util.tree_map(lambda x: jnp.array(x, copy=True), params)
     else:
         ema_params = None
 

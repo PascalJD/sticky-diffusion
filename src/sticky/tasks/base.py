@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import PRNGKey
+
 Array = jnp.ndarray
 Batch = Mapping[str, Array]
 Metrics = Dict[str, Array]
@@ -34,7 +36,7 @@ class Task:
     def loss_fn(
         self,
         *,
-        rng: jax.random.PRNGKey,
+        rng: PRNGKey,
         model: Any,
         params: Any,
         batch: Batch,

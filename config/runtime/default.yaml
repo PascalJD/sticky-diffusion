@@ -7,6 +7,10 @@ platform: auto  # auto | single | pmap
 # pmap axis label.
 pmap_axis_name: batch
 
+# Training dispatch controls.
+sync_train_step: false  # force a host sync each step for timing/debug only
+pmap_prefetch_buffer_size: 2  # pmap only; set 0 to disable, mainly useful on GPU
+
 # XLA memory behavior (GPU mainly).
 xla_preallocate: false
 xla_mem_fraction: 0.85  # 0..1 or null to omit

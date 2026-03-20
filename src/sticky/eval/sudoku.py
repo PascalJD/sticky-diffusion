@@ -11,6 +11,7 @@ from sticky.data.sudoku import make_sudoku_iterator
 from sticky.models.sjd.anchors import AnchorTable
 from sticky.models.sjd.sampler import SamplerConfig
 from sticky.models.sjd import sampling as sjd_sampling
+from sticky.rng import make_rng
 
 
 def _should_run_eval(*, step_i: int, every: int, log_at_step_zero: bool) -> bool:
@@ -175,6 +176,9 @@ def build_sudoku_eval_logger(
                 cfg.sampler.get("temperature", 1.0),
             )
         ),
+        categorical_sampling_policy=str(
+            cfg.sampler.get("categorical_sampling_policy", "legacy_low")
+        ),
         hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
         alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
         intensity_mode=str(cfg.sampler.get("intensity_mode", "full")),
@@ -253,7 +257,7 @@ def build_sudoku_eval_logger(
         }
 
         base_rng = jax.random.fold_in(
-            jax.random.PRNGKey(int(cfg.training.seed) + sample_seed_offset),
+            make_rng(int(cfg.training.seed) + sample_seed_offset),
             int(step_i),
         )
 

@@ -11,7 +11,10 @@ from sticky.models.architectures.factory import (
     build_image_backbone,
     build_sequence_backbone,
 )
-from sticky.models.discrete_mixture import sample_mixture_categorical
+from sticky.models.discrete_mixture import (
+    categorical_sample_from_probs,
+    sample_mixture_categorical,
+)
 from sticky.models.architectures.networks.conditioning import CondEmbedding
 from sticky.models import masked_discrete_core as masked_core
 from sticky.models.md4 import utils as md4_utils
@@ -142,6 +145,7 @@ class CADD(nn.Module):
     z0_estimator: str = "hard"  # hard | soft
     K: int = 1  # number of continuous latent hints averaged per reverse step
     force_decode_at_end: bool = True
+    categorical_sampling_policy: str = "legacy_low"  # legacy_low | jax_high | exact
 
     # Optional sampling-time corrector (in the spirit of Gat et al., 2024).
     # The CADD paper reports applying a corrector for image generation, but does
@@ -586,11 +590,11 @@ class CADD(nn.Module):
         if self.corrector_sample_mode == "argmax":
             sampled = jnp.argmax(probs2, axis=-1).astype(jnp.int32)
         elif self.corrector_sample_mode == "sample":
-            sampled = jax.random.categorical(
+            sampled = categorical_sample_from_probs(
                 rng_tok,
-                jnp.log(jnp.clip(probs2, a_min=1e-20, a_max=1.0)),
-                axis=-1,
-            ).astype(jnp.int32)
+                probs2,
+                policy=self.categorical_sampling_policy,
+            )
         else:
             raise NotImplementedError(
                 f"Unknown corrector_sample_mode={self.corrector_sample_mode!r}"
@@ -640,6 +644,7 @@ class CADD(nn.Module):
             destination_probs=probs,
             stay_prob=1.0 - rho_flip,
             change_prob=rho_flip,
+            policy=self.categorical_sampling_policy,
         )
         masked_proposal = jnp.where(
             keep_mask,

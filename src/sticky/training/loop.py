@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 import jax
 import jax.numpy as jnp
-from flax.jax_utils import replicate, unreplicate
+from flax.jax_utils import prefetch_to_device, replicate, unreplicate
 from omegaconf import DictConfig
 
 from sticky.models.factory import build_model
+from sticky.rng import make_rng
 from sticky.tasks.factory import build_task
 from sticky.training.eval import (
     build_eval_logger,
@@ -29,7 +30,12 @@ from sticky.training.persistence import (
 )
 from sticky.training.sampling import build_sampling_fns
 from sticky.training.state import init_state, make_lr_schedule, shard_batch
-from sticky.training.step import make_train_step_fn, params_for_sampling
+from sticky.training.step import (
+    make_train_step_fn,
+    make_wrapped_eval_step,
+    make_wrapped_train_step,
+    params_for_sampling,
+)
 
 
 Array = jnp.ndarray
@@ -55,6 +61,31 @@ def _with_bpd_alias(metrics: dict[str, float], *, prefix: str, enable_alias: boo
             out[f"{prefix}/{alias}"] = out[key]
 
     return out
+
+
+def _maybe_sync_training_metric(metric: Array, *, sync: bool) -> None:
+    if sync:
+        jax.block_until_ready(metric)
+
+
+def _make_pmap_batch_iterator(
+    train_iter: Iterator[dict[str, Array]],
+    *,
+    prefetch_buffer_size: int,
+):
+    sharded_iter = (shard_batch(batch) for batch in train_iter)
+    if prefetch_buffer_size > 0:
+        return prefetch_to_device(sharded_iter, prefetch_buffer_size)
+    return sharded_iter
+
+
+def _take_gt_images(batch: dict[str, Array], *, num_log_images: int, use_pmap: bool) -> Array | None:
+    images = batch.get("image")
+    if images is None:
+        return None
+    if use_pmap:
+        images = images.reshape((-1,) + images.shape[2:])
+    return images[:num_log_images]
 
 
 def make_eval_step_fn(*, task, model):
@@ -89,7 +120,7 @@ def run_likelihood_eval(
     total_examples = 0
     metric_sums: dict[str, float] = {}
     local_devices = jax.local_device_count()
-    base_rng = jax.random.PRNGKey(int(cfg.training.seed) + 2026)
+    base_rng = make_rng(int(cfg.training.seed) + 2026)
     base_rng = jax.random.fold_in(base_rng, int(step_i))
 
     for batch_idx, batch in enumerate(eval_iter):
@@ -140,6 +171,8 @@ def main_train_loop(
     log_every_steps = int(cfg.training.log_every_steps)
     eval_every_steps = int(cfg.training.get("eval_every_steps", 0))
     timing_warn_seconds = float(cfg.training.get("timing_warn_seconds", 30.0))
+    sync_train_step = bool(cfg.runtime.get("sync_train_step", False))
+    pmap_prefetch_buffer_size = int(cfg.runtime.get("pmap_prefetch_buffer_size", 2))
 
     metrics_every_steps = int(cfg.training.get("metrics_every_steps", 0))
     save_final_metrics = bool(cfg.training.get("save_final_metrics", True))
@@ -171,7 +204,7 @@ def main_train_loop(
             best_mode=str(cfg.training.get("best_checkpoint_mode", "min")),
         )
 
-    rng = jax.random.PRNGKey(int(cfg.training.seed))
+    rng = make_rng(int(cfg.training.seed))
     state, tx = init_state(cfg, model, rng)
     write_run_context(
         run_dir=run_output_dir,
@@ -279,41 +312,48 @@ def main_train_loop(
     last_eval_step: Optional[int] = None
 
     if use_pmap:
-        p_train_step = jax.pmap(
-            lambda st, b: train_step_fn(st, b, axis_name="batch"),
+        p_train_step = make_wrapped_train_step(
+            train_step_fn,
+            use_pmap=True,
             axis_name="batch",
         )
-        p_eval_step = jax.pmap(
-            lambda p, b, r: eval_step_fn(p, r, b, axis_name="batch"),
+        p_eval_step = make_wrapped_eval_step(
+            eval_step_fn,
+            use_pmap=True,
             axis_name="batch",
         )
         state = replicate(state)
+        train_batches = _make_pmap_batch_iterator(
+            train_iter,
+            prefetch_buffer_size=pmap_prefetch_buffer_size,
+        )
 
         for step in range(num_train_steps):
             t_fetch0 = time.perf_counter()
-            batch = next(train_iter)
+            batch = next(train_batches)
             t_fetch = time.perf_counter() - t_fetch0
-            gt_images = batch["image"][:num_log_images] if task.spec.task_type == "image" else None
-            batch = shard_batch(batch)
 
             t_step0 = time.perf_counter()
             state, metrics = p_train_step(state, batch)
-            _ = jax.block_until_ready(metrics["train/loss"])
-            t_step = time.perf_counter() - t_step0
+            _maybe_sync_training_metric(metrics["train/loss"], sync=sync_train_step)
+            t_step = time.perf_counter() - t_step0 if sync_train_step else 0.0
 
             step_i = step + 1
-            if (t_fetch > timing_warn_seconds) or (t_step > timing_warn_seconds):
+            if (t_fetch > timing_warn_seconds) or (
+                sync_train_step and (t_step > timing_warn_seconds)
+            ):
                 print(
                     f"[step {step_i}] timing warning: "
                     f"data_fetch={t_fetch:.2f}s train_step={t_step:.2f}s",
                     flush=True,
                 )
             need_train_host_metrics = (
-                (step_i % log_every_steps == 0)
+                ((log_every_steps > 0) and (step_i % log_every_steps == 0))
                 or (
                     (metrics_writer is not None)
                     and metrics_writer.should_write(step_i)
                 )
+                or (save_final_metrics and (step_i == num_train_steps))
             )
             train_log = None
             if need_train_host_metrics:
@@ -326,7 +366,7 @@ def main_train_loop(
                 train_log = _with_bpd_alias(train_log, prefix="train", enable_alias=bits_per_dim_model)
                 last_train_metrics = dict(train_log)
 
-            if step_i % log_every_steps == 0 and train_log is not None:
+            if ((log_every_steps > 0) and (step_i % log_every_steps == 0)) and (train_log is not None):
                 print(
                     f"[step {step_i}] loss={float(train_log['train/loss']):.4f}",
                     flush=True,
@@ -349,6 +389,11 @@ def main_train_loop(
                 step_i % log_images_every_steps == 0
                 )
             ):
+                gt_images = _take_gt_images(
+                    batch,
+                    num_log_images=num_log_images,
+                    use_pmap=True,
+                )
                 state_s = unreplicate(state)
                 params = params_for_sampling(state_s)
                 samples, sjd_sample_metrics = sample_for_logging(
@@ -445,35 +490,43 @@ def main_train_loop(
                     checkpoint_writer.maybe_save_periodic(target=state_s, step_i=step_i)
 
     else:
-        train_step_jit = jax.jit(lambda st, b: train_step_fn(st, b, axis_name=None))
-        eval_step_jit = jax.jit(lambda p, b, r: eval_step_fn(p, r, b, axis_name=None))
+        train_step_jit = make_wrapped_train_step(train_step_fn, use_pmap=False)
+        eval_step_jit = make_wrapped_eval_step(eval_step_fn, use_pmap=False)
 
         for step in range(num_train_steps):
             t_fetch0 = time.perf_counter()
             batch = next(train_iter)
             t_fetch = time.perf_counter() - t_fetch0
-            gt_images = batch["image"][:num_log_images] if task.spec.task_type == "image" else None
             t_step0 = time.perf_counter()
             state, metrics = train_step_jit(state, batch)
-            _ = jax.block_until_ready(metrics["train/loss"])
-            t_step = time.perf_counter() - t_step0
+            _maybe_sync_training_metric(metrics["train/loss"], sync=sync_train_step)
+            t_step = time.perf_counter() - t_step0 if sync_train_step else 0.0
 
             step_i = step + 1
-            if (t_fetch > timing_warn_seconds) or (t_step > timing_warn_seconds):
+            if (t_fetch > timing_warn_seconds) or (
+                sync_train_step and (t_step > timing_warn_seconds)
+            ):
                 print(
                     f"[step {step_i}] timing warning: "
                     f"data_fetch={t_fetch:.2f}s train_step={t_step:.2f}s",
                     flush=True,
                 )
-            train_log = sanitize_metrics(metrics)
-            train_log["lr"] = float(
-                to_py_scalar(lr_schedule(step)) or lr_schedule(step)
+            need_train_host_metrics = (
+                ((log_every_steps > 0) and (step_i % log_every_steps == 0))
+                or ((metrics_writer is not None) and metrics_writer.should_write(step_i))
+                or (save_final_metrics and (step_i == num_train_steps))
             )
-            train_log["step"] = step_i
-            train_log = _with_bpd_alias(train_log, prefix="train", enable_alias=bits_per_dim_model)
-            last_train_metrics = dict(train_log)
+            train_log = None
+            if need_train_host_metrics:
+                train_log = sanitize_metrics(metrics)
+                train_log["lr"] = float(
+                    to_py_scalar(lr_schedule(step)) or lr_schedule(step)
+                )
+                train_log["step"] = step_i
+                train_log = _with_bpd_alias(train_log, prefix="train", enable_alias=bits_per_dim_model)
+                last_train_metrics = dict(train_log)
 
-            if step_i % log_every_steps == 0:
+            if ((log_every_steps > 0) and (step_i % log_every_steps == 0)) and (train_log is not None):
                 print(
                     f"[step {step_i}] loss={float(train_log['train/loss']):.4f}",
                     flush=True,
@@ -481,7 +534,11 @@ def main_train_loop(
                 if wandb_mod is not None:
                     wandb_mod.log(train_log, step=step_i)
 
-            if (metrics_writer is not None) and metrics_writer.should_write(step_i):
+            if (
+                (metrics_writer is not None)
+                and metrics_writer.should_write(step_i)
+                and (train_log is not None)
+            ):
                 metrics_writer.write(step_i=step_i, metrics=train_log, tag="train")
 
             if (
@@ -492,6 +549,11 @@ def main_train_loop(
                 step_i % log_images_every_steps == 0
                 )
             ):
+                gt_images = _take_gt_images(
+                    batch,
+                    num_log_images=num_log_images,
+                    use_pmap=False,
+                )
                 params = params_for_sampling(state)
                 samples, sjd_sample_metrics = sample_for_logging(
                     cfg=cfg,

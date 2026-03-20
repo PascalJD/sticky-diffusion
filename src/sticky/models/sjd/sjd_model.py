@@ -88,5 +88,15 @@ class SJD(nn.Module):
     def anchor_table(self) -> Array:
         return self.anchors.table_float()
 
-    def __call__(self, y_t: Array, t: Array, *, cond=None, train: bool = False):
+    def __call__(
+        self,
+        y_t: Array,
+        t: Array,
+        *,
+        cond=None,
+        anchor_token_ids: Array | None = None,
+        train: bool = False,
+    ):
+        if anchor_token_ids is not None:
+            _ = self.embed(anchor_token_ids)
         return self.classifier(y_t, t=t, cond=cond, train=train)

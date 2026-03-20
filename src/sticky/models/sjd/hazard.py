@@ -6,6 +6,8 @@ from typing import Callable
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import PRNGKey
+
 from .sdes import B_of_t
 
 Array = jnp.ndarray
@@ -21,7 +23,7 @@ class HazardSchedule:
     cdf: Callable[[Array], Array]  # F(t) = 1 - S(t)
     inv_cdf: Callable[[Array], Array]  # F^{-1}(u), u in [0, F(T)]
 
-    def first_event_time(self, key: jax.random.PRNGKey, shape=()) -> Array:
+    def first_event_time(self, key: PRNGKey, shape=()) -> Array:
         """Inverse-transform sample of the first event time on [0, T]."""
         u = jax.random.uniform(key, shape=shape, minval=0.0, maxval=1.0)
         FT = self.cdf(jnp.asarray(self.T, dtype=jnp.float32))

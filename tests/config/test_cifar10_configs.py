@@ -17,7 +17,11 @@ def test_canonical_cifar10_experiments_compose():
     for experiment, model_name in (
         ("cadd_cifar10", "cadd"),
         ("ddpm_cifar10", "ddpm"),
+        ("d3pm_absorb_cifar10", "d3pm"),
+        ("d3pm_uniform_cifar10", "d3pm"),
+        ("d3pm_gaussian_cifar10", "d3pm"),
         ("md4_cifar10", "md4"),
+        ("mdlm_cifar10", "mdlm"),
         ("sjd_cifar10", "sjd"),
     ):
         cfg = _compose([f"experiment={experiment}", "eval=cifar10"])
@@ -34,6 +38,10 @@ def test_adm_image_models_share_canonical_architecture_bundle():
     expectations = {
         "cadd_cifar10": "adm_unet5d",
         "ddpm_cifar10": "adm_unet2d",
+        "d3pm_absorb_cifar10": "adm_unet5d",
+        "d3pm_uniform_cifar10": "adm_unet5d",
+        "d3pm_gaussian_cifar10": "adm_unet5d",
+        "mdlm_cifar10": "adm_unet5d",
         "sjd_cifar10": "adm_unet5d",
     }
 
@@ -57,6 +65,7 @@ def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
     assert cfg.experiment.model.cadd_latent.continuous_schedule_type == "linear"
     assert cfg.experiment.sampler.sampling_grid == "cosine"
     assert cfg.experiment.sampler.temperature_schedule == "cosine_decay"
+    assert cfg.experiment.sampler.categorical_sampling_policy == "legacy_low"
     assert cfg.experiment.sampler.K == 3
     assert cfg.experiment.sampler.corrector_remask_frac == 0.1
     assert cfg.experiment.training.sample_timesteps == 512
@@ -77,6 +86,7 @@ def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
     assert cfg.experiment.training.sample_timesteps == 256
     assert cfg.experiment.training.log_state_dependency is True
     assert cfg.experiment.training.state_dep_log_ratio_clip == cfg.experiment.sampler.log_ratio_clip
+    assert cfg.experiment.sampler.categorical_sampling_policy == "legacy_low"
     assert cfg.experiment.model.anchor.family == "thermometer"
     assert cfg.experiment.model.anchor.learnable is False
     assert "outside_embed" not in cfg.experiment.model
@@ -100,9 +110,56 @@ def test_md4_cifar10_uses_md4_architecture_bundle():
     assert cfg.experiment.model.feature_dim == 128
     assert cfg.experiment.model.ch_mult == [1]
     assert cfg.experiment.sampler.method == "ancestral"
+    assert cfg.experiment.sampler.categorical_sampling_policy == "legacy_low"
     assert cfg.experiment.sampler.sampling_grid == "cosine"
     assert cfg.experiment.sampler.topp == 0.98
     assert cfg.experiment.training.sample_timesteps == 256
+
+
+def test_mdlm_cifar10_uses_canonical_adm_image_bundle():
+    cfg = _compose(["experiment=mdlm_cifar10", "eval=cifar10"])
+
+    assert cfg.experiment.model.image_backbone == "adm_unet5d"
+    assert cfg.experiment.model.sequence_backbone == "auto"
+    assert cfg.experiment.model.feature_dim == 96
+    assert cfg.experiment.model.ch_mult == [3, 4, 4]
+    assert cfg.experiment.model.adm_num_res_blocks == 4
+    assert cfg.experiment.model.adm_attention_resolutions == [2, 4]
+    assert cfg.experiment.model.adm_num_heads == 4
+    assert cfg.experiment.model.adm_num_head_channels == 64
+    assert cfg.experiment.model.name == "mdlm"
+    assert cfg.experiment.model.classes == -1
+    assert cfg.experiment.sampler.method == "ancestral"
+    assert cfg.experiment.sampler.sampling_grid == "cosine"
+    assert cfg.experiment.training.sample_timesteps == 256
+
+
+def test_d3pm_cifar10_variants_use_canonical_adm_image_bundle():
+    expectations = {
+        "d3pm_absorb_cifar10": "absorb",
+        "d3pm_uniform_cifar10": "uniform",
+        "d3pm_gaussian_cifar10": "gaussian",
+    }
+
+    for experiment, transition_type in expectations.items():
+        cfg = _compose([f"experiment={experiment}", "eval=cifar10"])
+
+        assert cfg.experiment.model.name == "d3pm"
+        assert cfg.experiment.model.transition_type == transition_type
+        assert cfg.experiment.model.image_backbone == "adm_unet5d"
+        assert cfg.experiment.model.sequence_backbone == "auto"
+        assert cfg.experiment.model.feature_dim == 96
+        assert cfg.experiment.model.ch_mult == [3, 4, 4]
+        assert cfg.experiment.model.adm_num_res_blocks == 4
+        assert cfg.experiment.model.adm_attention_resolutions == [2, 4]
+        assert cfg.experiment.model.adm_num_heads == 4
+        assert cfg.experiment.model.adm_num_head_channels == 64
+        assert cfg.experiment.model.adm_use_scale_shift_norm is True
+        assert cfg.experiment.model.adm_use_new_attention_order is False
+        assert cfg.experiment.model.classes == -1
+        assert cfg.experiment.sampler.method == "ancestral"
+        assert cfg.experiment.sampler.sampling_grid == "uniform"
+        assert cfg.experiment.training.sample_timesteps == 256
 
 
 def test_ddpm_cifar10_sampler_tracks_model_timesteps():
@@ -113,7 +170,16 @@ def test_ddpm_cifar10_sampler_tracks_model_timesteps():
 
 
 def test_cifar10_report_eval_profile_composes_for_all_canonical_experiments():
-    for experiment in ("cadd_cifar10", "ddpm_cifar10", "md4_cifar10", "sjd_cifar10"):
+    for experiment in (
+        "cadd_cifar10",
+        "ddpm_cifar10",
+        "d3pm_absorb_cifar10",
+        "d3pm_uniform_cifar10",
+        "d3pm_gaussian_cifar10",
+        "md4_cifar10",
+        "mdlm_cifar10",
+        "sjd_cifar10",
+    ):
         cfg = _compose([f"experiment={experiment}", "eval=cifar10_report"])
 
         assert cfg.eval.enabled is True

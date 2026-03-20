@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from sticky.data.openwebtext import make_openwebtext_iterator
+from sticky.rng import PRNGKey
 from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
 
 
@@ -72,7 +73,7 @@ class OpenWebTextDiscreteTask(Task):
     def loss_fn(
         self,
         *,
-        rng: jax.random.PRNGKey,
+        rng: PRNGKey,
         model,
         params,
         batch: Batch,

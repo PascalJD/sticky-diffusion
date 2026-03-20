@@ -21,7 +21,6 @@ import time
 from typing import Any, Tuple
 from absl import logging
 import chex
-from clu import platform
 import distrax
 import jax
 import jax.numpy as jnp
@@ -184,29 +183,6 @@ def reverse_broadcast(value, ndim):
     return value.reshape(value.shape + difference * (1,))
   else:
     return value
-
-
-def get_rng(seed: None | int | tuple[int, int]) -> np.ndarray:
-  """Returns a JAX RNGKey."""
-  if seed is None:
-    # Case 1: No random seed given, use XManager ID.
-    # All processes (and restarts) get exactly the same seed but every work unit
-    # and experiment is different.
-    work_unit = platform.work_unit()
-    rng = (work_unit.experiment_id, work_unit.id)
-  elif isinstance(seed, int):
-    # Case 2: Single integer given.
-    rng = (0, seed)
-  else:
-    # Case 3: tuple[int, int] given.
-    if not isinstance(seed, (tuple, list)) or len(seed) != 2:
-      raise ValueError(
-          "Random seed must be an integer or tuple of 2 integers "
-          f"but got {seed!r}"
-      )
-    rng = seed
-  # JAX RNGKeys are arrays of np.uint32 and shape [2].
-  return np.asarray(rng, dtype=np.uint32)
 
 
 class StepTraceContextHelper:

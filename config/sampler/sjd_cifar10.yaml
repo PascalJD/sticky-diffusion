@@ -9,6 +9,10 @@ score_scale: 1.0
 # Jump-allocation temperature only; reverse score uses raw classifier logits.
 logit_temperature: 1.0
 
+# Keep the MD4 Appendix G / better-sample-quality default; see
+# sampler/base.yaml for the full tradeoff summary of the available policies.
+categorical_sampling_policy: legacy_low
+
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
 intensity_mode: full

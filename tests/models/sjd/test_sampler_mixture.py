@@ -34,8 +34,10 @@ def test_reverse_sample_forces_final_jump_with_direct_mixture(monkeypatch):
         destination_probs,
         stay_prob,
         change_prob,
+        policy,
     ):
         del key
+        captured["policy"] = policy
 
         def _capture(dest, stay, change):
             captured["destination_probs"] = np.asarray(dest)
@@ -74,6 +76,7 @@ def test_reverse_sample_forces_final_jump_with_direct_mixture(monkeypatch):
         alloc_mode="sample",
         intensity_mode="full",
         force_classify_at_end=True,
+        categorical_sampling_policy="exact",
     )
 
     result = reverse_sample(
@@ -108,4 +111,104 @@ def test_reverse_sample_forces_final_jump_with_direct_mixture(monkeypatch):
     np.testing.assert_array_equal(
         captured["change_prob"],
         np.asarray([[1.0, 1.0]], dtype=np.float32),
+    )
+    assert captured["policy"] == "exact"
+
+
+def test_reverse_sample_uses_policy_for_final_fill(monkeypatch):
+    lam_total = jnp.zeros((1, 2), dtype=jnp.float32)
+    choice_probs = jnp.asarray([[[0.5, 0.5], [0.5, 0.5]]], dtype=jnp.float32)
+    captured = {}
+
+    def fake_plugin_intensity_and_probs(**kwargs):
+        del kwargs
+        return lam_total, choice_probs
+
+    monkeypatch.setattr(
+        sampler_mod,
+        "plugin_intensity_and_probs",
+        fake_plugin_intensity_and_probs,
+    )
+
+    def fake_sample_mixture_categorical(
+        key,
+        *,
+        destination_probs,
+        stay_prob,
+        change_prob,
+        policy,
+    ):
+        del key, destination_probs, stay_prob, change_prob
+        captured["mixture_policy"] = policy
+        stay_mask = jnp.ones((1, 2), dtype=bool)
+        return jnp.zeros((1, 2), dtype=jnp.int32), stay_mask
+
+    monkeypatch.setattr(
+        sampler_mod,
+        "sample_mixture_categorical",
+        fake_sample_mixture_categorical,
+    )
+
+    def fake_categorical_sample_from_logits(key, logits, *, policy):
+        del key
+        captured["fill_policy"] = policy
+
+        def _capture(logits_val):
+            captured["fill_logits"] = np.asarray(logits_val)
+
+        jax.debug.callback(_capture, logits)
+        return jnp.argmax(logits, axis=-1).astype(jnp.int32)
+
+    monkeypatch.setattr(
+        sampler_mod,
+        "categorical_sample_from_logits",
+        fake_categorical_sample_from_logits,
+    )
+
+    def apply_model(params, y, t_img):
+        del params, y, t_img
+        logits = jnp.asarray([[[3.0, -1.0], [-2.0, 4.0]]], dtype=jnp.float32)
+        return logits, None
+
+    anchors = SimpleNamespace(
+        table_float=jnp.asarray(
+            [
+                [-1.0],
+                [2.0],
+            ],
+            dtype=jnp.float32,
+        )
+    )
+    beta = make_beta(beta_min=0.1, beta_max=0.1, T=1.0)
+    cfg = SamplerConfig(
+        T=1.0,
+        n_steps=1,
+        alloc_mode="sample",
+        intensity_mode="full",
+        force_classify_at_end=False,
+        categorical_sampling_policy="exact",
+    )
+
+    result = reverse_sample(
+        jax.random.PRNGKey(0),
+        params=None,
+        apply_model=apply_model,
+        anchors=anchors,
+        beta=beta,
+        hazard=SimpleNamespace(),
+        jump=SimpleNamespace(),
+        shape=(2,),
+        batch_size=1,
+        cfg=cfg,
+    )
+
+    assert captured["mixture_policy"] == "exact"
+    assert captured["fill_policy"] == "exact"
+    np.testing.assert_array_equal(
+        np.asarray(result.k_filled),
+        np.asarray([[0, 1]], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        captured["fill_logits"],
+        np.asarray([[[3.0, -1.0], [-2.0, 4.0]]], dtype=np.float32),
     )

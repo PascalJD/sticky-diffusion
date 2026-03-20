@@ -22,6 +22,10 @@ def build_task(cfg: DictConfig):
 
     if name in (
         "md4_cifar10",
+        "mdlm_cifar10",
+        "d3pm_absorb_cifar10",
+        "d3pm_uniform_cifar10",
+        "d3pm_gaussian_cifar10",
         "cadd_cifar10",
         "ddpm_cifar10",
     ):

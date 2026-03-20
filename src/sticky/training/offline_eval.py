@@ -9,6 +9,7 @@ from flax.training import checkpoints
 from omegaconf import DictConfig, OmegaConf
 
 from sticky.models.factory import build_model
+from sticky.rng import ensure_prng_key, legacy_prng_key_data, make_rng
 from sticky.tasks.factory import build_task
 from sticky.training.eval import build_eval_logger, resolve_from_original_cwd
 from sticky.training.persistence import (
@@ -214,11 +215,22 @@ def _restore_checkpoint_state(state_template, ckpt_dir: Path, step: Optional[int
         raise FileNotFoundError(f"Checkpoint directory does not exist: {ckpt_dir}")
 
     selected_path = _select_checkpoint_path(ckpt_dir, step)
-    restored = checkpoints.restore_checkpoint(
-        ckpt_dir=str(ckpt_dir),
-        target=state_template,
-        step=step,
-    )
+    try:
+        restored = checkpoints.restore_checkpoint(
+            ckpt_dir=str(ckpt_dir),
+            target=state_template,
+            step=step,
+        )
+    except Exception:
+        legacy_target = state_template.replace(
+            rng=legacy_prng_key_data(state_template.rng)
+        )
+        restored = checkpoints.restore_checkpoint(
+            ckpt_dir=str(ckpt_dir),
+            target=legacy_target,
+            step=step,
+        )
+    restored = restored.replace(rng=ensure_prng_key(restored.rng))
     restored_step = int(jax.device_get(restored.step))
     if (step is not None) and (restored_step != int(step)):
         raise RuntimeError(
@@ -273,7 +285,7 @@ def _collect_sjd_sampler_probe_metrics(
 
     sums: Dict[str, float] = {}
     counts: Dict[str, int] = {}
-    base_rng = jax.random.PRNGKey(int(seed))
+    base_rng = make_rng(int(seed))
     for i in range(int(num_batches)):
         rng = jax.random.fold_in(base_rng, int(i))
         out = sample_images_probe_jit(params_for_eval, rng)
@@ -326,7 +338,7 @@ def run_offline_checkpoint_eval(
         vocab_size=task.spec.vocab_size,
     )
 
-    rng = jax.random.PRNGKey(int(effective_cfg.training.seed))
+    rng = make_rng(int(effective_cfg.training.seed))
     state_template, _ = init_state(effective_cfg, model, rng)
 
     checkpoint_root = _resolve_checkpoint_root(effective_cfg, offline_cfg)

@@ -14,6 +14,8 @@ from sticky.models.sjd.anchors import (
     build_anchor_table_views,
     build_anchor_table_from_config,
 )
+from sticky.models.sjd.sjd_model import SJD
+from sticky.rng import make_rng
 
 
 VOCAB_SIZE = 256
@@ -279,3 +281,39 @@ def test_legacy_anchor_family_aliases_normalize_to_canonical_names():
 
     assert ordered.family == "ordered_normal"
     assert thermometer.family == "thermometer"
+
+
+def test_sjd_model_init_materializes_anchor_table_in_single_call():
+    config = AnchorTableConfig(
+        family="normal",
+        vocab_size=8,
+        anchor_dim=2,
+        seed=5,
+    )
+    model = SJD(
+        anchor_config=config,
+        learnable_anchors=True,
+        vocab_size=8,
+        feature_dim=8,
+        num_heads=1,
+        n_layers=1,
+        ch_mult=(1,),
+        sequence_backbone="auto",
+        image_backbone="auto",
+    )
+
+    y_t = jnp.zeros((1, 4, 2), dtype=jnp.float32)
+    t = jnp.zeros((1,), dtype=jnp.float32)
+    token_ids = jnp.zeros((1, 4), dtype=jnp.int32)
+    variables = model.init(
+        {"params": make_rng(0)},
+        y_t,
+        t,
+        anchor_token_ids=token_ids,
+        train=False,
+    )
+
+    assert "anchors" in variables["params"]
+    assert variables["params"]["anchors"]["table"].shape == (8, 2)
+    embed = model.apply({"params": variables["params"]}, token_ids, method=model.embed)
+    assert embed.shape == (1, 4, 2)

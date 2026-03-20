@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import PRNGKey
+
 from .sdes import alpha_sigma, _expand_like
 
 Array = jnp.ndarray
@@ -44,7 +46,7 @@ class VPMatchedGaussianJump:
         std = jnp.maximum(self.eta * sigma, self.std_floor)
         return mean, std
 
-    def sample(self, key: jax.random.PRNGKey, anchor: Array, t: Array) -> Array:
+    def sample(self, key: PRNGKey, anchor: Array, t: Array) -> Array:
         mean, std = self._mean_std(anchor, t)
         eps = jax.random.normal(key, shape=anchor.shape) * std
         y = mean + eps

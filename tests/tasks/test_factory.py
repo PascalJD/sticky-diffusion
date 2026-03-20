@@ -31,7 +31,15 @@ def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
         SimpleNamespace(CIFAR10DiscreteTask=_DummyDiscreteTask),
     )
 
-    for task_name in ("cadd_cifar10", "ddpm_cifar10", "md4_cifar10"):
+    for task_name in (
+        "cadd_cifar10",
+        "ddpm_cifar10",
+        "md4_cifar10",
+        "mdlm_cifar10",
+        "d3pm_absorb_cifar10",
+        "d3pm_uniform_cifar10",
+        "d3pm_gaussian_cifar10",
+    ):
         cfg = OmegaConf.create(
             {
                 "task": {"name": task_name},

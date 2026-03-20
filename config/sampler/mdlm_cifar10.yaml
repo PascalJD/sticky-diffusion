@@ -1,0 +1,8 @@
+defaults:
+  - base
+  - _self_
+
+# MDLM decode policy for discrete image tokens.
+method: ancestral
+sampling_grid: cosine
+cache_predictions: false

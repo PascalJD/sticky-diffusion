@@ -5,6 +5,8 @@ from typing import Callable, Tuple
 import jax
 import jax.numpy as jnp
 
+from sticky.rng import PRNGKey
+
 Array = jnp.ndarray
 
 
@@ -52,7 +54,7 @@ def _expand_like(v: Array, like: Array) -> Array:
 
 
 def vp_perturb(
-    key: jax.random.PRNGKey,
+    key: PRNGKey,
     x0: Array,
     t: Array,
     beta: Callable[[Array], Array],

@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 
 from sticky.models.discrete_mixture import categorical_sample_from_probs, normalize_probs
+from sticky.rng import PRNGKey
 
 from .hazard import HazardSchedule, lam_off_star
 from .jump import VPMatchedGaussianJump
@@ -36,14 +37,19 @@ def _validate_intensity_mode(intensity_mode: str) -> None:
 
 def _sample_choice_from_probs(
     *,
-    key: jax.random.PRNGKey,
+    key: PRNGKey,
     choice_probs: Array,
     alloc_mode: str,
+    categorical_sampling_policy: str = "legacy_low",
 ) -> Array:
     if alloc_mode == "argmax":
         return jnp.argmax(choice_probs, axis=-1).astype(jnp.int32)
     if alloc_mode == "sample":
-        return categorical_sample_from_probs(key, choice_probs)
+        return categorical_sample_from_probs(
+            key,
+            choice_probs,
+            policy=categorical_sampling_policy,
+        )
     raise ValueError(f"Unknown alloc_mode={alloc_mode!r}")
 
 
@@ -168,7 +174,7 @@ def plugin_intensity_and_probs(
 
 def plugin_intensity_and_choice(
     *,
-    key: jax.random.PRNGKey,
+    key: PRNGKey,
     logits: Array,
     y: Array,
     t_img: Array,
@@ -177,6 +183,7 @@ def plugin_intensity_and_choice(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     alloc_mode: str,
+    categorical_sampling_policy: str = "legacy_low",
     logit_temperature: float = 1.0,
     intensity_mode: str = "full",
     log_ratio_clip: float = 10.0,
@@ -202,5 +209,6 @@ def plugin_intensity_and_choice(
         key=key,
         choice_probs=choice_probs,
         alloc_mode=alloc_mode,
+        categorical_sampling_policy=categorical_sampling_policy,
     )
     return lam_total, a_idx

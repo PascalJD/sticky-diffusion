@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Dict
 
 import jax
@@ -14,6 +15,38 @@ Array = jnp.ndarray
 
 def params_for_sampling(state: TrainState):
     return state.ema_params if state.ema_params is not None else state.params
+
+
+def make_wrapped_train_step(
+    train_step_fn: Callable[[TrainState, Dict[str, Array], str | None], tuple[TrainState, Dict[str, Array]]],
+    *,
+    use_pmap: bool,
+    axis_name: str = "batch",
+):
+    if use_pmap:
+        return jax.pmap(
+            lambda st, b: train_step_fn(st, b, axis_name=axis_name),
+            axis_name=axis_name,
+            donate_argnums=(0,),
+        )
+    return jax.jit(
+        lambda st, b: train_step_fn(st, b, axis_name=None),
+        donate_argnums=(0,),
+    )
+
+
+def make_wrapped_eval_step(
+    eval_step_fn: Callable[[Dict[str, Array], Array, Dict[str, Array], str | None], Dict[str, Array]],
+    *,
+    use_pmap: bool,
+    axis_name: str = "batch",
+):
+    if use_pmap:
+        return jax.pmap(
+            lambda p, b, r: eval_step_fn(p, r, b, axis_name=axis_name),
+            axis_name=axis_name,
+        )
+    return jax.jit(lambda p, b, r: eval_step_fn(p, r, b, axis_name=None))
 
 
 def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rate: float):
