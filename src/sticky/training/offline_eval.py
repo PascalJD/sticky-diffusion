@@ -140,6 +140,35 @@ def _maybe_float(value: Any) -> Optional[float]:
         return None
 
 
+def _extract_forward_config_metadata(cfg: DictConfig) -> Dict[str, Any]:
+    forward_cfg = cfg.get("forward", None)
+    if forward_cfg is None:
+        return {
+            "forward_beta_target": None,
+            "forward_hazard_target": None,
+            "forward_jump_target": None,
+            "jump_eta": None,
+        }
+
+    beta_cfg = forward_cfg.get("beta", None)
+    hazard_cfg = forward_cfg.get("hazard", None)
+    jump_cfg = forward_cfg.get("jump", None)
+    return {
+        "forward_beta_target": (
+            str(beta_cfg.get("_target_", "")) if beta_cfg is not None else None
+        ),
+        "forward_hazard_target": (
+            str(hazard_cfg.get("_target_", "")) if hazard_cfg is not None else None
+        ),
+        "forward_jump_target": (
+            str(jump_cfg.get("_target_", "")) if jump_cfg is not None else None
+        ),
+        "jump_eta": (
+            _maybe_float(jump_cfg.get("eta", None)) if jump_cfg is not None else None
+        ),
+    }
+
+
 def _checkpoint_root_from_run_dir(run_dir: Path, cfg: DictConfig) -> Path:
     run_context_path = run_dir / "run_context.json"
     if run_context_path.exists():
@@ -507,11 +536,7 @@ def run_offline_checkpoint_eval(
             effective_cfg.sampler.get("temperature", None),
         )
     )
-    effective_jump_eta = None
-    if effective_cfg.get("forward", None) is not None:
-        jump_cfg = effective_cfg.forward.get("jump", None)
-        if jump_cfg is not None:
-            effective_jump_eta = _maybe_float(jump_cfg.get("eta", None))
+    forward_meta = _extract_forward_config_metadata(effective_cfg)
 
     payload = {
         "timestamp_utc": now_utc_iso(),
@@ -521,18 +546,10 @@ def run_offline_checkpoint_eval(
             "run_context_path": None if run_dir is None else str(run_dir / "run_context.json"),
             "task_name": str(effective_cfg.task.name),
             "model_name": str(effective_cfg.model.name),
-            "forward_beta_target": str(effective_cfg.forward.beta.get("_target_", "")),
-            "forward_hazard_target": (
-                str(effective_cfg.forward.hazard.get("_target_", ""))
-                if effective_cfg.forward.get("hazard", None) is not None
-                else None
-            ),
-            "forward_jump_target": (
-                str(effective_cfg.forward.jump.get("_target_", ""))
-                if effective_cfg.forward.get("jump", None) is not None
-                else None
-            ),
-            "jump_eta": effective_jump_eta,
+            "forward_beta_target": forward_meta["forward_beta_target"],
+            "forward_hazard_target": forward_meta["forward_hazard_target"],
+            "forward_jump_target": forward_meta["forward_jump_target"],
+            "jump_eta": forward_meta["jump_eta"],
             "sampler_logit_temperature": effective_logit_temperature,
             "sampler_n_steps": int(sample_timesteps),
             "training_seed": int(effective_cfg.training.seed),
@@ -594,7 +611,7 @@ def run_offline_checkpoint_eval(
         "[offline-eval] "
         f"config_source={experiment_cfg_source} "
         f"sample_timesteps={sample_timesteps} "
-        f"jump_eta={effective_jump_eta} "
+        f"jump_eta={forward_meta['jump_eta']} "
         f"logit_temperature={effective_logit_temperature}",
         flush=True,
     )
