@@ -10,6 +10,8 @@ from typing import Any, Dict, Mapping, Optional
 import jax
 from flax.training import checkpoints
 
+from sticky.rng import legacy_prng_key_data
+
 
 def get_hydra_output_dir() -> Path:
     try:
@@ -214,11 +216,21 @@ class CheckpointWriter:
         self._best_value: Optional[float] = None
         self._best_step: Optional[int] = None
 
+    def _checkpoint_compatible_target(self, target: Any) -> Any:
+        rng = getattr(target, "rng", None)
+        if rng is None:
+            return target
+        try:
+            return target.replace(rng=legacy_prng_key_data(rng))
+        except Exception:
+            return target
+
     def _save(self, *, target, step_i: int, ckpt_dir: Path, keep: int, overwrite: bool):
         if jax.process_index() != 0:
             return
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        host_target = jax.device_get(target)
+        save_target = self._checkpoint_compatible_target(target)
+        host_target = jax.device_get(save_target)
         checkpoints.save_checkpoint(
             ckpt_dir=str(ckpt_dir),
             target=host_target,
