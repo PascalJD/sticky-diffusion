@@ -122,6 +122,33 @@ def build_sampling_fns(
                     lambda p, r: _sample_images_cadd(p, r, fid_batch_size)
                 )
 
+    elif str(cfg.model.name) == "candi":
+        from sticky.models.candi import sampling as candi_sampling
+
+        candi_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
+
+        def _sample_images_candi(params, rng, batch_size: int):
+            sample_state = {"params": params, "ema_params": None}
+            return candi_sampling.simple_generate(
+                rng,
+                sample_state,
+                model=model,
+                batch_size=batch_size,
+                timesteps=sample_timesteps,
+                conditioning=None,
+                use_ema=False,
+            )
+
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_candi(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(
+                    lambda p, r: _sample_images_candi(p, r, fid_batch_size)
+                )
+
     elif str(cfg.model.name) == "ddpm":
         from sticky.models.ddpm import sampling as ddpm_sampling
 
@@ -147,6 +174,33 @@ def build_sampling_fns(
             else:
                 sample_images_fid_jit = jax.jit(
                     lambda p, r: _sample_images_ddpm(p, r, fid_batch_size)
+                )
+
+    elif str(cfg.model.name) == "bitdiff":
+        from sticky.models.bitdiff import sampling as bitdiff_sampling
+
+        bitdiff_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
+
+        def _sample_images_bitdiff(params, rng, batch_size: int):
+            sample_state = {"params": params, "ema_params": None}
+            return bitdiff_sampling.simple_generate(
+                rng,
+                sample_state,
+                model=model,
+                batch_size=batch_size,
+                timesteps=sample_timesteps,
+                conditioning=None,
+                use_ema=False,
+            )
+
+        sample_images_jit = jax.jit(lambda p, r: _sample_images_bitdiff(p, r, num_log_images))
+
+        if fid_every > 0:
+            if fid_batch_size == num_log_images:
+                sample_images_fid_jit = sample_images_jit
+            else:
+                sample_images_fid_jit = jax.jit(
+                    lambda p, r: _sample_images_bitdiff(p, r, fid_batch_size)
                 )
 
     elif str(cfg.model.name) == "sjd":

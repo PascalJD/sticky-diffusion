@@ -9,7 +9,7 @@ from .networks import unet, uvit
 
 
 class UNet5DBackbone(nn.Module):
-    """Apply a 2D UNet/UViT backbone on flattened 5D inputs.
+    """Apply a 2D UNet/UViT backbone on flattened 5D image-token inputs.
 
     Input:
       [B, H, W, C, D]
@@ -55,6 +55,9 @@ class UNet5DBackbone(nn.Module):
 
 class ADMUNet5DBackbone(nn.Module):
     """ADM-style UNet applied on flattened 5D image-token inputs.
+
+    The final axis can hold embedded discrete tokens or any continuous
+    per-token feature representation.
 
     Input:
       [B, H, W, C, D]

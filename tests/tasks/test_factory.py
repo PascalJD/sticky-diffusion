@@ -32,6 +32,8 @@ def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
     )
 
     for task_name in (
+        "bitdiff_cifar10",
+        "candi_cifar10",
         "cadd_cifar10",
         "ddpm_cifar10",
         "md4_cifar10",

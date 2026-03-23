@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+method: hybrid_cache
+sampling_grid: cosine
+guidance_scale: 0.0

@@ -15,6 +15,8 @@ def _compose(overrides: list[str]):
 
 def test_canonical_cifar10_experiments_compose():
     for experiment, model_name in (
+        ("bitdiff_cifar10", "bitdiff"),
+        ("candi_cifar10", "candi"),
         ("cadd_cifar10", "cadd"),
         ("ddpm_cifar10", "ddpm"),
         ("d3pm_absorb_cifar10", "d3pm"),
@@ -36,6 +38,8 @@ def test_canonical_cifar10_experiments_compose():
 
 def test_adm_image_models_share_canonical_architecture_bundle():
     expectations = {
+        "bitdiff_cifar10": "adm_unet5d",
+        "candi_cifar10": "adm_unet5d",
         "cadd_cifar10": "adm_unet5d",
         "ddpm_cifar10": "adm_unet2d",
         "d3pm_absorb_cifar10": "adm_unet5d",
@@ -78,6 +82,48 @@ def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
         ]
     )
     assert override_cfg.experiment.model.cadd_latent.type == "flow_matching"
+
+
+def test_candi_cifar10_uses_canonical_adm_image_bundle():
+    cfg = _compose(["experiment=candi_cifar10", "eval=cifar10"])
+
+    assert cfg.experiment.model.name == "candi"
+    assert cfg.experiment.model.image_backbone == "adm_unet5d"
+    assert cfg.experiment.model.sequence_backbone == "auto"
+    assert cfg.experiment.model.feature_dim == 96
+    assert cfg.experiment.model.ch_mult == [3, 4, 4]
+    assert cfg.experiment.model.adm_num_res_blocks == 4
+    assert cfg.experiment.model.adm_attention_resolutions == [2, 4]
+    assert cfg.experiment.model.adm_num_heads == 4
+    assert cfg.experiment.model.adm_num_head_channels == 64
+    assert cfg.experiment.model.representation == "embed"
+    assert cfg.experiment.model.experimental is True
+    assert cfg.experiment.model.classes == -1
+    assert cfg.experiment.sampler.method == "hybrid_cache"
+    assert cfg.experiment.sampler.sampling_grid == "cosine"
+    assert cfg.experiment.training.sample_timesteps == 256
+
+
+def test_bitdiff_cifar10_uses_canonical_adm_image_bundle():
+    cfg = _compose(["experiment=bitdiff_cifar10", "eval=cifar10"])
+
+    assert cfg.experiment.model.name == "bitdiff"
+    assert cfg.experiment.model.image_backbone == "adm_unet5d"
+    assert cfg.experiment.model.sequence_backbone == "auto"
+    assert cfg.experiment.model.feature_dim == 96
+    assert cfg.experiment.model.ch_mult == [3, 4, 4]
+    assert cfg.experiment.model.adm_num_res_blocks == 4
+    assert cfg.experiment.model.adm_attention_resolutions == [2, 4]
+    assert cfg.experiment.model.adm_num_heads == 4
+    assert cfg.experiment.model.adm_num_head_channels == 64
+    assert cfg.experiment.model.encoding == "uint8"
+    assert cfg.experiment.model.predict_target == "x0"
+    assert cfg.experiment.model.self_conditioning is True
+    assert cfg.experiment.model.classes == -1
+    assert cfg.experiment.sampler.method == "ddim"
+    assert cfg.experiment.sampler.time_difference == 0.0
+    assert cfg.experiment.sampler.stochasticity == 0.0
+    assert cfg.experiment.training.sample_timesteps == 256
 
 
 def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
@@ -171,6 +217,8 @@ def test_ddpm_cifar10_sampler_tracks_model_timesteps():
 
 def test_cifar10_report_eval_profile_composes_for_all_canonical_experiments():
     for experiment in (
+        "bitdiff_cifar10",
+        "candi_cifar10",
         "cadd_cifar10",
         "ddpm_cifar10",
         "d3pm_absorb_cifar10",

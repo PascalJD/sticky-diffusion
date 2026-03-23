@@ -1,0 +1,9 @@
+defaults:
+  - base
+  - _self_
+
+# Bit Diffusion defaults to deterministic DDIM-like sampling.
+method: ddim
+sampling_grid: uniform
+time_difference: 0.0
+stochasticity: 0.0

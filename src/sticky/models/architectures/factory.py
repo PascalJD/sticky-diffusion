@@ -67,6 +67,69 @@ def build_sequence_backbone(
     )
 
 
+def build_image_token_backbone(
+    *,
+    name: str,
+    feature_dim: int,
+    n_layers: int,
+    n_dit_layers: int,
+    dit_num_heads: int,
+    dit_hidden_size: int,
+    ch_mult: Sequence[int],
+    output_channels: int,
+    dropout_rate: float,
+    adm_num_res_blocks: int,
+    adm_attention_resolutions: Sequence[int],
+    adm_num_heads: int,
+    adm_num_head_channels: int,
+    adm_num_heads_upsample: int,
+    adm_conv_resample: bool,
+    adm_use_scale_shift_norm: bool,
+    adm_resblock_updown: bool,
+    adm_use_conv_skip: bool,
+    adm_use_new_attention_order: bool,
+) -> nn.Module:
+    """Create a shared 5D image-token backbone for embedded or continuous inputs."""
+    key = str(name).lower()
+    if key == "auto":
+        key = "unet5d"
+
+    if key == "unet5d":
+        return UNet5DBackbone(
+            feature_dim=int(feature_dim),
+            n_layers=int(n_layers),
+            n_dit_layers=int(n_dit_layers),
+            dit_num_heads=int(dit_num_heads),
+            dit_hidden_size=int(dit_hidden_size),
+            ch_mult=tuple(int(x) for x in ch_mult),
+            output_channels=int(output_channels),
+            dropout_rate=float(dropout_rate),
+        )
+
+    if key == "adm_unet5d":
+        return ADMUNet5DBackbone(
+            feature_dim=int(feature_dim),
+            output_channels=int(output_channels),
+            num_res_blocks=int(adm_num_res_blocks),
+            attention_resolutions=tuple(int(v) for v in adm_attention_resolutions),
+            channel_mult=tuple(int(x) for x in ch_mult),
+            num_heads=int(adm_num_heads),
+            num_head_channels=int(adm_num_head_channels),
+            num_heads_upsample=int(adm_num_heads_upsample),
+            dropout_rate=float(dropout_rate),
+            conv_resample=bool(adm_conv_resample),
+            use_scale_shift_norm=bool(adm_use_scale_shift_norm),
+            resblock_updown=bool(adm_resblock_updown),
+            use_conv_skip=bool(adm_use_conv_skip),
+            use_new_attention_order=bool(adm_use_new_attention_order),
+        )
+
+    raise ValueError(
+        f"Unknown image backbone {name!r}. "
+        "Expected one of: auto, unet5d, adm_unet5d."
+    )
+
+
 def build_image_backbone(
     *,
     name: str,
@@ -89,42 +152,25 @@ def build_image_backbone(
     adm_use_conv_skip: bool,
     adm_use_new_attention_order: bool,
 ) -> nn.Module:
-    """Create image backbone from a Hydra-selected name."""
-    key = str(name).lower()
-    if key == "auto":
-        key = "unet5d"
-
-    if key == "unet5d":
-        return UNet5DBackbone(
-            feature_dim=int(feature_dim),
-            n_layers=int(n_layers),
-            n_dit_layers=int(n_dit_layers),
-            dit_num_heads=int(dit_num_heads),
-            dit_hidden_size=int(dit_hidden_size),
-            ch_mult=tuple(int(x) for x in ch_mult),
-            output_channels=int(vocab_size),
-            dropout_rate=float(dropout_rate),
-        )
-
-    if key == "adm_unet5d":
-        return ADMUNet5DBackbone(
-            feature_dim=int(feature_dim),
-            output_channels=int(vocab_size),
-            num_res_blocks=int(adm_num_res_blocks),
-            attention_resolutions=tuple(int(v) for v in adm_attention_resolutions),
-            channel_mult=tuple(int(x) for x in ch_mult),
-            num_heads=int(adm_num_heads),
-            num_head_channels=int(adm_num_head_channels),
-            num_heads_upsample=int(adm_num_heads_upsample),
-            dropout_rate=float(dropout_rate),
-            conv_resample=bool(adm_conv_resample),
-            use_scale_shift_norm=bool(adm_use_scale_shift_norm),
-            resblock_updown=bool(adm_resblock_updown),
-            use_conv_skip=bool(adm_use_conv_skip),
-            use_new_attention_order=bool(adm_use_new_attention_order),
-        )
-
-    raise ValueError(
-        f"Unknown image backbone {name!r}. "
-        "Expected one of: auto, unet5d, adm_unet5d."
+    """Backward-compatible wrapper for discrete image-token classifiers."""
+    return build_image_token_backbone(
+        name=name,
+        feature_dim=feature_dim,
+        n_layers=n_layers,
+        n_dit_layers=n_dit_layers,
+        dit_num_heads=dit_num_heads,
+        dit_hidden_size=dit_hidden_size,
+        ch_mult=ch_mult,
+        output_channels=int(vocab_size),
+        dropout_rate=dropout_rate,
+        adm_num_res_blocks=adm_num_res_blocks,
+        adm_attention_resolutions=adm_attention_resolutions,
+        adm_num_heads=adm_num_heads,
+        adm_num_head_channels=adm_num_head_channels,
+        adm_num_heads_upsample=adm_num_heads_upsample,
+        adm_conv_resample=adm_conv_resample,
+        adm_use_scale_shift_norm=adm_use_scale_shift_norm,
+        adm_resblock_updown=adm_resblock_updown,
+        adm_use_conv_skip=adm_use_conv_skip,
+        adm_use_new_attention_order=adm_use_new_attention_order,
     )

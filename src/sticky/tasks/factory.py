@@ -26,7 +26,9 @@ def build_task(cfg: DictConfig):
         "d3pm_absorb_cifar10",
         "d3pm_uniform_cifar10",
         "d3pm_gaussian_cifar10",
+        "candi_cifar10",
         "cadd_cifar10",
+        "bitdiff_cifar10",
         "ddpm_cifar10",
     ):
         from sticky.tasks.cifar10_discrete import CIFAR10DiscreteTask

@@ -28,6 +28,16 @@ class _DummyD3PM:
         self.kwargs = kwargs
 
 
+class _DummyBitDiff:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+class _DummyCANDI:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -306,3 +316,148 @@ def test_build_model_reads_d3pm_config_and_sampler_knobs(monkeypatch):
     assert model.kwargs["sampler"] == "ancestral"
     assert model.kwargs["sampling_grid"] == "uniform"
     assert model.kwargs["categorical_sampling_policy"] == "exact"
+
+
+def test_build_model_reads_bitdiff_config_and_sampler_knobs(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.bitdiff.bitdiff_model",
+        SimpleNamespace(BitDiffusion=_DummyBitDiff),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "bitdiff",
+                "cont_time": True,
+                "timesteps": 256,
+                "num_bits": 8,
+                "encoding": "uint8",
+                "predict_target": "x0",
+                "loss_type": "mse",
+                "self_conditioning": True,
+                "self_conditioning_rate": 0.5,
+                "analog_bit_scale": 1.0,
+                "clip_x0": True,
+                "signal_schedule_type": "linear",
+                "schedule_eps": 0.0,
+                "feature_dim": 96,
+                "num_heads": 12,
+                "n_layers": 32,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 768,
+                "ch_mult": [3, 4, 4],
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "swiglu",
+                "depth_scaled_init": False,
+                "cond_type": "adaln",
+                "model_sharding": False,
+                "sequence_backbone": "auto",
+                "image_backbone": "adm_unet5d",
+                "adm_num_res_blocks": 4,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": 64,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+                "time_features": "t",
+                "classes": -1,
+            },
+            "sampler": {
+                "method": "ddpm",
+                "sampling_grid": "cosine",
+                "time_difference": 0.25,
+                "stochasticity": 0.4,
+            },
+        }
+    )
+
+    model = build_model(cfg, data_shape=(32, 32, 3), vocab_size=256)
+
+    assert isinstance(model, _DummyBitDiff)
+    assert model.kwargs["encoding"] == "uint8"
+    assert model.kwargs["predict_target"] == "x0"
+    assert model.kwargs["self_conditioning"] is True
+    assert model.kwargs["image_backbone"] == "adm_unet5d"
+    assert model.kwargs["sampler"] == "ddpm"
+    assert model.kwargs["sampling_grid"] == "cosine"
+    assert model.kwargs["time_difference"] == 0.25
+    assert model.kwargs["stochasticity"] == 0.4
+
+
+def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.candi.candi_model",
+        SimpleNamespace(CANDI=_DummyCANDI),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "candi",
+                "cont_time": True,
+                "timesteps": 256,
+                "representation": "embed",
+                "experimental": True,
+                "alpha_schedule_type": "linear",
+                "schedule_eps": 0.0,
+                "use_percentile_scheduling": True,
+                "min_percentile": 0.01,
+                "max_percentile": 0.45,
+                "sigma_min": 0.2,
+                "sigma_max": 4.0,
+                "ode_step_scale": 0.75,
+                "feature_dim": 96,
+                "num_heads": 12,
+                "n_layers": 32,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 768,
+                "ch_mult": [3, 4, 4],
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "swiglu",
+                "depth_scaled_init": False,
+                "cond_type": "adaln",
+                "model_sharding": False,
+                "sequence_backbone": "auto",
+                "image_backbone": "adm_unet5d",
+                "adm_num_res_blocks": 4,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": 64,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+                "time_features": "t",
+                "classes": -1,
+            },
+            "sampler": {
+                "method": "hybrid_exact",
+                "sampling_grid": "uniform",
+                "categorical_sampling_policy": "exact",
+                "guidance_scale": 0.0,
+            },
+        }
+    )
+
+    model = build_model(cfg, data_shape=(32, 32, 3), vocab_size=256)
+
+    assert isinstance(model, _DummyCANDI)
+    assert model.kwargs["representation"] == "embed"
+    assert model.kwargs["experimental"] is True
+    assert model.kwargs["image_backbone"] == "adm_unet5d"
+    assert model.kwargs["sampler"] == "hybrid_exact"
+    assert model.kwargs["sampling_grid"] == "uniform"
+    assert model.kwargs["categorical_sampling_policy"] == "exact"
+    assert model.kwargs["ode_step_scale"] == 0.75

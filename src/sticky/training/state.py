@@ -129,7 +129,7 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
         else 1
     )
 
-    if name in ("md4", "mdlm", "d3pm", "cadd", "ddpm"):
+    if name in ("md4", "mdlm", "d3pm", "candi", "cadd", "bitdiff", "ddpm"):
         rng, rng_params, rng_sample = jax.random.split(rng, 3)
         dummy_x = jnp.zeros(
             (batch_size,) + tuple(cfg.dataset.data_shape), dtype=jnp.int32

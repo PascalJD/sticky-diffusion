@@ -1,0 +1,12 @@
+# Experimental CIFAR-10 experiment bundle for CANDI.
+defaults:
+  - /dataset: cifar10_discrete
+  - /model: candi_cifar10
+  - /optim: adamw_cifar10
+  - /sampler: candi_cifar10
+  - /training: cifar10
+  - /runtime: default
+  - _self_
+
+task:
+  name: candi_cifar10

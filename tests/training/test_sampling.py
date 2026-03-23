@@ -8,6 +8,8 @@ import pytest
 from omegaconf import OmegaConf
 
 import sticky.models.sjd.anchors as anchor_mod
+import sticky.models.bitdiff.sampling as bitdiff_sampling_mod
+import sticky.models.candi.sampling as candi_sampling_mod
 import sticky.models.d3pm.sampling as d3pm_sampling_mod
 import sticky.models.ddpm.sampling as ddpm_sampling_mod
 import sticky.models.mdlm.sampling as mdlm_sampling_mod
@@ -272,6 +274,100 @@ def test_d3pm_sampling_uses_sample_timesteps(monkeypatch):
 
     assert recorded["batch_size"] == 4
     assert recorded["timesteps"] == 19
+
+
+def test_bitdiff_sampling_uses_sample_timesteps(monkeypatch):
+    recorded: dict[str, int] = {}
+
+    def fake_simple_generate(
+        rng,
+        train_state,
+        *,
+        model,
+        batch_size,
+        conditioning=None,
+        timesteps=None,
+        use_ema=True,
+    ):
+        del rng, train_state, model, conditioning, use_ema
+        recorded["batch_size"] = int(batch_size)
+        recorded["timesteps"] = int(timesteps)
+        return jnp.zeros((batch_size, 32, 32, 3), dtype=jnp.int32)
+
+    monkeypatch.setattr(bitdiff_sampling_mod, "simple_generate", fake_simple_generate)
+
+    cfg = OmegaConf.create({"model": {"name": "bitdiff"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(timesteps=21)
+
+    _, sample_images_fid_jit = build_sampling_fns(
+        cfg=cfg,
+        task=task,
+        model=model,
+        num_log_images=4,
+        sample_timesteps=21,
+        fid_every=1,
+        fid_batch_size=4,
+    )
+
+    assert sample_images_fid_jit is not None
+    out = sample_images_fid_jit({}, jax.random.PRNGKey(0))
+    jax.block_until_ready(out)
+
+    assert recorded["batch_size"] == 4
+    assert recorded["timesteps"] == 21
+
+
+def test_candi_sampling_uses_sample_timesteps(monkeypatch):
+    recorded: dict[str, int] = {}
+
+    def fake_simple_generate(
+        rng,
+        train_state,
+        *,
+        model,
+        batch_size,
+        conditioning=None,
+        timesteps=None,
+        use_ema=True,
+    ):
+        del rng, train_state, model, conditioning, use_ema
+        recorded["batch_size"] = int(batch_size)
+        recorded["timesteps"] = int(timesteps)
+        return jnp.zeros((batch_size, 32, 32, 3), dtype=jnp.int32)
+
+    monkeypatch.setattr(candi_sampling_mod, "simple_generate", fake_simple_generate)
+
+    cfg = OmegaConf.create({"model": {"name": "candi"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(timesteps=21)
+
+    _, sample_images_fid_jit = build_sampling_fns(
+        cfg=cfg,
+        task=task,
+        model=model,
+        num_log_images=4,
+        sample_timesteps=21,
+        fid_every=1,
+        fid_batch_size=4,
+    )
+
+    assert sample_images_fid_jit is not None
+    out = sample_images_fid_jit({}, jax.random.PRNGKey(0))
+    jax.block_until_ready(out)
+
+    assert recorded["batch_size"] == 4
+    assert recorded["timesteps"] == 21
 
 
 def test_ddpm_sampling_rejects_mismatched_timesteps():
