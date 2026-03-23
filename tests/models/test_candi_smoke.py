@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from sticky.models.candi import sampling as candi_sampling
 from sticky.models.candi.candi_model import CANDI
 
 
-def _make_model(*, representation: str = "embed", sampler: str = "hybrid_cache") -> CANDI:
+def _make_model(
+    *,
+    representation: str = "embed",
+    sampler: str = "hybrid_cache",
+    vocab_size: int = 256,
+) -> CANDI:
     return CANDI(
         data_shape=(8, 8, 3),
-        vocab_size=256,
+        vocab_size=vocab_size,
         cont_time=True,
         timesteps=8,
         representation=representation,
@@ -183,3 +189,80 @@ def test_candi_reverse_step_preserves_clean_positions():
     assert jnp.array_equal(next_state["tokens"][:, :2, :2, :], state["tokens"][:, :2, :2, :])
     assert bool(jnp.all(next_state["clean_mask"][:, :2, :2, :]))
     assert jnp.isfinite(next_state["continuous"]).all()
+
+
+def test_candi_loss_uses_weighted_masked_ce_sum_not_mean():
+    model = _make_model(vocab_size=4)
+    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 4
+    variables = _init_model(model, x)
+
+    probs = jnp.asarray(
+        [[[0.8, 0.1, 0.05, 0.05], [0.1, 0.6, 0.2, 0.1], [0.2, 0.1, 0.4, 0.3]]],
+        dtype=jnp.float32,
+    )
+    logits = jnp.log(probs)
+    targets = jnp.asarray([[0, 1, 2]], dtype=jnp.int32)
+    corrupted_mask = jnp.asarray([[1.0, 0.0, 1.0]], dtype=jnp.float32)
+    t = jnp.asarray([0.75], dtype=jnp.float32)
+
+    metrics = model.apply(
+        variables,
+        logits=logits,
+        targets=targets,
+        corrupted_mask=corrupted_mask,
+        t=t,
+        method=model.weighted_masked_ce_loss,
+    )
+
+    ce_sum = -jnp.log(0.8) - jnp.log(0.4)
+    weight = 1.0 / 0.75
+    expected_loss = weight * ce_sum
+    old_mean_weighted_loss = weight * ce_sum / 2.0
+
+    assert jnp.allclose(metrics["per_example_ce_sum"], jnp.asarray([ce_sum], dtype=jnp.float32))
+    assert jnp.allclose(metrics["loss_weight"], jnp.asarray([weight], dtype=jnp.float32))
+    assert jnp.allclose(metrics["loss_ce"], expected_loss)
+    assert not jnp.allclose(metrics["loss_ce"], old_mean_weighted_loss)
+
+
+def test_candi_sampler_modes_are_explicit_about_cache_expected_and_exact():
+    probs = jnp.asarray([[[0.1, 0.2, 0.3, 0.4]]], dtype=jnp.float32)
+    predicted_tokens = jnp.asarray([[3]], dtype=jnp.int32)
+    x_embed = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 4
+
+    cache_model = _make_model(representation="embed", sampler="hybrid_cache", vocab_size=4)
+    cache_vars = _init_model(cache_model, x_embed)
+    cache_target = cache_model.apply(
+        cache_vars,
+        probs=probs,
+        predicted_tokens=predicted_tokens,
+        method=cache_model.continuous_target_from_predictions,
+    )
+
+    expected_model = _make_model(representation="embed", sampler="hybrid_expected", vocab_size=4)
+    expected_vars = _init_model(expected_model, x_embed)
+    expected_target = expected_model.apply(
+        expected_vars,
+        probs=probs,
+        predicted_tokens=predicted_tokens,
+        method=expected_model.continuous_target_from_predictions,
+    )
+
+    exact_model = _make_model(representation="onehot", sampler="hybrid_exact", vocab_size=4)
+    x_onehot = x_embed
+    exact_vars = _init_model(exact_model, x_onehot)
+    exact_target = exact_model.apply(
+        exact_vars,
+        probs=probs,
+        predicted_tokens=predicted_tokens,
+        method=exact_model.continuous_target_from_predictions,
+    )
+
+    assert cache_target.shape == expected_target.shape
+    assert not jnp.allclose(cache_target, expected_target)
+    assert exact_target.shape == probs.shape
+    assert jnp.allclose(exact_target, probs)
+
+    invalid_model = _make_model(representation="embed", sampler="hybrid_exact", vocab_size=4)
+    with pytest.raises(ValueError, match="reserved for representation='onehot'"):
+        _init_model(invalid_model, x_embed)

@@ -102,7 +102,7 @@ class CANDI(nn.Module):
     time_features: str = "t"
     classes: int = -1
 
-    sampler: str = "hybrid_cache"  # hybrid_cache | hybrid_exact
+    sampler: str = "hybrid_cache"  # hybrid_cache | hybrid_expected | hybrid_exact(onehot-only)
     sampling_grid: str = "cosine"
     categorical_sampling_policy: str = "legacy_low"
     guidance_scale: float = 0.0  # Placeholder for future external guidance.
@@ -126,10 +126,11 @@ class CANDI(nn.Module):
                 f"Unsupported CANDI representation={self.representation!r}. "
                 "Expected one of: embed, onehot."
             )
-        if str(self.sampler).lower() not in {"hybrid_cache", "hybrid_exact"}:
+        sampler_key = self._sampler_mode()
+        if sampler_key not in {"hybrid_cache", "hybrid_expected", "hybrid_exact"}:
             raise ValueError(
                 f"Unsupported CANDI sampler={self.sampler!r}. "
-                "Expected one of: hybrid_cache, hybrid_exact."
+                "Expected one of: hybrid_cache, hybrid_expected, hybrid_exact."
             )
         if str(self.sampling_grid).lower() not in {"uniform", "cosine"}:
             raise ValueError(
@@ -184,6 +185,17 @@ class CANDI(nn.Module):
             adm_use_conv_skip=bool(self.adm_use_conv_skip),
             adm_use_new_attention_order=bool(self.adm_use_new_attention_order),
         )
+
+    def _sampler_mode(self) -> str:
+        sampler_key = str(self.sampler).lower()
+        if sampler_key not in {"hybrid_cache", "hybrid_expected", "hybrid_exact"}:
+            return sampler_key
+        if sampler_key == "hybrid_exact" and str(self.representation).lower() != "onehot":
+            raise ValueError(
+                "CANDI sampler='hybrid_exact' is reserved for representation='onehot'. "
+                "For embed mode, use sampler='hybrid_expected' or 'hybrid_cache'."
+            )
+        return sampler_key
 
     def _validate_conditioning(self, conditioning: Array | None) -> None:
         if conditioning is not None:
@@ -380,6 +392,42 @@ class CANDI(nn.Module):
         logits = self.predict_logits(features, t, cond=None, train=train)
         return self._apply_carry_over_logits(logits, tokens=tokens, clean_mask=clean_mask)
 
+    def weighted_masked_ce_loss(
+        self,
+        *,
+        logits: Array,
+        targets: Array,
+        corrupted_mask: Array,
+        t: Array,
+        eps: float = 1e-4,
+    ) -> dict[str, Array]:
+        corrupted_mask = jnp.asarray(corrupted_mask, dtype=jnp.float32)
+        per_example_ce_sum = masked_core.masked_cross_entropy_sums(
+            logits,
+            targets,
+            mask=corrupted_mask,
+        )
+        weight = 1.0 / jnp.maximum(self.discrete_noise(t), float(eps))
+        loss_ce = jnp.mean(weight * per_example_ce_sum)
+        return {
+            "loss": loss_ce,
+            "loss_ce": loss_ce,
+            "mask_frac": jnp.mean(corrupted_mask),
+            "per_example_ce_sum": per_example_ce_sum,
+            "loss_weight": weight,
+        }
+
+    def continuous_target_from_predictions(
+        self,
+        *,
+        probs: Array,
+        predicted_tokens: Array,
+    ) -> Array:
+        sampler_mode = self._sampler_mode()
+        if sampler_mode == "hybrid_cache":
+            return self.clean_representation(predicted_tokens)
+        return self._representation_from_probs(probs)
+
     def get_sampling_grid(self, i: int, timesteps: int) -> tuple[Array, Array]:
         return masked_core.make_sampling_time_pair(
             i,
@@ -410,21 +458,16 @@ class CANDI(nn.Module):
             train=train,
         )
 
-        corrupted_mask = corruption["corrupted_mask"].astype(jnp.float32)
-        per_example_nll = masked_core.masked_cross_entropy_sums(
-            logits,
-            x,
-            mask=corrupted_mask,
+        metrics = self.weighted_masked_ce_loss(
+            logits=logits,
+            targets=x,
+            corrupted_mask=corruption["corrupted_mask"],
+            t=t,
         )
-        corrupted_count = jnp.sum(corrupted_mask, axis=tuple(range(1, corrupted_mask.ndim)))
-        mean_corrupted_ce = per_example_nll / jnp.maximum(corrupted_count, 1.0)
-        weight = 1.0 / jnp.maximum(self.discrete_noise(t), 1e-4)
-        loss_ce = jnp.mean(weight * mean_corrupted_ce)
-
         metrics = {
-            "loss": loss_ce,
-            "loss_ce": loss_ce,
-            "mask_frac": jnp.mean(corrupted_mask),
+            "loss": metrics["loss"],
+            "loss_ce": metrics["loss_ce"],
+            "mask_frac": metrics["mask_frac"],
             "sigma_mean": jnp.mean(corruption["sigma"]),
             "t_mean": jnp.mean(t),
         }
@@ -490,10 +533,10 @@ class CANDI(nn.Module):
             policy=self.categorical_sampling_policy,
         )
 
-        if str(self.sampler).lower() == "hybrid_exact":
-            target_continuous = self._representation_from_probs(probs)
-        else:
-            target_continuous = self.clean_representation(predicted_tokens)
+        target_continuous = self.continuous_target_from_predictions(
+            probs=probs,
+            predicted_tokens=predicted_tokens,
+        )
 
         alpha_t = self.alpha(t_arr)
         alpha_s = self.alpha(s_arr)

@@ -2,6 +2,10 @@ defaults:
   - base
   - _self_
 
+# Experimental sampler modes:
+# - hybrid_cache: cached predicted-token embeddings (default for CIFAR)
+# - hybrid_expected: expected representation under p_theta
+# - hybrid_exact: reserved for debug onehot mode only
 method: hybrid_cache
 sampling_grid: cosine
 guidance_scale: 0.0

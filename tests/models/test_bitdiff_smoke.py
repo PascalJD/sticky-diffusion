@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from sticky.models import continuous_discrete_core as continuous_core
 from sticky.models.bitdiff import sampling as bitdiff_sampling
 from sticky.models.bitdiff.bitdiff_model import BitDiffusion
 
 
-def _make_model(*, self_conditioning: bool = True) -> BitDiffusion:
+def _make_model(
+    *,
+    self_conditioning: bool = True,
+    sampler: str = "ddim",
+    stochasticity: float = 0.0,
+) -> BitDiffusion:
     return BitDiffusion(
         data_shape=(8, 8, 3),
         cont_time=True,
@@ -50,10 +56,10 @@ def _make_model(*, self_conditioning: bool = True) -> BitDiffusion:
         adm_use_new_attention_order=False,
         time_features="t",
         classes=-1,
-        sampler="ddim",
+        sampler=sampler,
         sampling_grid="uniform",
         time_difference=0.0,
-        stochasticity=0.0,
+        stochasticity=stochasticity,
     )
 
 
@@ -134,3 +140,76 @@ def test_bitdiff_smoke_end_to_end():
     assert generated.dtype == jnp.int32
     assert int(generated.min()) >= 0
     assert int(generated.max()) <= 255
+
+
+def test_bitdiff_sampler_contract_runtime_behavior():
+    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
+    latent = jnp.reshape(
+        jnp.linspace(-1.0, 1.0, 2 * 8 * 8 * 3 * 8, dtype=jnp.float32),
+        (2, 8, 8, 3, 8),
+    )
+    rng_params = jax.random.PRNGKey(21)
+    rng_sample = jax.random.PRNGKey(22)
+    step_rng = jax.random.PRNGKey(23)
+
+    model_ddim_det = _make_model(self_conditioning=False, sampler="ddim", stochasticity=0.0)
+    variables_ddim_det = model_ddim_det.init({"params": rng_params, "sample": rng_sample}, x, train=False)
+    out_ddim_det = model_ddim_det.apply(
+        variables_ddim_det,
+        step_rng,
+        0,
+        8,
+        latent,
+        method=model_ddim_det.sample_step,
+    )
+
+    model_ddim_noisy = _make_model(self_conditioning=False, sampler="ddim", stochasticity=0.35)
+    variables_ddim_noisy = model_ddim_noisy.init({"params": rng_params, "sample": rng_sample}, x, train=False)
+    out_ddim_noisy = model_ddim_noisy.apply(
+        variables_ddim_noisy,
+        step_rng,
+        0,
+        8,
+        latent,
+        method=model_ddim_noisy.sample_step,
+    )
+
+    model_ddim_unit = _make_model(self_conditioning=False, sampler="ddim", stochasticity=1.0)
+    variables_ddim_unit = model_ddim_unit.init({"params": rng_params, "sample": rng_sample}, x, train=False)
+    out_ddim_unit = model_ddim_unit.apply(
+        variables_ddim_unit,
+        step_rng,
+        0,
+        8,
+        latent,
+        method=model_ddim_unit.sample_step,
+    )
+
+    model_ddpm = _make_model(self_conditioning=False, sampler="ddpm", stochasticity=1.0)
+    variables_ddpm = model_ddpm.init({"params": rng_params, "sample": rng_sample}, x, train=False)
+    out_ddpm = model_ddpm.apply(
+        variables_ddpm,
+        step_rng,
+        0,
+        8,
+        latent,
+        method=model_ddpm.sample_step,
+    )
+
+    assert model_ddim_det._sampling_eta() == 0.0
+    assert model_ddim_noisy._sampling_eta() == 0.35
+    assert model_ddpm._sampling_eta() == 1.0
+    assert not jnp.allclose(out_ddim_det, out_ddim_noisy)
+    assert jnp.allclose(out_ddpm, out_ddim_unit)
+
+
+def test_bitdiff_ddpm_alias_rejects_non_unit_stochasticity():
+    model = _make_model(self_conditioning=False, sampler="ddpm", stochasticity=0.4)
+    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
+
+    with pytest.raises(ValueError, match="fixed eta=1.0"):
+        model.init(
+            {"params": jax.random.PRNGKey(30), "sample": jax.random.PRNGKey(31)},
+            x,
+            train=False,
+        )

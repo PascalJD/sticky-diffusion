@@ -323,6 +323,28 @@ def test_bitdiff_sampling_uses_sample_timesteps(monkeypatch):
     assert recorded["timesteps"] == 21
 
 
+def test_bitdiff_sampling_rejects_ddpm_without_unit_eta():
+    cfg = OmegaConf.create({"model": {"name": "bitdiff"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(timesteps=21, sampler="ddpm", stochasticity=0.4)
+
+    with pytest.raises(ValueError, match="fixed eta=1.0"):
+        build_sampling_fns(
+            cfg=cfg,
+            task=task,
+            model=model,
+            num_log_images=4,
+            sample_timesteps=21,
+            fid_every=1,
+            fid_batch_size=4,
+        )
+
+
 def test_candi_sampling_uses_sample_timesteps(monkeypatch):
     recorded: dict[str, int] = {}
 
@@ -368,6 +390,32 @@ def test_candi_sampling_uses_sample_timesteps(monkeypatch):
 
     assert recorded["batch_size"] == 4
     assert recorded["timesteps"] == 21
+
+
+def test_candi_sampling_rejects_hybrid_exact_for_embed_mode():
+    cfg = OmegaConf.create({"model": {"name": "candi"}})
+    task = SimpleNamespace(
+        spec=SimpleNamespace(
+            data_shape=(32, 32, 3),
+            vocab_size=256,
+        )
+    )
+    model = SimpleNamespace(
+        timesteps=21,
+        sampler="hybrid_exact",
+        representation="embed",
+    )
+
+    with pytest.raises(ValueError, match="reserved for representation='onehot'"):
+        build_sampling_fns(
+            cfg=cfg,
+            task=task,
+            model=model,
+            num_log_images=4,
+            sample_timesteps=21,
+            fid_every=1,
+            fid_batch_size=4,
+        )
 
 
 def test_ddpm_sampling_rejects_mismatched_timesteps():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import math
 from typing import Any, Optional
 
 import jax
@@ -22,10 +23,21 @@ def _get_params(train_state: Any, *, use_ema: bool = True):
 
 
 def validate_timesteps(*, model: Any, timesteps: int | None) -> int:
+    validate_sampler_contract(model=model)
     total_steps = int(model.timesteps if timesteps is None else timesteps)
     if total_steps <= 0:
         raise ValueError(f"BitDiffusion requires sample timesteps > 0, got {total_steps}.")
     return total_steps
+
+
+def validate_sampler_contract(*, model: Any) -> None:
+    sampler = str(getattr(model, "sampler", "ddim")).lower()
+    stochasticity = float(getattr(model, "stochasticity", 0.0))
+    if sampler == "ddpm" and not math.isclose(stochasticity, 1.0, rel_tol=0.0, abs_tol=1e-6):
+        raise ValueError(
+            "BitDiffusion sampler='ddpm' is a DDIM-style alias with fixed eta=1.0. "
+            "Set stochasticity=1.0 or use sampler='ddim' for custom eta."
+        )
 
 
 def _initial_sampling_state(model: Any, variables: dict[str, Any], batch_size: int, rng: jax.Array):

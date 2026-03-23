@@ -373,7 +373,7 @@ def test_build_model_reads_bitdiff_config_and_sampler_knobs(monkeypatch):
                 "method": "ddpm",
                 "sampling_grid": "cosine",
                 "time_difference": 0.25,
-                "stochasticity": 0.4,
+                "stochasticity": 1.0,
             },
         }
     )
@@ -388,7 +388,7 @@ def test_build_model_reads_bitdiff_config_and_sampler_knobs(monkeypatch):
     assert model.kwargs["sampler"] == "ddpm"
     assert model.kwargs["sampling_grid"] == "cosine"
     assert model.kwargs["time_difference"] == 0.25
-    assert model.kwargs["stochasticity"] == 0.4
+    assert model.kwargs["stochasticity"] == 1.0
 
 
 def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
@@ -443,7 +443,7 @@ def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
                 "classes": -1,
             },
             "sampler": {
-                "method": "hybrid_exact",
+                "method": "hybrid_expected",
                 "sampling_grid": "uniform",
                 "categorical_sampling_policy": "exact",
                 "guidance_scale": 0.0,
@@ -457,7 +457,7 @@ def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
     assert model.kwargs["representation"] == "embed"
     assert model.kwargs["experimental"] is True
     assert model.kwargs["image_backbone"] == "adm_unet5d"
-    assert model.kwargs["sampler"] == "hybrid_exact"
+    assert model.kwargs["sampler"] == "hybrid_expected"
     assert model.kwargs["sampling_grid"] == "uniform"
     assert model.kwargs["categorical_sampling_policy"] == "exact"
     assert model.kwargs["ode_step_scale"] == 0.75

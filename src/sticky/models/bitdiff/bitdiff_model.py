@@ -121,6 +121,14 @@ class BitDiffusion(nn.Module):
                 f"Unsupported BitDiffusion sampler={self.sampler!r}. "
                 "Expected one of: ddim, ddpm."
             )
+        if (
+            str(self.sampler).lower() == "ddpm"
+            and not math.isclose(float(self.stochasticity), 1.0, rel_tol=0.0, abs_tol=1e-6)
+        ):
+            raise ValueError(
+                "BitDiffusion sampler='ddpm' is a DDIM-style alias with fixed eta=1.0. "
+                "Set stochasticity=1.0 or use sampler='ddim' for custom eta."
+            )
         if str(self.sampling_grid).lower() not in {"uniform", "cosine"}:
             raise ValueError(
                 f"Unsupported BitDiffusion sampling_grid={self.sampling_grid!r}. "
@@ -198,8 +206,8 @@ class BitDiffusion(nn.Module):
             return x0
         return jnp.clip(
             x0,
-            a_min=min(self.analog_low, self.analog_high),
-            a_max=max(self.analog_low, self.analog_high),
+            min=min(self.analog_low, self.analog_high),
+            max=max(self.analog_low, self.analog_high),
         )
 
     def encode_tokens(self, x: Array) -> Array:
@@ -372,7 +380,7 @@ class BitDiffusion(nn.Module):
 
     def _sampling_eta(self) -> float:
         if str(self.sampler).lower() == "ddpm":
-            return max(float(self.stochasticity), 1.0)
+            return 1.0
         return float(self.stochasticity)
 
     def _extract_sample_latent(self, state: Any) -> Array:

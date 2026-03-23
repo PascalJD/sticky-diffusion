@@ -21,10 +21,21 @@ def _get_params(train_state: Any, *, use_ema: bool = True):
 
 
 def validate_timesteps(*, model: Any, timesteps: int | None) -> int:
+    validate_sampler_contract(model=model)
     total_steps = int(model.timesteps if timesteps is None else timesteps)
     if total_steps <= 0:
         raise ValueError(f"CANDI requires sample timesteps > 0, got {total_steps}.")
     return total_steps
+
+
+def validate_sampler_contract(*, model: Any) -> None:
+    sampler = str(getattr(model, "sampler", "hybrid_cache")).lower()
+    representation = str(getattr(model, "representation", "embed")).lower()
+    if sampler == "hybrid_exact" and representation != "onehot":
+        raise ValueError(
+            "CANDI sampler='hybrid_exact' is reserved for representation='onehot'. "
+            "For embed mode, use sampler='hybrid_expected' or 'hybrid_cache'."
+        )
 
 
 def simple_generate(
