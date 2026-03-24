@@ -102,7 +102,7 @@ class CANDI(nn.Module):
     time_features: str = "t"
     classes: int = -1
 
-    sampler: str = "hybrid_cache"  # hybrid_cache | hybrid_expected | hybrid_exact(onehot-only)
+    sampler: str = "continuous"  # continuous | hybrid_cache | hybrid_expected | hybrid_exact(onehot-only)
     sampling_grid: str = "cosine"
     categorical_sampling_policy: str = "legacy_low"
     guidance_scale: float = 0.0  # Placeholder for future external guidance.
@@ -127,10 +127,10 @@ class CANDI(nn.Module):
                 "Expected one of: embed, onehot."
             )
         sampler_key = self._sampler_mode()
-        if sampler_key not in {"hybrid_cache", "hybrid_expected", "hybrid_exact"}:
+        if sampler_key not in {"continuous", "hybrid_cache", "hybrid_expected", "hybrid_exact"}:
             raise ValueError(
                 f"Unsupported CANDI sampler={self.sampler!r}. "
-                "Expected one of: hybrid_cache, hybrid_expected, hybrid_exact."
+                "Expected one of: continuous, hybrid_cache, hybrid_expected, hybrid_exact."
             )
         if str(self.sampling_grid).lower() not in {"uniform", "cosine"}:
             raise ValueError(
@@ -188,7 +188,7 @@ class CANDI(nn.Module):
 
     def _sampler_mode(self) -> str:
         sampler_key = str(self.sampler).lower()
-        if sampler_key not in {"hybrid_cache", "hybrid_expected", "hybrid_exact"}:
+        if sampler_key not in {"continuous", "hybrid_cache", "hybrid_expected", "hybrid_exact"}:
             return sampler_key
         if sampler_key == "hybrid_exact" and str(self.representation).lower() != "onehot":
             raise ValueError(
@@ -196,6 +196,9 @@ class CANDI(nn.Module):
                 "For embed mode, use sampler='hybrid_expected' or 'hybrid_cache'."
             )
         return sampler_key
+
+    def _is_embed_mode(self) -> bool:
+        return str(self.representation).lower() == "embed"
 
     def _validate_conditioning(self, conditioning: Array | None) -> None:
         if conditioning is not None:
@@ -215,6 +218,15 @@ class CANDI(nn.Module):
 
     def sigma_from_discrete_noise(self, discrete_noise: Array) -> Array:
         discrete_noise = jnp.clip(jnp.asarray(discrete_noise, dtype=jnp.float32), 0.0, 1.0)
+        # The torch reference always uses the VE/log-linear sigma rule for
+        # embedding diffusion, even if percentile scheduling is enabled for
+        # discrete/onehot variants.
+        if self._is_embed_mode():
+            sigma = float(self.sigma_min) * (
+                float(self.sigma_max) / float(self.sigma_min)
+            ) ** discrete_noise
+            return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+
         if bool(self.use_percentile_scheduling):
             percentile = (
                 discrete_noise
@@ -381,8 +393,13 @@ class CANDI(nn.Module):
         continuous: Array,
         t: Array,
         train: bool,
+        sigma_override: Array | None = None,
     ) -> Array:
-        sigma = self.sigma_from_discrete_noise(self.discrete_noise(t))
+        sigma = (
+            self.sigma_from_discrete_noise(self.discrete_noise(t))
+            if sigma_override is None
+            else jnp.asarray(sigma_override, dtype=jnp.float32)
+        )
         features = self._build_input_features(
             tokens=tokens,
             clean_mask=clean_mask,
@@ -475,6 +492,24 @@ class CANDI(nn.Module):
 
     def prior_sample(self, batch_size: int) -> dict[str, Array]:
         batch_size = int(batch_size)
+        if self._is_embed_mode():
+            rng_noise = self.make_rng("sample")
+            tokens = jnp.zeros((batch_size,) + tuple(self.data_shape), dtype=jnp.int32)
+            clean_mask = jnp.zeros(tokens.shape, dtype=bool)
+            noise = jax.random.normal(
+                rng_noise,
+                tokens.shape + (int(self.feature_dim),),
+                dtype=jnp.float32,
+            )
+            # Match the torch embed prior: start from pure Gaussian latent noise,
+            # not token embeddings plus noise.
+            continuous = float(self.sigma_max) * noise
+            return {
+                "tokens": tokens,
+                "clean_mask": clean_mask,
+                "continuous": continuous,
+            }
+
         rng_tokens, rng_noise = jax.random.split(self.make_rng("sample"))
         tokens = jax.random.randint(
             rng_tokens,
@@ -497,35 +532,73 @@ class CANDI(nn.Module):
             "continuous": continuous,
         }
 
-    def sample_step(
+    def _continuous_step(
         self,
-        rng: Array,
-        i: int,
-        timesteps: int,
-        state: dict[str, Array],
         *,
-        conditioning: Array | None = None,
+        tokens: Array,
+        clean_mask: Array,
+        continuous: Array,
+        t: Array,
+        s: Array,
     ) -> dict[str, Array]:
-        self._validate_conditioning(conditioning)
-
-        tokens = jnp.asarray(state["tokens"], dtype=jnp.int32)
-        clean_mask = jnp.asarray(state["clean_mask"], dtype=bool)
-        continuous = jnp.asarray(state["continuous"], dtype=jnp.float32)
-
-        s, t = self.get_sampling_grid(i, int(timesteps))
-        t_arr = jnp.full((tokens.shape[0],), jnp.asarray(t, dtype=jnp.float32))
-        s_arr = jnp.full((tokens.shape[0],), jnp.asarray(s, dtype=jnp.float32))
-
+        # The torch reference conditions on the current discrete time but uses
+        # the next sigma in the continuous update and sigma feature input.
+        sigma_from = self.sigma_from_discrete_noise(self.discrete_noise(t))
+        sigma_to = self.sigma_from_discrete_noise(self.discrete_noise(s))
         logits = self._predict_state_logits(
             tokens=tokens,
             clean_mask=clean_mask,
             continuous=continuous,
-            t=t_arr,
+            t=t,
+            train=False,
+            sigma_override=sigma_to,
+        )
+        probs = jax.nn.softmax(logits, axis=-1)
+        target_continuous = self._representation_from_probs(probs)
+
+        sigma_to_feat = self._sigma_feature(sigma_to, target_ndim=tokens.ndim)
+        sigma_to_sq = jnp.maximum(sigma_to_feat**2, 1e-6)
+        delta_sigma = jnp.maximum(
+            self._sigma_feature(sigma_from - sigma_to, target_ndim=tokens.ndim),
+            0.0,
+        )
+        score = (continuous - target_continuous) / sigma_to_sq
+        continuous_proposal = continuous - float(self.ode_step_scale) * delta_sigma * score
+
+        next_tokens = jnp.where(clean_mask, tokens, jnp.argmax(logits, axis=-1)).astype(
+            jnp.int32
+        )
+        next_exact = self.clean_representation(next_tokens)
+        next_continuous = jnp.where(
+            clean_mask[..., None],
+            next_exact,
+            continuous_proposal,
+        )
+        return {
+            "tokens": next_tokens,
+            "clean_mask": clean_mask,
+            "continuous": next_continuous,
+        }
+
+    def _hybrid_step(
+        self,
+        *,
+        rng: Array,
+        tokens: Array,
+        clean_mask: Array,
+        continuous: Array,
+        t: Array,
+        s: Array,
+    ) -> dict[str, Array]:
+        logits = self._predict_state_logits(
+            tokens=tokens,
+            clean_mask=clean_mask,
+            continuous=continuous,
+            t=t,
             train=False,
         )
         probs = jax.nn.softmax(logits, axis=-1)
 
-        rng = jax.random.fold_in(rng, i)
         rng_tokens, rng_reveal = jax.random.split(rng)
         predicted_tokens = categorical_sample_from_logits(
             rng_tokens,
@@ -538,8 +611,8 @@ class CANDI(nn.Module):
             predicted_tokens=predicted_tokens,
         )
 
-        alpha_t = self.alpha(t_arr)
-        alpha_s = self.alpha(s_arr)
+        alpha_t = self.alpha(t)
+        alpha_s = self.alpha(s)
         reveal_prob = jnp.clip(
             (alpha_s - alpha_t) / jnp.maximum(1.0 - alpha_t, 1e-6),
             min=0.0,
@@ -552,8 +625,8 @@ class CANDI(nn.Module):
         )
         next_clean_mask = clean_mask | newly_revealed
 
-        sigma_t = self.sigma_from_discrete_noise(self.discrete_noise(t_arr))
-        sigma_s = self.sigma_from_discrete_noise(self.discrete_noise(s_arr))
+        sigma_t = self.sigma_from_discrete_noise(self.discrete_noise(t))
+        sigma_s = self.sigma_from_discrete_noise(self.discrete_noise(s))
         sigma_sq = jnp.maximum(self._sigma_feature(sigma_t, target_ndim=tokens.ndim) ** 2, 1e-6)
         delta_sigma = jnp.maximum(
             self._sigma_feature(sigma_t - sigma_s, target_ndim=tokens.ndim),
@@ -575,6 +648,42 @@ class CANDI(nn.Module):
             "clean_mask": next_clean_mask,
             "continuous": next_continuous,
         }
+
+    def sample_step(
+        self,
+        rng: Array,
+        i: int,
+        timesteps: int,
+        state: dict[str, Array],
+        *,
+        conditioning: Array | None = None,
+    ) -> dict[str, Array]:
+        self._validate_conditioning(conditioning)
+
+        tokens = jnp.asarray(state["tokens"], dtype=jnp.int32)
+        clean_mask = jnp.asarray(state["clean_mask"], dtype=bool)
+        continuous = jnp.asarray(state["continuous"], dtype=jnp.float32)
+
+        s, t = self.get_sampling_grid(i, int(timesteps))
+        t_arr = jnp.full((tokens.shape[0],), jnp.asarray(t, dtype=jnp.float32))
+        s_arr = jnp.full((tokens.shape[0],), jnp.asarray(s, dtype=jnp.float32))
+        rng = jax.random.fold_in(rng, i)
+        if self._is_embed_mode():
+            return self._continuous_step(
+                tokens=tokens,
+                clean_mask=clean_mask,
+                continuous=continuous,
+                t=t_arr,
+                s=s_arr,
+            )
+        return self._hybrid_step(
+            rng=rng,
+            tokens=tokens,
+            clean_mask=clean_mask,
+            continuous=continuous,
+            t=t_arr,
+            s=s_arr,
+        )
 
     def decode(
         self,

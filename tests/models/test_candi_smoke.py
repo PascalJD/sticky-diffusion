@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from flax.core import freeze, unfreeze
 import jax
 import jax.numpy as jnp
 import pytest
@@ -11,8 +12,9 @@ from sticky.models.candi.candi_model import CANDI
 def _make_model(
     *,
     representation: str = "embed",
-    sampler: str = "hybrid_cache",
+    sampler: str = "continuous",
     vocab_size: int = 256,
+    use_percentile_scheduling: bool = False,
 ) -> CANDI:
     return CANDI(
         data_shape=(8, 8, 3),
@@ -23,7 +25,7 @@ def _make_model(
         experimental=True,
         alpha_schedule_type="linear",
         schedule_eps=0.0,
-        use_percentile_scheduling=True,
+        use_percentile_scheduling=use_percentile_scheduling,
         min_percentile=0.01,
         max_percentile=0.45,
         sigma_min=0.2,
@@ -266,3 +268,85 @@ def test_candi_sampler_modes_are_explicit_about_cache_expected_and_exact():
     invalid_model = _make_model(representation="embed", sampler="hybrid_exact", vocab_size=4)
     with pytest.raises(ValueError, match="reserved for representation='onehot'"):
         _init_model(invalid_model, x_embed)
+
+
+def test_candi_embed_prior_is_pure_gaussian_and_independent_of_token_embeddings():
+    model = _make_model(representation="embed", sampler="continuous", use_percentile_scheduling=True)
+    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
+    variables = _init_model(model, x)
+
+    prior_rng = jax.random.PRNGKey(21)
+    prior = model.apply(
+        variables,
+        2,
+        method=model.prior_sample,
+        rngs={"sample": prior_rng},
+    )
+
+    mutated_params = unfreeze(variables["params"])
+    mutated_params["token_embed"]["table"] = (
+        mutated_params["token_embed"]["table"] + 123.0
+    )
+    mutated_variables = {"params": freeze(mutated_params)}
+    mutated_prior = model.apply(
+        mutated_variables,
+        2,
+        method=model.prior_sample,
+        rngs={"sample": prior_rng},
+    )
+
+    assert jnp.array_equal(prior["tokens"], jnp.zeros_like(prior["tokens"]))
+    assert not bool(jnp.any(prior["clean_mask"]))
+    assert jnp.allclose(prior["continuous"], mutated_prior["continuous"])
+
+
+def test_candi_embed_sigma_schedule_is_log_linear_ve():
+    model = _make_model(representation="embed", sampler="continuous", use_percentile_scheduling=True)
+    x = jnp.reshape(jnp.arange(8 * 8 * 3, dtype=jnp.int32), (1, 8, 8, 3)) % 256
+    variables = _init_model(model, x)
+
+    discrete_noise = jnp.asarray([0.0, 0.25, 0.5, 1.0], dtype=jnp.float32)
+    sigma = model.apply(
+        variables,
+        discrete_noise,
+        method=model.sigma_from_discrete_noise,
+    )
+    expected = float(model.sigma_min) * (
+        float(model.sigma_max) / float(model.sigma_min)
+    ) ** discrete_noise
+
+    assert jnp.allclose(sigma, expected)
+
+
+def test_candi_embed_sample_step_bypasses_hybrid_reveal_path(monkeypatch):
+    def _unexpected_hybrid_step(self, **kwargs):
+        del self, kwargs
+        raise AssertionError("embed sampling should not use the hybrid reveal path")
+
+    monkeypatch.setattr(CANDI, "_hybrid_step", _unexpected_hybrid_step)
+
+    model = _make_model(
+        representation="embed",
+        sampler="hybrid_cache",
+        use_percentile_scheduling=True,
+    )
+    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
+    variables = _init_model(model, x)
+    prior = model.apply(
+        variables,
+        2,
+        method=model.prior_sample,
+        rngs={"sample": jax.random.PRNGKey(31)},
+    )
+
+    next_state = model.apply(
+        variables,
+        jax.random.PRNGKey(32),
+        0,
+        8,
+        prior,
+        method=model.sample_step,
+    )
+
+    assert not bool(jnp.any(next_state["clean_mask"]))
+    assert next_state["continuous"].shape == prior["continuous"].shape

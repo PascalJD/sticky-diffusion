@@ -14,8 +14,8 @@ representation: embed
 alpha_schedule_type: linear
 schedule_eps: 0.0
 
-# Continuous corruption schedule for corrupted positions.
-use_percentile_scheduling: true
+# Embed mode follows the torch reference's VE/log-linear sigma schedule.
+use_percentile_scheduling: false
 min_percentile: 0.01
 max_percentile: 0.45
 sigma_min: 0.2
