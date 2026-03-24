@@ -38,6 +38,11 @@ Train vanilla MDLM on Sudoku with top-probability-margin reveal order:
 python -m sticky.entrypoints.train experiment=mdlm_sudoku_top_prob_margin eval=sudoku_mdlm
 ```
 
+Launch the default Sudoku training job on Anvil:
+```bash
+sbatch scripts/anvil_sudoku_train.sbatch
+```
+
 Offline Sudoku checkpoint evaluation:
 ```bash
 python -m sticky.entrypoints.eval_checkpoint \
