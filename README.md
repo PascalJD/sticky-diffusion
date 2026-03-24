@@ -43,7 +43,9 @@ Sudoku dataset setup:
 - If `SCRATCH` is set and `dataset.data_dir` is left at the default `data/sudoku`, files are downloaded to `$SCRATCH/sticky-diffusion/data/sudoku`.
 - You can still override `dataset.data_dir`, `dataset.train_file`, and `dataset.test_file`.
 - Supported sequence ordering is configured via `dataset.seq_order` with values: `dataset`, `fixed`, `random`.
+- `dataset.seq_order=dataset` means “use the token order stored in the `.npy` file”, i.e. the solver-decomposed / dataset order.
 - The `sjd_sudoku` preset uses tuned defaults: 6M GPT-2-like backbone (`3` layers, `12` heads, hidden dim `384`), `batch_size=256`, `learning_rate=3e-4` (warmup `4000`), `grad_clip_norm=1.0`, jump `eta=0.6`, `logit_temperature=0.8`, and `50` reverse sampling steps.
+- Sudoku checkpoint selection now tracks the strict solve-rate metric (`eval/solve_rate`), which requires exact board reconstruction rather than only row/column/box validity.
 - In SJD sampling, `alloc_mode` now defaults to `sample`; `score_scale` controls the reverse score strength, `logit_temperature` only affects jump-time anchor allocation, and the default end cleanup is a forced final plug-in jump on the last positive slice rather than a separate `t=0` classifier projection.
 - Optional manual prefetch:
 ```bash

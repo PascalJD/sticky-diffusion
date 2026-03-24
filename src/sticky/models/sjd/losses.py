@@ -26,8 +26,18 @@ def ce_allocation_loss(
     jump: Optional[object] = None,
     anchor_table: Optional[Array] = None,
     state_dep_log_ratio_clip: float = 10.0,
+    given_mask: Optional[Array] = None,
 ) -> Tuple[Array, Metrics]:
     x0_idx = x0_idx.astype(jnp.int32)
+    if given_mask is None:
+        given_mask = jnp.zeros_like(x0_idx, dtype=jnp.bool_)
+    else:
+        given_mask = jnp.asarray(given_mask, dtype=jnp.bool_)
+        if given_mask.shape != x0_idx.shape:
+            raise ValueError(
+                "given_mask must match x0_idx shape, got "
+                f"{given_mask.shape} vs {x0_idx.shape}."
+            )
 
     B = int(x0_anchor.shape[0])
     key_t, key_vp, key_mask = jax.random.split(key, 3)
@@ -50,6 +60,11 @@ def ce_allocation_loss(
     while p_committed.ndim < x0_idx.ndim:
         p_committed = p_committed[..., None]
     committed = jax.random.bernoulli(key_mask, p=p_committed, shape=x0_idx.shape)
+
+    # Conditional sequence tasks (for example Sudoku) reserve some tokens as
+    # known/given context. Those tokens must stay visible in the corrupted
+    # model input and must never contribute to the allocation loss.
+    committed = jnp.logical_or(committed, given_mask)
     x_in = jnp.where(committed[..., None], x0_anchor, x_t)
 
     logits, _ = apply_fn(params, x_in, t_img)
@@ -57,22 +72,27 @@ def ce_allocation_loss(
 
     # NLL against the true token/anchor index.
     nll = -jnp.take_along_axis(logp, x0_idx[..., None], axis=-1).squeeze(-1)
-    uncommitted_mask = ~committed
-    uncommitted = uncommitted_mask.astype(jnp.float32)
-    uncommitted_count = jnp.sum(uncommitted)
-    denom = jnp.maximum(uncommitted_count, 1.0)
-    loss = jnp.sum(nll * uncommitted) / denom
+    suffix_mask = ~given_mask
+    effective_loss_mask = suffix_mask & (~committed)
+    effective_loss_weight = effective_loss_mask.astype(jnp.float32)
+    effective_loss_count = jnp.sum(effective_loss_weight)
+    denom = jnp.maximum(effective_loss_count, 1.0)
+    loss = jnp.sum(nll * effective_loss_weight) / denom
 
     # Diagnostics.
     probs = jnp.exp(logp)
     pred_idx = jnp.argmax(probs, axis=-1).astype(jnp.int32)
     correct = (pred_idx == x0_idx).astype(jnp.float32)
-    acc_top1 = jnp.sum(correct * uncommitted) / denom
+    acc_top1 = jnp.sum(correct * effective_loss_weight) / denom
 
     ent = -jnp.sum(probs * logp, axis=-1)
-    alloc_entropy = jnp.sum(ent * uncommitted) / denom
-    frac_uncommitted = jnp.mean(uncommitted)
-    frac_committed = 1.0 - frac_uncommitted
+    alloc_entropy = jnp.sum(ent * effective_loss_weight) / denom
+
+    suffix_weight = suffix_mask.astype(jnp.float32)
+    suffix_count = jnp.maximum(jnp.sum(suffix_weight), 1.0)
+    committed_suffix = (suffix_mask & committed).astype(jnp.float32)
+    frac_uncommitted = jnp.sum(effective_loss_weight) / suffix_count
+    frac_committed = jnp.sum(committed_suffix) / suffix_count
 
     metrics: Metrics = {
         "CE/acc_top1_event": acc_top1,
@@ -90,7 +110,7 @@ def ce_allocation_loss(
                 y=x_t,
                 t_img=t_img,
                 logits=logits,
-                uncommitted_mask=uncommitted_mask,
+                uncommitted_mask=effective_loss_mask,
                 anchor_table=anchor_table,
                 beta=beta,
                 jump=jump,

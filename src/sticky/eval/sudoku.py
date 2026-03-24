@@ -108,13 +108,18 @@ def _evaluate_batch_counts(
 
     valid_complete = 0
     board_exact = 0
+    strict_complete = 0
     for i in range(batch_size):
         seq_i = pred_seq[i]
-        if valid_solution(seq_i):
+        is_valid = valid_solution(seq_i)
+        if is_valid:
             valid_complete += 1
         board_pred = _board_from_sequence(seq_i)
-        if np.array_equal(board_pred, puzzle_sol[i]):
+        is_board_exact = np.array_equal(board_pred, puzzle_sol[i])
+        if is_board_exact:
             board_exact += 1
+        if is_valid and is_board_exact:
+            strict_complete += 1
 
     return {
         "num_examples": batch_size,
@@ -122,6 +127,7 @@ def _evaluate_batch_counts(
         "total_pred": total_pred,
         "valid_complete": valid_complete,
         "board_exact": board_exact,
+        "strict_complete": strict_complete,
         "given_token_correct": given_token_correct,
         "given_token_total": given_token_total,
     }
@@ -251,6 +257,7 @@ def build_sudoku_eval_logger(
             "total_pred": 0,
             "valid_complete": 0,
             "board_exact": 0,
+            "strict_complete": 0,
             "given_token_correct": 0,
             "given_token_total": 0,
             "num_batches": 0,
@@ -323,6 +330,7 @@ def build_sudoku_eval_logger(
         acc = _safe_ratio(totals["success_pred"], totals["total_pred"])
         complete = _safe_ratio(totals["valid_complete"], totals["num_examples"])
         board_exact = _safe_ratio(totals["board_exact"], totals["num_examples"])
+        strict_solve = _safe_ratio(totals["strict_complete"], totals["num_examples"])
         given_token_acc = _safe_ratio(
             totals["given_token_correct"],
             totals["given_token_total"],
@@ -332,8 +340,9 @@ def build_sudoku_eval_logger(
             f"{prefix}/acc": float(acc),
             f"{prefix}/acc_complete_puzzle": float(complete),
             f"{prefix}/acc_board_exact": float(board_exact),
+            f"{prefix}/acc_solve_strict": float(strict_solve),
             f"{prefix}/given_token_acc": float(given_token_acc),
-            f"{prefix}/solve_rate": float(complete),
+            f"{prefix}/solve_rate": float(strict_solve),
             f"{prefix}/num_examples": float(totals["num_examples"]),
             f"{prefix}/num_pred_cells": float(totals["total_pred"]),
             f"{prefix}/num_batches": float(totals["num_batches"]),

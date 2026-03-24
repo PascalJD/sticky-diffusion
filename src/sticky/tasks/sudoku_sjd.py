@@ -22,6 +22,11 @@ class SudokuSJDTask(Task):
     `[0, 9]` with:
       - row/col in `[0, 8]`
       - value in `[1, 9]`
+
+    The original Google Sudoku task is conditional sequence modeling:
+      - the first `3 * start_index` tokens are the given clue prefix
+      - the remaining tokens are the solution suffix
+      - training loss is applied only on the suffix
     """
 
     # dataset
@@ -116,6 +121,12 @@ class SudokuSJDTask(Task):
 
         # Discrete sequence tokens [B, 243].
         x0_idx = batch["image"].astype(jnp.int32)
+        start_index = batch["start_index"].astype(jnp.int32)
+
+        # Match the original Sudoku task definition: the clue prefix is always
+        # conditioned on and never contributes to the loss.
+        token_pos = jnp.arange(x0_idx.shape[-1], dtype=jnp.int32)[None, :]
+        given_mask = token_pos < (3 * start_index)
 
         # Anchor vectors [B, 243, d_anchor].
         x0_anchor = model.apply({"params": params}, x0_idx, method=model.embed)
@@ -149,6 +160,7 @@ class SudokuSJDTask(Task):
             anchor_table=anchor_table,
             state_dep_log_ratio_clip=float(self.state_dep_log_ratio_clip),
             T=float(self.T),
+            given_mask=given_mask,
         )
 
         return loss, metrics
