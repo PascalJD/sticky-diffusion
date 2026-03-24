@@ -14,6 +14,7 @@ from sticky.rng import PRNGKey, ensure_prng_key
 
 
 Array = jnp.ndarray
+_LOGGED_PARAM_COUNT_KEYS: set[tuple[str, str, tuple[int, ...]]] = set()
 
 
 @struct.dataclass
@@ -168,6 +169,20 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
         raise ValueError(f"Unknown model.name={name!r} for init")
 
     params = variables["params"]
+    model_name = str(cfg.model.get("name", "unknown"))
+    sequence_backbone = str(cfg.model.get("sequence_backbone", ""))
+    if (model_name == "mdlm") and (sequence_backbone == "gpt2_like"):
+        key = (model_name, sequence_backbone, tuple(cfg.dataset.data_shape))
+        if key not in _LOGGED_PARAM_COUNT_KEYS:
+            _LOGGED_PARAM_COUNT_KEYS.add(key)
+            param_count = int(
+                sum(int(leaf.size) for leaf in jax.tree_util.tree_leaves(params))
+            )
+            print(
+                f"[model] parameter_count model={model_name} "
+                f"sequence_backbone={sequence_backbone} total={param_count}",
+                flush=True,
+            )
     tx = make_optimizer(cfg, params)
     opt_state = tx.init(params)
 

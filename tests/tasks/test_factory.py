@@ -24,6 +24,11 @@ class _DummyOpenWebTextTask:
         self.kwargs = kwargs
 
 
+class _DummySudokuMDLMTask:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -169,3 +174,43 @@ def test_build_task_accepts_openwebtext_discrete_name(monkeypatch):
     assert task.kwargs["seq_len"] == 1024
     assert task.kwargs["vocab_size"] == 50257
     assert task.kwargs["tokenizer_name"] == "gpt2"
+
+
+def test_build_task_accepts_mdlm_sudoku_name(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.sudoku_mdlm",
+        SimpleNamespace(SudokuMDLMTask=_DummySudokuMDLMTask),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "mdlm_sudoku"},
+            "dataset": {
+                "data_dir": "/tmp/sudoku",
+                "train_file": "train.npy",
+                "test_file": "test.npy",
+                "batch_size": 256,
+                "eval_batch_size": 128,
+                "data_shape": [243],
+                "vocab_size": 10,
+                "num_classes": -1,
+                "drop_remainder": True,
+                "shuffle": True,
+                "mmap": True,
+                "seq_order": "dataset",
+                "max_train_examples": -1,
+                "max_test_examples": -1,
+                "auto_download": True,
+                "download_timeout_sec": 120,
+                "download_retries": 8,
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummySudokuMDLMTask)
+    assert task.kwargs["batch_size"] == 256
+    assert task.kwargs["eval_batch_size"] == 128
+    assert task.kwargs["seq_order"] == "dataset"

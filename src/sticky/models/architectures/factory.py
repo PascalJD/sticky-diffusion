@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import flax.linen as nn
 
 from .image import ADMUNet5DBackbone, UNet5DBackbone
-from .sequence import TransformerBackbone
+from .sequence import GPT2LikeBackbone, TransformerBackbone
 
 
 def build_sequence_backbone(
@@ -23,6 +23,9 @@ def build_sequence_backbone(
     model_sharding: bool,
     embed_input: bool = False,
     n_embed_classes: int = 1,
+    hidden_dim: int | None = None,
+    max_seq_len: int | None = None,
+    causal: bool = False,
 ) -> nn.Module:
     """Create sequence backbone from a Hydra-selected name."""
     key = str(name).lower()
@@ -61,9 +64,24 @@ def build_sequence_backbone(
             sharded=True,
         )
 
+    if key == "gpt2_like":
+        return GPT2LikeBackbone(
+            dim=int(feature_dim) * int(num_heads),
+            n_layers=int(n_layers),
+            n_heads=int(num_heads),
+            output_channels=int(vocab_size),
+            dropout_rate=float(dropout_rate),
+            use_attn_dropout=bool(use_attn_dropout),
+            embed_input=bool(embed_input),
+            n_embed_classes=int(n_embed_classes),
+            hidden_dim=None if hidden_dim is None else int(hidden_dim),
+            max_seq_len=None if max_seq_len is None else int(max_seq_len),
+            causal=bool(causal),
+        )
+
     raise ValueError(
         f"Unknown sequence backbone {name!r}. "
-        "Expected one of: auto, transformer, sharded_transformer."
+        "Expected one of: auto, transformer, sharded_transformer, gpt2_like."
     )
 
 

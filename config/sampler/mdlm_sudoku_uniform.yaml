@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+method: uniform
+sampling_grid: cosine
+cache_predictions: false

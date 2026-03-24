@@ -13,6 +13,10 @@ from sticky.models.discrete_mixture import (
     categorical_sample_from_logits,
     sample_mixture_categorical,
 )
+from sticky.models.mdlm.sudoku_sampling import (
+    select_top_prob_margin_positions,
+    select_uniform_reveal_positions,
+)
 
 
 Array = jnp.ndarray
@@ -25,12 +29,19 @@ def _loss_to_bpd(loss_dict: dict[str, Array], data_shape: tuple[int, ...]) -> di
     return {k: (v * scale if "loss" in k else v) for k, v in loss_dict.items()}
 
 
-def _selected_log_prob_sums(log_probs: Array, targets: Array) -> Array:
+def _selected_log_prob_sums(
+    log_probs: Array,
+    targets: Array,
+    *,
+    mask: Array | None = None,
+) -> Array:
     selected = jnp.take_along_axis(
         log_probs,
         jnp.expand_dims(targets, axis=-1),
         axis=-1,
     )[..., 0]
+    if mask is not None:
+        selected = selected * jnp.asarray(mask, dtype=selected.dtype)
     return jnp.sum(selected, axis=tuple(range(1, targets.ndim)))
 
 
@@ -103,6 +114,9 @@ class MDLM(nn.Module):
     cond_type: str = "adaln"
     outside_embed: bool = False
     sequence_backbone: str = "auto"
+    sequence_mlp_hidden_dim: int | None = None
+    sequence_max_length: int | None = None
+    sequence_causal: bool = False
     image_backbone: str = "adm_unet5d"
     adm_num_res_blocks: int = 2
     adm_attention_resolutions: Sequence[int] = (2, 4, 8)
@@ -146,6 +160,9 @@ class MDLM(nn.Module):
             outside_embed=self.outside_embed,
             model_sharding=self.model_sharding,
             sequence_backbone=self.sequence_backbone,
+            sequence_mlp_hidden_dim=self.sequence_mlp_hidden_dim,
+            sequence_max_length=self.sequence_max_length,
+            sequence_causal=self.sequence_causal,
             image_backbone=self.image_backbone,
             adm_num_res_blocks=self.adm_num_res_blocks,
             adm_attention_resolutions=self.adm_attention_resolutions,
@@ -171,6 +188,36 @@ class MDLM(nn.Module):
             keep_prob=keep_prob,
             mask_token_id=self.mask_token_id,
         )
+
+    def _normalize_token_mask(
+        self,
+        mask: Array | None,
+        *,
+        ref: Array,
+        name: str,
+    ) -> Array | None:
+        if mask is None:
+            return None
+        mask = jnp.asarray(mask, dtype=jnp.bool_)
+        if mask.shape != ref.shape:
+            raise ValueError(
+                f"{name} must match reference shape {ref.shape}, got {mask.shape}."
+            )
+        return mask
+
+    def forward_sample_conditional(
+        self,
+        x: Array,
+        t: Array,
+        known_token_mask: Array,
+    ) -> Array:
+        known_token_mask = self._normalize_token_mask(
+            known_token_mask,
+            ref=x,
+            name="known_token_mask",
+        )
+        zt = self.forward_sample(x, t)
+        return jnp.where(known_token_mask, x, zt).astype(jnp.int32)
 
     def prior_sample(self, batch_size: int) -> Array:
         return masked_core.make_masked_token_prior(
@@ -231,13 +278,33 @@ class MDLM(nn.Module):
         *,
         cond: Array | None = None,
         train: bool = False,
+        loss_mask: Array | None = None,
+        known_token_mask: Array | None = None,
     ) -> Array:
         if not self.cont_time:
             t = (jnp.floor(t * self.timesteps) + 1.0) / self.timesteps
 
-        zt = self.forward_sample(x, t)
+        known_token_mask = self._normalize_token_mask(
+            known_token_mask,
+            ref=x,
+            name="known_token_mask",
+        )
+        loss_mask = self._normalize_token_mask(
+            loss_mask,
+            ref=x,
+            name="loss_mask",
+        )
+        if loss_mask is None and known_token_mask is not None:
+            # Conditional Sudoku uses the clue prefix as fixed evidence and
+            # trains only on the unknown suffix tokens.
+            loss_mask = ~known_token_mask
+
+        if known_token_mask is None:
+            zt = self.forward_sample(x, t)
+        else:
+            zt = self.forward_sample_conditional(x, t, known_token_mask)
         log_probs, _ = self.predict_clean_log_probs(zt, t, cond=cond, train=train)
-        log_p_theta_sum = _selected_log_prob_sums(log_probs, x)
+        log_p_theta_sum = _selected_log_prob_sums(log_probs, x, mask=loss_mask)
 
         if not self.cont_time:
             s = t - (1.0 / self.timesteps)
@@ -259,6 +326,8 @@ class MDLM(nn.Module):
         *,
         cond: Array | None = None,
         train: bool = False,
+        loss_mask: Array | None = None,
+        known_token_mask: Array | None = None,
     ) -> dict[str, Array]:
         batch_size = x.shape[0]
         cond_emb = self.get_cond_embedding(cond)
@@ -273,7 +342,14 @@ class MDLM(nn.Module):
         else:
             t = jax.random.uniform(rng, shape=[batch_size])
 
-        loss_diff = self.diffusion_loss(t, x, cond=cond_emb, train=train).mean()
+        loss_diff = self.diffusion_loss(
+            t,
+            x,
+            cond=cond_emb,
+            train=train,
+            loss_mask=loss_mask,
+            known_token_mask=known_token_mask,
+        ).mean()
         loss = loss_diff + loss_prior + loss_recon
 
         stats = {
@@ -365,6 +441,39 @@ class MDLM(nn.Module):
         )
         return jnp.where(keep_mask, self.mask_token_id, to_unmask).astype(jnp.int32)
 
+    def _clamp_known_tokens(
+        self,
+        tokens: Array,
+        *,
+        current_tokens: Array,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
+    ) -> Array:
+        known_token_mask = self._normalize_token_mask(
+            known_token_mask,
+            ref=tokens,
+            name="known_token_mask",
+        )
+        if known_token_mask is None:
+            return tokens
+        source = current_tokens if known_tokens is None else jnp.asarray(known_tokens, dtype=jnp.int32)
+        return jnp.where(known_token_mask, source, tokens).astype(jnp.int32)
+
+    def _masked_unknown_positions(
+        self,
+        tokens: Array,
+        *,
+        known_token_mask: Array | None = None,
+    ) -> Array:
+        known_token_mask = self._normalize_token_mask(
+            known_token_mask,
+            ref=tokens,
+            name="known_token_mask",
+        )
+        if known_token_mask is None:
+            known_token_mask = jnp.zeros_like(tokens, dtype=jnp.bool_)
+        return (tokens == self.mask_token_id) & (~known_token_mask)
+
     def ancestral_sample_step(
         self,
         rng: Array,
@@ -373,6 +482,8 @@ class MDLM(nn.Module):
         state: Array | SamplingState,
         *,
         conditioning: Array | None = None,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
     ) -> Array | SamplingState:
         rng_body = jax.random.fold_in(rng, i)
         s, t = self.get_sampling_grid(i, timesteps)
@@ -393,6 +504,12 @@ class MDLM(nn.Module):
             proposal,
             mask_token_id=self.mask_token_id,
         )
+        next_tokens = self._clamp_known_tokens(
+            next_tokens,
+            current_tokens=tokens,
+            known_token_mask=known_token_mask,
+            known_tokens=known_tokens,
+        )
 
         cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
         return self._pack_sampling_state(
@@ -411,6 +528,8 @@ class MDLM(nn.Module):
         *,
         conditioning: Array | None = None,
         topp: float = 0.98,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
     ) -> Array | SamplingState:
         rng_body = jax.random.fold_in(rng, i)
         s, t = self.get_sampling_grid(i, timesteps)
@@ -436,6 +555,12 @@ class MDLM(nn.Module):
             proposal,
             mask_token_id=self.mask_token_id,
         )
+        next_tokens = self._clamp_known_tokens(
+            next_tokens,
+            current_tokens=tokens,
+            known_token_mask=known_token_mask,
+            known_tokens=known_tokens,
+        )
 
         cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
         return self._pack_sampling_state(
@@ -453,6 +578,8 @@ class MDLM(nn.Module):
         state: Array | SamplingState,
         *,
         conditioning: Array | None = None,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
     ) -> Array | SamplingState:
         tokens, _, _, structured = self._unpack_sampling_state(state)
         rng_body = jax.random.fold_in(rng, i)
@@ -477,10 +604,86 @@ class MDLM(nn.Module):
             proposal,
             mask_token_id=self.mask_token_id,
         )
+        next_tokens = self._clamp_known_tokens(
+            next_tokens,
+            current_tokens=tokens,
+            known_token_mask=known_token_mask,
+            known_tokens=known_tokens,
+        )
         return self._pack_sampling_state(
             next_tokens,
             log_probs=None,
             cache_valid=None,
+            structured=structured,
+        )
+
+    def reveal_order_sample_step(
+        self,
+        rng: Array,
+        i: int,
+        timesteps: int,
+        state: Array | SamplingState,
+        *,
+        conditioning: Array | None = None,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
+        method: str,
+    ) -> Array | SamplingState:
+        rng_body = jax.random.fold_in(rng, i)
+        rng_select, rng_sample = jax.random.split(rng_body)
+        s, t = self.get_sampling_grid(i, timesteps)
+
+        tokens, log_probs, structured = self._sampling_log_probs(
+            state,
+            t=t,
+            conditioning=conditioning,
+        )
+        masked_unknown = self._masked_unknown_positions(
+            tokens,
+            known_token_mask=known_token_mask,
+        )
+        alpha_t = self.noise_schedule.alpha(t)
+        alpha_s = self.noise_schedule.alpha(s)
+        reveal_prob = (alpha_s - alpha_t) / (1.0 - alpha_t)
+
+        if method == "uniform":
+            reveal_positions = select_uniform_reveal_positions(
+                rng_select,
+                masked_unknown,
+                reveal_prob=reveal_prob,
+            )
+        elif method == "top_prob_margin":
+            reveal_positions = select_top_prob_margin_positions(
+                log_probs,
+                masked_unknown,
+                reveal_prob=reveal_prob,
+            )
+        else:
+            raise NotImplementedError(f"Unknown reveal-order method={method!r}")
+
+        proposal = categorical_sample_from_logits(
+            rng_sample,
+            log_probs,
+            policy=self.categorical_sampling_policy,
+        )
+        proposal = jnp.where(reveal_positions, proposal, self.mask_token_id).astype(jnp.int32)
+        next_tokens = masked_core.carry_over_unmasked(
+            tokens,
+            proposal,
+            mask_token_id=self.mask_token_id,
+        )
+        next_tokens = self._clamp_known_tokens(
+            next_tokens,
+            current_tokens=tokens,
+            known_token_mask=known_token_mask,
+            known_tokens=known_tokens,
+        )
+
+        cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
+        return self._pack_sampling_state(
+            next_tokens,
+            log_probs=log_probs,
+            cache_valid=cache_valid,
             structured=structured,
         )
 
@@ -493,6 +696,8 @@ class MDLM(nn.Module):
         *,
         conditioning: Array | None = None,
         topp: float | None = None,
+        known_token_mask: Array | None = None,
+        known_tokens: Array | None = None,
     ) -> Array | SamplingState:
         if self.sampler == "ancestral":
             return self.ancestral_sample_step(
@@ -501,6 +706,8 @@ class MDLM(nn.Module):
                 timesteps,
                 state,
                 conditioning=conditioning,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
             )
         if self.sampler == "topp":
             topp_eff = self.topp if topp is None else topp
@@ -511,6 +718,8 @@ class MDLM(nn.Module):
                 state,
                 conditioning=conditioning,
                 topp=topp_eff,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
             )
         if self.sampler == "mean":
             return self.mean_sample_step(
@@ -519,6 +728,30 @@ class MDLM(nn.Module):
                 timesteps,
                 state,
                 conditioning=conditioning,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
+            )
+        if self.sampler == "uniform":
+            return self.reveal_order_sample_step(
+                rng,
+                i,
+                timesteps,
+                state,
+                conditioning=conditioning,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
+                method="uniform",
+            )
+        if self.sampler == "top_prob_margin":
+            return self.reveal_order_sample_step(
+                rng,
+                i,
+                timesteps,
+                state,
+                conditioning=conditioning,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
+                method="top_prob_margin",
             )
         raise NotImplementedError(f"Unknown sampler={self.sampler}")
 

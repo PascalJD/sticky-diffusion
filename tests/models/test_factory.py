@@ -408,6 +408,7 @@ def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
                 "experimental": True,
                 "alpha_schedule_type": "linear",
                 "schedule_eps": 0.0,
+                "pure_continuous": True,
                 "use_percentile_scheduling": True,
                 "min_percentile": 0.01,
                 "max_percentile": 0.45,
@@ -456,6 +457,7 @@ def test_build_model_reads_candi_config_and_sampler_knobs(monkeypatch):
     assert isinstance(model, _DummyCANDI)
     assert model.kwargs["representation"] == "embed"
     assert model.kwargs["experimental"] is True
+    assert model.kwargs["pure_continuous"] is True
     assert model.kwargs["image_backbone"] == "adm_unet5d"
     assert model.kwargs["sampler"] == "hybrid_expected"
     assert model.kwargs["sampling_grid"] == "uniform"

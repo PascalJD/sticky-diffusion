@@ -1,0 +1,14 @@
+defaults:
+  - architecture@_here_: gpt2_like_sudoku_6m
+  - _self_
+
+name: mdlm
+
+cont_time: true
+timesteps: 50
+noise_schedule_type: linear
+time_features: none
+
+antithetic_time_sampling: true
+classes: -1
+cache_predictions: false

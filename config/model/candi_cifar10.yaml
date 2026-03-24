@@ -14,8 +14,9 @@ representation: embed
 alpha_schedule_type: linear
 schedule_eps: 0.0
 
-# Embed mode follows the torch reference's VE/log-linear sigma schedule.
-use_percentile_scheduling: false
+# Match the torch pure-continuous embed mode during both training and sampling.
+pure_continuous: true
+use_percentile_scheduling: true
 min_percentile: 0.01
 max_percentile: 0.45
 sigma_min: 0.2

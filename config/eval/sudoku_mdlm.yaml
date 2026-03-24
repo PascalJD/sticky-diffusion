@@ -1,0 +1,16 @@
+# Sudoku evaluation setup for vanilla MDLM conditional completion.
+mode: sudoku
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+
+sudoku_every: ${experiment.training.eval_every_steps}
+sudoku_num_batches: 64
+sudoku_num_batches_force: -1
+
+sudoku_eval_seed_offset: 1776
+sudoku_sample_seed_offset: 314159
+sudoku_eval_fold_in_step: false
+sudoku_progress_every_batches: 20

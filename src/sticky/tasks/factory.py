@@ -147,4 +147,27 @@ def build_task(cfg: DictConfig):
             state_dep_log_ratio_clip=state_dep_log_ratio_clip,
         )
 
+    if name == "mdlm_sudoku":
+        from sticky.tasks.sudoku_mdlm import SudokuMDLMTask
+
+        return SudokuMDLMTask(
+            data_dir=_optional_str(cfg.dataset.get("data_dir", None)),
+            train_file=str(cfg.dataset.get("train_file", "Sudoku-train-data.npy")),
+            test_file=str(cfg.dataset.get("test_file", "Sudoku-test-data.npy")),
+            batch_size=int(cfg.dataset.get("batch_size")),
+            eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+            data_shape=tuple(cfg.dataset.get("data_shape", (243,))),
+            vocab_size=int(cfg.dataset.get("vocab_size", 10)),
+            num_classes=int(cfg.dataset.get("num_classes", -1)),
+            drop_remainder=bool(cfg.dataset.get("drop_remainder", True)),
+            shuffle=bool(cfg.dataset.get("shuffle", True)),
+            seq_order=str(cfg.dataset.get("seq_order", "dataset")),
+            mmap=bool(cfg.dataset.get("mmap", True)),
+            max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
+            max_test_examples=int(cfg.dataset.get("max_test_examples", -1)),
+            auto_download=bool(cfg.dataset.get("auto_download", True)),
+            download_timeout_sec=int(cfg.dataset.get("download_timeout_sec", 120)),
+            download_retries=int(cfg.dataset.get("download_retries", 8)),
+        )
+
     raise ValueError(f"Unknown task.name={name}")

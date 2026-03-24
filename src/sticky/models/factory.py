@@ -83,6 +83,9 @@ def build_model(
             cond_type=str(cfg.model.cond_type),
             outside_embed=bool(cfg.model.outside_embed),
             sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+            sequence_mlp_hidden_dim=cfg.model.get("sequence_mlp_hidden_dim", None),
+            sequence_max_length=cfg.model.get("sequence_max_length", None),
+            sequence_causal=bool(cfg.model.get("sequence_causal", False)),
             image_backbone=str(cfg.model.get("image_backbone", "adm_unet5d")),
             adm_num_res_blocks=int(cfg.model.get("adm_num_res_blocks", 2)),
             adm_attention_resolutions=tuple(cfg.model.get("adm_attention_resolutions", (2, 4, 8))),
@@ -382,6 +385,7 @@ def build_model(
             experimental=bool(cfg.model.get("experimental", True)),
             alpha_schedule_type=str(cfg.model.get("alpha_schedule_type", "linear")),
             schedule_eps=float(cfg.model.get("schedule_eps", 0.0)),
+            pure_continuous=bool(cfg.model.get("pure_continuous", False)),
             use_percentile_scheduling=bool(
                 cfg.model.get("use_percentile_scheduling", True)
             ),

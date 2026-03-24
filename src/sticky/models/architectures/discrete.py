@@ -29,6 +29,9 @@ class DiscreteClassifier(nn.Module):
     outside_embed: bool = False
     model_sharding: bool = False
     sequence_backbone: str = "auto"
+    sequence_mlp_hidden_dim: int | None = None
+    sequence_max_length: int | None = None
+    sequence_causal: bool = False
     image_backbone: str = "auto"
     adm_num_res_blocks: int = 2
     adm_attention_resolutions: Sequence[int] = (2, 4, 8)
@@ -70,6 +73,9 @@ class DiscreteClassifier(nn.Module):
                 model_sharding=self.model_sharding,
                 embed_input=not self.outside_embed,
                 n_embed_classes=self.vocab_size + 1,
+                hidden_dim=self.sequence_mlp_hidden_dim,
+                max_seq_len=self.sequence_max_length,
+                causal=self.sequence_causal,
             )
             logits = net(z, cond=time_cond, train=train)
             return logits, {}

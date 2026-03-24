@@ -1,0 +1,12 @@
+# Vanilla MDLM Sudoku with top-probability-margin reveal-order sampling.
+defaults:
+  - /dataset: sudoku
+  - /model: mdlm_sudoku
+  - /optim: adamw_sudoku
+  - /sampler: mdlm_sudoku_top_prob_margin
+  - /training: sudoku_mdlm
+  - /runtime: default
+  - _self_
+
+task:
+  name: mdlm_sudoku

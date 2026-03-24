@@ -64,6 +64,7 @@ class CANDI(nn.Module):
     alpha_schedule_type: str = "linear"
     schedule_eps: float = 0.0
 
+    pure_continuous: bool = False
     use_percentile_scheduling: bool = True
     min_percentile: float = 0.01
     max_percentile: float = 0.45
@@ -162,6 +163,19 @@ class CANDI(nn.Module):
         else:
             self.token_embed = None
 
+        sigma_grid = jnp.linspace(
+            float(self.sigma_min),
+            float(self.sigma_max),
+            1000,
+            dtype=jnp.float32,
+        )
+        sigma_grid = jnp.clip(sigma_grid, min=1e-6)
+        z = -1.0 / (sigma_grid * jnp.sqrt(2.0))
+        beat_true_coord = 0.5 * (1.0 + jax.lax.erf(z / jnp.sqrt(2.0)))
+        d = float(self.vocab_size)
+        self._percentile_sigma_grid = sigma_grid
+        self._percentile_error_grid = ((d - 1.0) / d) * beat_true_coord
+
         self.corruption_embed = nn.Embed(2, int(self._repr_dim))
         self.time_cond_embed = CondEmbedding(int(self.feature_dim))
         self.backbone = build_image_token_backbone(
@@ -200,6 +214,11 @@ class CANDI(nn.Module):
     def _is_embed_mode(self) -> bool:
         return str(self.representation).lower() == "embed"
 
+    def _use_pure_continuous(self) -> bool:
+        # The previous port only switched the sampler path. Keep the train-time
+        # objective keyed off the same mode so pure-continuous configs stay aligned.
+        return bool(self.pure_continuous) or self._sampler_mode() == "continuous"
+
     def _validate_conditioning(self, conditioning: Array | None) -> None:
         if conditioning is not None:
             raise NotImplementedError(
@@ -216,16 +235,44 @@ class CANDI(nn.Module):
     def discrete_noise(self, t: Array) -> Array:
         return jnp.clip(1.0 - self.alpha(t), min=1e-6, max=1.0)
 
+    def sigma_train(self, t: Array) -> Array:
+        t = jnp.clip(jnp.asarray(t, dtype=jnp.float32), 0.0, 1.0)
+        sigma = float(self.sigma_min) * (
+            float(self.sigma_max) / float(self.sigma_min)
+        ) ** t
+        return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+
+    def _sigma_from_percentile_schedule(self, percentile: Array) -> Array:
+        percentile = jnp.clip(jnp.asarray(percentile, dtype=jnp.float32), 0.0, 1.0)
+        indices = jnp.searchsorted(
+            self._percentile_error_grid,
+            percentile,
+            side="right",
+        )
+        indices = jnp.clip(indices, 1, self._percentile_error_grid.shape[0] - 1)
+        i0 = indices - 1
+        i1 = indices
+
+        e0 = self._percentile_error_grid[i0]
+        e1 = self._percentile_error_grid[i1]
+        s0 = self._percentile_sigma_grid[i0]
+        s1 = self._percentile_sigma_grid[i1]
+        interp = (percentile - e0) / (e1 - e0 + 1e-8)
+        sigma = s0 + interp * (s1 - s0)
+        return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+
+    def pure_continuous_inference_sigma(self, t: Array) -> Array:
+        t = jnp.clip(jnp.asarray(t, dtype=jnp.float32), 0.0, 1.0)
+        percentile = (
+            t * (float(self.max_percentile) - float(self.min_percentile))
+            + float(self.min_percentile)
+        )
+        return self._sigma_from_percentile_schedule(percentile)
+
     def sigma_from_discrete_noise(self, discrete_noise: Array) -> Array:
         discrete_noise = jnp.clip(jnp.asarray(discrete_noise, dtype=jnp.float32), 0.0, 1.0)
-        # The torch reference always uses the VE/log-linear sigma rule for
-        # embedding diffusion, even if percentile scheduling is enabled for
-        # discrete/onehot variants.
         if self._is_embed_mode():
-            sigma = float(self.sigma_min) * (
-                float(self.sigma_max) / float(self.sigma_min)
-            ) ** discrete_noise
-            return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+            return self.sigma_train(discrete_noise)
 
         if bool(self.use_percentile_scheduling):
             percentile = (
@@ -233,15 +280,9 @@ class CANDI(nn.Module):
                 * (float(self.max_percentile) - float(self.min_percentile))
                 + float(self.min_percentile)
             )
-            percentile = jnp.clip(percentile, 1e-6, 0.499999)
-            z = jax.scipy.special.ndtri(percentile)
-            sigma = -1.0 / (jnp.sqrt(2.0) * jnp.minimum(z, -1e-6))
-            return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+            return self._sigma_from_percentile_schedule(percentile)
 
-        sigma = float(self.sigma_min) * (
-            float(self.sigma_max) / float(self.sigma_min)
-        ) ** discrete_noise
-        return jnp.clip(sigma, float(self.sigma_min), float(self.sigma_max))
+        return self.sigma_train(discrete_noise)
 
     def _sample_training_times(self, rng: Array, batch_size: int) -> Array:
         if bool(self.cont_time):
@@ -296,11 +337,16 @@ class CANDI(nn.Module):
         x = jnp.asarray(x, dtype=jnp.int32)
         clean_repr = self.clean_representation(x)
         alpha_t = self.alpha(t)
-        keep_prob = masked_core.reverse_broadcast(alpha_t, x.ndim)
-        clean_mask = jax.random.bernoulli(rng_mask, keep_prob, x.shape)
-        corrupted_mask = ~clean_mask
+        if self._use_pure_continuous() and self._is_embed_mode():
+            clean_mask = jnp.zeros(x.shape, dtype=bool)
+            corrupted_mask = jnp.ones(x.shape, dtype=bool)
+            sigma = self.sigma_train(t)
+        else:
+            keep_prob = masked_core.reverse_broadcast(alpha_t, x.ndim)
+            clean_mask = jax.random.bernoulli(rng_mask, keep_prob, x.shape)
+            corrupted_mask = ~clean_mask
+            sigma = self.sigma_from_discrete_noise(self.discrete_noise(t))
 
-        sigma = self.sigma_from_discrete_noise(self.discrete_noise(t))
         sigma_feat = self._sigma_feature(sigma, target_ndim=x.ndim)
         noise = jax.random.normal(rng_noise, clean_repr.shape, dtype=jnp.float32)
         corrupted_repr = clean_repr + sigma_feat * noise
@@ -434,6 +480,27 @@ class CANDI(nn.Module):
             "loss_weight": weight,
         }
 
+    def pure_continuous_ce_loss(
+        self,
+        *,
+        logits: Array,
+        targets: Array,
+    ) -> dict[str, Array]:
+        mask = jnp.ones_like(targets, dtype=jnp.float32)
+        per_example_ce_sum = masked_core.masked_cross_entropy_sums(
+            logits,
+            targets,
+            mask=mask,
+        )
+        loss_ce = jnp.mean(per_example_ce_sum)
+        return {
+            "loss": loss_ce,
+            "loss_ce": loss_ce,
+            "mask_frac": jnp.asarray(1.0, dtype=jnp.float32),
+            "per_example_ce_sum": per_example_ce_sum,
+            "loss_weight": jnp.ones((targets.shape[0],), dtype=jnp.float32),
+        }
+
     def continuous_target_from_predictions(
         self,
         *,
@@ -446,6 +513,12 @@ class CANDI(nn.Module):
         return self._representation_from_probs(probs)
 
     def get_sampling_grid(self, i: int, timesteps: int) -> tuple[Array, Array]:
+        if self._use_pure_continuous() and self._is_embed_mode():
+            # The torch pure-continuous sampler uses a fixed uniform linspace
+            # in t, rather than the repo's cosine warped grid.
+            grid = jnp.linspace(0.999, 1e-5, int(timesteps) + 1, dtype=jnp.float32)
+            i = jnp.asarray(i, dtype=jnp.int32)
+            return grid[i + 1], grid[i]
         return masked_core.make_sampling_time_pair(
             i,
             timesteps,
@@ -475,12 +548,18 @@ class CANDI(nn.Module):
             train=train,
         )
 
-        metrics = self.weighted_masked_ce_loss(
-            logits=logits,
-            targets=x,
-            corrupted_mask=corruption["corrupted_mask"],
-            t=t,
-        )
+        if self._use_pure_continuous():
+            metrics = self.pure_continuous_ce_loss(
+                logits=logits,
+                targets=x,
+            )
+        else:
+            metrics = self.weighted_masked_ce_loss(
+                logits=logits,
+                targets=x,
+                corrupted_mask=corruption["corrupted_mask"],
+                t=t,
+            )
         metrics = {
             "loss": metrics["loss"],
             "loss_ce": metrics["loss_ce"],
@@ -543,8 +622,12 @@ class CANDI(nn.Module):
     ) -> dict[str, Array]:
         # The torch reference conditions on the current discrete time but uses
         # the next sigma in the continuous update and sigma feature input.
-        sigma_from = self.sigma_from_discrete_noise(self.discrete_noise(t))
-        sigma_to = self.sigma_from_discrete_noise(self.discrete_noise(s))
+        if self._use_pure_continuous() and self._is_embed_mode():
+            sigma_from = self.pure_continuous_inference_sigma(t)
+            sigma_to = self.pure_continuous_inference_sigma(s)
+        else:
+            sigma_from = self.sigma_from_discrete_noise(self.discrete_noise(t))
+            sigma_to = self.sigma_from_discrete_noise(self.discrete_noise(s))
         logits = self._predict_state_logits(
             tokens=tokens,
             clean_mask=clean_mask,
@@ -668,7 +751,7 @@ class CANDI(nn.Module):
         t_arr = jnp.full((tokens.shape[0],), jnp.asarray(t, dtype=jnp.float32))
         s_arr = jnp.full((tokens.shape[0],), jnp.asarray(s, dtype=jnp.float32))
         rng = jax.random.fold_in(rng, i)
-        if self._is_embed_mode():
+        if self._use_pure_continuous():
             return self._continuous_step(
                 tokens=tokens,
                 clean_mask=clean_mask,

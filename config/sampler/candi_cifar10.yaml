@@ -8,5 +8,5 @@ defaults:
 # - hybrid_expected: expected representation under p_theta
 # - hybrid_exact: reserved for debug onehot mode only
 method: continuous
-sampling_grid: cosine
+sampling_grid: uniform
 guidance_scale: 0.0

@@ -99,9 +99,10 @@ def test_candi_cifar10_uses_canonical_adm_image_bundle():
     assert cfg.experiment.model.representation == "embed"
     assert cfg.experiment.model.experimental is True
     assert cfg.experiment.model.classes == -1
-    assert cfg.experiment.model.use_percentile_scheduling is False
+    assert cfg.experiment.model.pure_continuous is True
+    assert cfg.experiment.model.use_percentile_scheduling is True
     assert cfg.experiment.sampler.method == "continuous"
-    assert cfg.experiment.sampler.sampling_grid == "cosine"
+    assert cfg.experiment.sampler.sampling_grid == "uniform"
     assert "hybrid_exact" not in str(cfg.experiment.sampler.method)
     assert cfg.experiment.training.sample_timesteps == 256
 

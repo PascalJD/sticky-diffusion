@@ -144,58 +144,66 @@ def build_sudoku_eval_logger(
     log_at_step_zero: bool,
     sample_timesteps_override: Optional[int] = None,
 ):
-    if str(cfg.model.name) != "sjd":
-        raise ValueError("Sudoku evaluator currently supports only model.name='sjd'.")
+    model_name = str(cfg.model.name)
+    if model_name not in {"sjd", "mdlm"}:
+        raise ValueError("Sudoku evaluator currently supports model.name in {'sjd', 'mdlm'}.")
     if task is None or model is None:
         raise ValueError("Sudoku evaluator requires `task` and `model`.")
 
-    beta = getattr(task, "beta", None)
-    if beta is None:
-        beta = hydra.utils.instantiate(cfg.forward.beta)
+    if model_name == "sjd":
+        beta = getattr(task, "beta", None)
+        if beta is None:
+            beta = hydra.utils.instantiate(cfg.forward.beta)
 
-    hazard = getattr(task, "hazard", None)
-    if hazard is None:
-        hazard_cfg = cfg.forward.get("hazard", None)
-        hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
+        hazard = getattr(task, "hazard", None)
+        if hazard is None:
+            hazard_cfg = cfg.forward.get("hazard", None)
+            hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
 
-    jump = getattr(task, "jump", None)
-    if jump is None:
-        jump_cfg = cfg.forward.get("jump", None)
-        jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
+        jump = getattr(task, "jump", None)
+        if jump is None:
+            jump_cfg = cfg.forward.get("jump", None)
+            jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
 
-    if hazard is None or jump is None:
-        raise ValueError("Sudoku evaluator requires both hazard and jump schedules.")
+        if hazard is None or jump is None:
+            raise ValueError("Sudoku evaluator requires both hazard and jump schedules.")
 
-    n_steps = (
-        int(sample_timesteps_override)
-        if sample_timesteps_override is not None
-        else int(cfg.sampler.get("n_steps", 250))
-    )
-    sampler_cfg = SamplerConfig(
-        T=float(cfg.sampler.get("T", 1.0)),
-        n_steps=n_steps,
-        sampling_grid=str(cfg.sampler.get("sampling_grid", "uniform")),
-        score_scale=float(cfg.sampler.get("score_scale", 1.0)),
-        logit_temperature=float(
-            cfg.sampler.get(
-                "logit_temperature",
-                cfg.sampler.get("temperature", 1.0),
-            )
-        ),
-        categorical_sampling_policy=str(
-            cfg.sampler.get("categorical_sampling_policy", "legacy_low")
-        ),
-        hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
-        alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
-        intensity_mode=str(cfg.sampler.get("intensity_mode", "full")),
-        log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
-        intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
-        init_std=float(cfg.sampler.get("init_std", 1.0)),
-        force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
-        refresh_logits_after_em_step=bool(
-            cfg.sampler.get("refresh_logits_after_em_step", False)
-        ),
-    )
+        n_steps = (
+            int(sample_timesteps_override)
+            if sample_timesteps_override is not None
+            else int(cfg.sampler.get("n_steps", 250))
+        )
+        sampler_cfg = SamplerConfig(
+            T=float(cfg.sampler.get("T", 1.0)),
+            n_steps=n_steps,
+            sampling_grid=str(cfg.sampler.get("sampling_grid", "uniform")),
+            score_scale=float(cfg.sampler.get("score_scale", 1.0)),
+            logit_temperature=float(
+                cfg.sampler.get(
+                    "logit_temperature",
+                    cfg.sampler.get("temperature", 1.0),
+                )
+            ),
+            categorical_sampling_policy=str(
+                cfg.sampler.get("categorical_sampling_policy", "legacy_low")
+            ),
+            hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
+            alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
+            intensity_mode=str(cfg.sampler.get("intensity_mode", "full")),
+            log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
+            intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
+            init_std=float(cfg.sampler.get("init_std", 1.0)),
+            force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
+            refresh_logits_after_em_step=bool(
+                cfg.sampler.get("refresh_logits_after_em_step", False)
+            ),
+        )
+    else:
+        n_steps = (
+            int(sample_timesteps_override)
+            if sample_timesteps_override is not None
+            else int(cfg.sampler.get("n_steps", cfg.model.get("timesteps", 50)))
+        )
 
     prefix = str(eval_cfg.get("prefix", "eval"))
     verbose = bool(eval_cfg.get("verbose", False))
@@ -208,25 +216,41 @@ def build_sudoku_eval_logger(
 
     shape = tuple(task.spec.data_shape)
 
-    @jax.jit
-    def _sample_conditional(params, rng, known_idx, known_mask):
-        a_table = model.apply({"params": params}, method=model.anchor_table)
-        anchors = AnchorTable(table_float=a_table)
-        out = sjd_sampling.simple_generate(
-            rng=rng,
-            params=params,
-            model=model,
-            anchors=anchors,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            cfg=sampler_cfg,
-            batch_size=int(known_idx.shape[0]),
-            shape=shape,
-            known_idx=known_idx,
-            known_mask=known_mask,
-        )
-        return out.k_filled
+    if model_name == "sjd":
+        @jax.jit
+        def _sample_conditional(params, rng, known_idx, known_mask):
+            a_table = model.apply({"params": params}, method=model.anchor_table)
+            anchors = AnchorTable(table_float=a_table)
+            out = sjd_sampling.simple_generate(
+                rng=rng,
+                params=params,
+                model=model,
+                anchors=anchors,
+                beta=beta,
+                hazard=hazard,
+                jump=jump,
+                cfg=sampler_cfg,
+                batch_size=int(known_idx.shape[0]),
+                shape=shape,
+                known_idx=known_idx,
+                known_mask=known_mask,
+            )
+            return out.k_filled
+    else:
+        from sticky.models.mdlm.sudoku_sampling import conditional_generate
+
+        @jax.jit
+        def _sample_conditional(params, rng, known_idx, known_mask):
+            return conditional_generate(
+                rng,
+                {"params": params, "ema_params": None},
+                model=model,
+                known_tokens=known_idx,
+                known_token_mask=known_mask,
+                timesteps=n_steps,
+                conditioning=None,
+                use_ema=False,
+            )
 
     def _run_eval(step_i: int, params_for_sampling, *, num_batches: int) -> Dict[str, float]:
         eval_seed = int(cfg.training.seed) + eval_seed_offset
