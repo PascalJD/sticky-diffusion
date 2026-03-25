@@ -16,6 +16,7 @@ checkpoint_keep: 3
 save_final_checkpoint: true
 best_checkpoint_metric: eval/fid
 best_checkpoint_mode: min
+best_update_on_equal: false
 
 metrics_dir: metrics
 metrics_every_steps: 1000

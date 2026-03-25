@@ -3,5 +3,7 @@ defaults:
   - _self_
 
 method: uniform
-sampling_grid: cosine
+sampling_grid: loglinear
 cache_predictions: false
+oracle_noise_type: none
+oracle_noise_scale: 0.0

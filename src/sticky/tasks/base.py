@@ -51,3 +51,7 @@ class Task:
     def format_samples_for_logging(self, x: Array) -> list[str] | None:
         """Optional text/task-specific rendering for generated samples."""
         return None
+
+    def train_num_examples(self) -> int | None:
+        """Optional hook for epoch-derived training schedules."""
+        return None

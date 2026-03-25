@@ -2,9 +2,11 @@ defaults:
   - base
   - _self_
 
-name: sudoku_mdlm
+name: sudoku_mdlm_tfw
 
-num_train_steps: 3500000
+# Derived at runtime from the actual train set size and batch size.
+num_train_steps: 0
+num_train_epochs: 300
 best_update_on_equal: true
 
 log_every_steps: 500

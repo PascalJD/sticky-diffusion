@@ -497,3 +497,47 @@ def make_sudoku_iterator(
             max_examples=int(max_examples),
         )
     )
+
+
+def get_sudoku_num_examples(
+    *,
+    split: str,
+    data_dir: Optional[str] = None,
+    train_file: str = "Sudoku-train-data.npy",
+    test_file: str = "Sudoku-test-data.npy",
+    mmap: bool = True,
+    max_examples: int = -1,
+    auto_download: bool = True,
+    download_timeout_sec: int = 120,
+    download_retries: int = 8,
+) -> int:
+    """Return the number of Sudoku examples after optional truncation."""
+    split_key = str(split).lower()
+    if split_key not in {"train", "test"}:
+        raise ValueError(f"split must be 'train' or 'test', got {split!r}.")
+
+    if bool(auto_download):
+        ensure_sudoku_data_available(
+            data_dir=data_dir,
+            train_file=train_file,
+            test_file=test_file,
+            timeout_sec=int(download_timeout_sec),
+            retries=int(download_retries),
+        )
+
+    filename = train_file if split_key == "train" else test_file
+    file_path = _resolve_data_file(data_dir=data_dir, filename=filename)
+    mmap_mode = "r" if bool(mmap) else None
+    table = np.load(str(file_path), mmap_mode=mmap_mode)
+    if table.ndim != 2 or table.shape[1] != 325:
+        raise ValueError(
+            "Expected Sudoku array with shape (N, 325): "
+            f"got {table.shape} from {file_path}."
+        )
+
+    n_total = int(table.shape[0])
+    if int(max_examples) > 0:
+        n_total = min(n_total, int(max_examples))
+    if n_total <= 0:
+        raise ValueError("Sudoku dataset is empty after applying max_examples.")
+    return n_total

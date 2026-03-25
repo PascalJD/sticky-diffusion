@@ -6,7 +6,7 @@ name: mdlm
 
 cont_time: true
 timesteps: 50
-noise_schedule_type: linear
+noise_schedule_type: loglinear
 time_features: none
 
 antithetic_time_sampling: true

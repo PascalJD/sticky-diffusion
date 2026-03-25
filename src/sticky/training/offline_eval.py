@@ -401,6 +401,8 @@ def run_offline_checkpoint_eval(
 
     eval_cfg_local = _clone_eval_cfg(eval_cfg)
     eval_cfg_local.run_at_end = True
+    eval_cfg_local.checkpoint_source = checkpoint_source
+    eval_cfg_local.param_source = param_source
     eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
 
     fid_every = int(eval_cfg_local.get("fid_every", 0)) if eval_mode != "sudoku" else 0

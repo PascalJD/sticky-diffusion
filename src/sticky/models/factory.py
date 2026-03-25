@@ -102,6 +102,18 @@ def build_model(
             sampler=str(sampler_cfg.get("method", sampler_cfg.get("sampler", cfg.model.get("sampler", "ancestral")))),
             sampling_grid=str(sampler_cfg.get("sampling_grid", cfg.model.get("sampling_grid", "cosine"))),
             topp=float(sampler_cfg.get("topp", cfg.model.get("topp", 0.98))),
+            oracle_noise_type=str(
+                sampler_cfg.get(
+                    "oracle_noise_type",
+                    cfg.model.get("oracle_noise_type", "none"),
+                )
+            ),
+            oracle_noise_scale=float(
+                sampler_cfg.get(
+                    "oracle_noise_scale",
+                    cfg.model.get("oracle_noise_scale", 0.0),
+                )
+            ),
             categorical_sampling_policy=str(
                 sampler_cfg.get(
                     "categorical_sampling_policy",

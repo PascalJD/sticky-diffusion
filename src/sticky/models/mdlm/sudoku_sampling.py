@@ -5,8 +5,6 @@ from typing import Any, Optional
 import jax
 import jax.numpy as jnp
 
-from sticky.models.discrete_mixture import categorical_sample_from_logits
-
 from .sampling import _get_params, _initialize_sampling_state
 
 
@@ -16,6 +14,11 @@ Array = jnp.ndarray
 def _flatten_mask(mask: Array) -> Array:
     mask = jnp.asarray(mask, dtype=jnp.bool_)
     return mask.reshape((mask.shape[0], -1))
+
+
+def _flatten_position_scores(scores: Array) -> Array:
+    scores = jnp.asarray(scores, dtype=jnp.float32)
+    return scores.reshape((scores.shape[0], -1))
 
 
 def _reveal_counts(masked_unknown_mask: Array, reveal_prob: Array) -> Array:
@@ -34,6 +37,75 @@ def _topk_mask_from_scores(scores: Array, *, k: Array, valid_mask: Array) -> Arr
     return valid_mask & (ranks < k[:, None])
 
 
+def _sample_gumbel_noise(rng: Array, shape: tuple[int, ...]) -> Array:
+    u = jax.random.uniform(
+        rng,
+        shape=shape,
+        dtype=jnp.float32,
+        minval=1.0e-6,
+        maxval=1.0 - 1.0e-6,
+    )
+    return -jnp.log(-jnp.log(u))
+
+
+def position_top_probabilities(log_probs: Array) -> Array:
+    probs = jnp.exp(jnp.asarray(log_probs, dtype=jnp.float32))
+    return jnp.max(probs, axis=-1)
+
+
+def position_probability_margins(log_probs: Array) -> Array:
+    probs = jnp.exp(jnp.asarray(log_probs, dtype=jnp.float32))
+    if int(probs.shape[-1]) == 1:
+        return probs[..., 0]
+    top2 = jnp.sort(probs, axis=-1)[..., -2:]
+    return top2[..., 1] - top2[..., 0]
+
+
+def _apply_oracle_noise(
+    rng: Array | None,
+    scores: Array,
+    *,
+    valid_mask: Array,
+    oracle_noise_type: str = "none",
+    oracle_noise_scale: float = 0.0,
+) -> Array:
+    key = str(oracle_noise_type).strip().lower()
+    if key in {"", "none"} or float(oracle_noise_scale) == 0.0:
+        return jnp.where(valid_mask, scores, -jnp.inf)
+    if key != "gumbel":
+        raise ValueError(
+            f"Unknown oracle_noise_type={oracle_noise_type!r}. "
+            "Expected one of {'none', 'gumbel'}."
+        )
+    if rng is None:
+        raise ValueError("Gumbel oracle noise requires an RNG key.")
+    noise = _sample_gumbel_noise(rng, scores.shape)
+    return jnp.where(valid_mask, scores + float(oracle_noise_scale) * noise, -jnp.inf)
+
+
+def _select_top_scored_positions(
+    scores: Array,
+    masked_unknown_mask: Array,
+    *,
+    reveal_prob: Array,
+    rng: Array | None = None,
+    oracle_noise_type: str = "none",
+    oracle_noise_scale: float = 0.0,
+) -> Array:
+    flat_mask = _flatten_mask(masked_unknown_mask)
+    flat_scores = _flatten_position_scores(scores)
+    k = _reveal_counts(masked_unknown_mask, reveal_prob)
+    noisy_scores = _apply_oracle_noise(
+        rng,
+        flat_scores,
+        valid_mask=flat_mask,
+        oracle_noise_type=oracle_noise_type,
+        oracle_noise_scale=float(oracle_noise_scale),
+    )
+    selected = _topk_mask_from_scores(noisy_scores, k=k, valid_mask=flat_mask)
+    return selected.reshape(masked_unknown_mask.shape)
+
+
 def select_uniform_reveal_positions(
     rng: Array,
     masked_unknown_mask: Array,
@@ -48,24 +120,48 @@ def select_uniform_reveal_positions(
     return selected.reshape(masked_unknown_mask.shape)
 
 
+def select_top_probability_positions(
+    log_probs: Array,
+    masked_unknown_mask: Array,
+    *,
+    reveal_prob: Array,
+    rng: Array | None = None,
+    oracle_noise_type: str = "none",
+    oracle_noise_scale: float = 0.0,
+) -> Array:
+    return _select_top_scored_positions(
+        position_top_probabilities(log_probs),
+        masked_unknown_mask,
+        reveal_prob=reveal_prob,
+        rng=rng,
+        oracle_noise_type=oracle_noise_type,
+        oracle_noise_scale=float(oracle_noise_scale),
+    )
+
+
 def select_top_prob_margin_positions(
     log_probs: Array,
     masked_unknown_mask: Array,
     *,
     reveal_prob: Array,
+    rng: Array | None = None,
+    oracle_noise_type: str = "none",
+    oracle_noise_scale: float = 0.0,
 ) -> Array:
-    flat_mask = _flatten_mask(masked_unknown_mask)
-    flat_log_probs = log_probs.reshape((log_probs.shape[0], -1, log_probs.shape[-1]))
-    probs = jnp.exp(flat_log_probs)
-    if int(probs.shape[-1]) == 1:
-        margin = probs[..., 0]
-    else:
-        top2 = jnp.sort(probs, axis=-1)[..., -2:]
-        margin = top2[..., 1] - top2[..., 0]
-    k = _reveal_counts(masked_unknown_mask, reveal_prob)
-    scores = jnp.where(flat_mask, margin, -jnp.inf)
-    selected = _topk_mask_from_scores(scores, k=k, valid_mask=flat_mask)
-    return selected.reshape(masked_unknown_mask.shape)
+    return _select_top_scored_positions(
+        position_probability_margins(log_probs),
+        masked_unknown_mask,
+        reveal_prob=reveal_prob,
+        rng=rng,
+        oracle_noise_type=oracle_noise_type,
+        oracle_noise_scale=float(oracle_noise_scale),
+    )
+
+
+def _state_tokens(state: Array | tuple[Array, Array, Array]) -> Array:
+    if isinstance(state, tuple) and len(state) == 3:
+        return jnp.asarray(state[0], dtype=jnp.int32)
+    return jnp.asarray(state, dtype=jnp.int32)
 
 
 def _clamp_known_tokens_in_state(
@@ -93,7 +189,8 @@ def conditional_generate(
     timesteps: Optional[int] = None,
     conditioning: Optional[Array] = None,
     use_ema: bool = True,
-) -> Array:
+    return_diagnostics: bool = False,
+) -> Array | tuple[Array, dict[str, Array]]:
     params = _get_params(train_state, use_ema=use_ema)
     variables = {"params": params}
 
@@ -112,8 +209,45 @@ def conditional_generate(
 
     rng, step_rng = jax.random.split(rng)
 
-    def body_fn(i, st):
-        next_state = model.apply(
+    if not bool(return_diagnostics):
+        def body_fn(i, st):
+            next_state = model.apply(
+                variables,
+                step_rng,
+                i,
+                total_steps,
+                st,
+                conditioning=conditioning,
+                known_tokens=known_tokens,
+                known_token_mask=known_token_mask,
+                method=model.sample_step,
+            )
+            return _clamp_known_tokens_in_state(
+                next_state,
+                known_tokens=known_tokens,
+                known_token_mask=known_token_mask,
+            )
+
+        state = jax.lax.fori_loop(0, total_steps, body_fn, state)
+        decoded = model.apply(
+            variables,
+            state,
+            conditioning=conditioning,
+            method=model.decode,
+        )
+        return jnp.where(known_token_mask, known_tokens, decoded).astype(jnp.int32)
+
+    zero = jnp.asarray(0.0, dtype=jnp.float32)
+    diag0 = {
+        "masked_unknown_total_across_steps": zero,
+        "selected_count_total_across_steps": zero,
+        "selected_margin_sum_total": zero,
+        "selected_margin_count_total": zero,
+    }
+
+    def body_fn(i, carry):
+        st, diag = carry
+        next_state, step_info = model.apply(
             variables,
             step_rng,
             i,
@@ -122,19 +256,48 @@ def conditional_generate(
             conditioning=conditioning,
             known_tokens=known_tokens,
             known_token_mask=known_token_mask,
+            return_info=True,
             method=model.sample_step,
         )
-        return _clamp_known_tokens_in_state(
+        next_state = _clamp_known_tokens_in_state(
             next_state,
             known_tokens=known_tokens,
             known_token_mask=known_token_mask,
         )
+        diag = {
+            "masked_unknown_total_across_steps": (
+                diag["masked_unknown_total_across_steps"] + step_info["masked_unknown_total"]
+            ),
+            "selected_count_total_across_steps": (
+                diag["selected_count_total_across_steps"] + step_info["selected_count_total"]
+            ),
+            "selected_margin_sum_total": (
+                diag["selected_margin_sum_total"] + step_info["selected_margin_sum_total"]
+            ),
+            "selected_margin_count_total": (
+                diag["selected_margin_count_total"] + step_info["selected_margin_count_total"]
+            ),
+        }
+        return next_state, diag
 
-    state = jax.lax.fori_loop(0, total_steps, body_fn, state)
+    state, diag = jax.lax.fori_loop(0, total_steps, body_fn, (state, diag0))
+    tokens_before_decode = _state_tokens(state)
     decoded = model.apply(
         variables,
         state,
         conditioning=conditioning,
         method=model.decode,
     )
-    return jnp.where(known_token_mask, known_tokens, decoded).astype(jnp.int32)
+    decoded = jnp.where(known_token_mask, known_tokens, decoded).astype(jnp.int32)
+
+    unknown_token_mask = ~known_token_mask
+    diag = dict(diag)
+    diag["example_step_count"] = jnp.asarray(
+        int(total_steps) * int(known_tokens.shape[0]),
+        dtype=jnp.float32,
+    )
+    diag["unknown_token_total"] = jnp.sum(unknown_token_mask.astype(jnp.float32))
+    diag["final_masked_unknown_total"] = jnp.sum(
+        ((tokens_before_decode == int(model.mask_token_id)) & unknown_token_mask).astype(jnp.float32)
+    )
+    return decoded, diag

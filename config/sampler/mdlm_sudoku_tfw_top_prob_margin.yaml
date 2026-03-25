@@ -5,5 +5,5 @@ defaults:
 method: top_prob_margin
 sampling_grid: loglinear
 cache_predictions: false
-oracle_noise_type: none
-oracle_noise_scale: 0.0
+oracle_noise_type: gumbel
+oracle_noise_scale: 0.5

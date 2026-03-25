@@ -1,6 +1,6 @@
 # Root Hydra config used by the training entrypoint.
 defaults:
-  - experiment: mdlm_sudoku_top_prob_margin
+  - experiment: mdlm_sudoku_tfw_top_prob_margin
   - eval: sudoku_mdlm
   - hydra: default
   - wandb: default

@@ -6,7 +6,7 @@ from typing import Iterable, Optional, Tuple
 import jax
 import jax.numpy as jnp
 
-from sticky.data.sudoku import make_sudoku_iterator
+from sticky.data.sudoku import get_sudoku_num_examples, make_sudoku_iterator
 from sticky.rng import PRNGKey
 from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
 
@@ -121,3 +121,16 @@ class SudokuMDLMTask(Task):
 
     def decode(self, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.asarray(x, dtype=jnp.int32)
+
+    def train_num_examples(self) -> int | None:
+        return get_sudoku_num_examples(
+            split="train",
+            data_dir=self.data_dir,
+            train_file=self.train_file,
+            test_file=self.test_file,
+            mmap=bool(self.mmap),
+            max_examples=int(self.max_train_examples),
+            auto_download=bool(self.auto_download),
+            download_timeout_sec=int(self.download_timeout_sec),
+            download_retries=int(self.download_retries),
+        )

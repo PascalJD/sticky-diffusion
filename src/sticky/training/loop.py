@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from typing import Any, Iterator, Optional
 
@@ -66,6 +67,46 @@ def _with_bpd_alias(metrics: dict[str, float], *, prefix: str, enable_alias: boo
 def _maybe_sync_training_metric(metric: Array, *, sync: bool) -> None:
     if sync:
         jax.block_until_ready(metric)
+
+
+def _resolve_num_train_steps(cfg: DictConfig, task: Any) -> int:
+    epochs_cfg = cfg.training.get("num_train_epochs", None)
+    if epochs_cfg in (None, "", "null", "None"):
+        return int(cfg.training.num_train_steps)
+
+    num_train_epochs = float(epochs_cfg)
+    if num_train_epochs <= 0.0:
+        return int(cfg.training.num_train_steps)
+
+    train_num_examples = None
+    train_num_examples_fn = getattr(task, "train_num_examples", None)
+    if callable(train_num_examples_fn):
+        train_num_examples = train_num_examples_fn()
+    if train_num_examples is None:
+        raise ValueError(
+            "training.num_train_epochs requires the active task to expose "
+            "train_num_examples()."
+        )
+
+    batch_size = int(cfg.dataset.batch_size)
+    if batch_size <= 0:
+        raise ValueError(f"dataset.batch_size must be positive, got {batch_size}.")
+
+    drop_remainder = bool(cfg.dataset.get("drop_remainder", True))
+    if drop_remainder:
+        steps_per_epoch = max(1, int(train_num_examples) // batch_size)
+    else:
+        steps_per_epoch = max(1, int(math.ceil(int(train_num_examples) / batch_size)))
+
+    num_train_steps = int(steps_per_epoch * num_train_epochs)
+    print(
+        "[train] Derived num_train_steps from epochs: "
+        f"examples={int(train_num_examples)} batch_size={batch_size} "
+        f"steps_per_epoch={steps_per_epoch} epochs={num_train_epochs:g} "
+        f"num_train_steps={num_train_steps}",
+        flush=True,
+    )
+    return num_train_steps
 
 
 def _make_pmap_batch_iterator(
@@ -166,7 +207,8 @@ def main_train_loop(
 
     num_log_images = int(cfg.training.num_log_images)
     sample_timesteps = int(cfg.training.sample_timesteps)
-    num_train_steps = int(cfg.training.num_train_steps)
+    num_train_steps = _resolve_num_train_steps(cfg, task)
+    cfg.training.num_train_steps = int(num_train_steps)
     log_images_every_steps = int(cfg.training.log_images_every_steps)
     log_every_steps = int(cfg.training.log_every_steps)
     eval_every_steps = int(cfg.training.get("eval_every_steps", 0))
@@ -202,6 +244,7 @@ def main_train_loop(
             save_final=save_final_checkpoint,
             best_metric_key=str(cfg.training.get("best_checkpoint_metric", "eval/fid")),
             best_mode=str(cfg.training.get("best_checkpoint_mode", "min")),
+            best_update_on_equal=bool(cfg.training.get("best_update_on_equal", False)),
         )
 
     rng = make_rng(int(cfg.training.seed))

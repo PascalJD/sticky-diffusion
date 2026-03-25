@@ -14,6 +14,8 @@ from sticky.models.discrete_mixture import (
     sample_mixture_categorical,
 )
 from sticky.models.mdlm.sudoku_sampling import (
+    position_probability_margins,
+    select_top_probability_positions,
     select_top_prob_margin_positions,
     select_uniform_reveal_positions,
 )
@@ -21,6 +23,16 @@ from sticky.models.mdlm.sudoku_sampling import (
 
 Array = jnp.ndarray
 SamplingState = tuple[Array, Array, Array]
+
+
+def _zero_sampling_info(dtype: Any = jnp.float32) -> dict[str, Array]:
+    zero = jnp.asarray(0.0, dtype=dtype)
+    return {
+        "masked_unknown_total": zero,
+        "selected_count_total": zero,
+        "selected_margin_sum_total": zero,
+        "selected_margin_count_total": zero,
+    }
 
 
 def _loss_to_bpd(loss_dict: dict[str, Array], data_shape: tuple[int, ...]) -> dict[str, Array]:
@@ -133,6 +145,8 @@ class MDLM(nn.Module):
     sampler: str = "ancestral"
     sampling_grid: str = "cosine"
     topp: float = 0.98
+    oracle_noise_type: str = "none"
+    oracle_noise_scale: float = 0.0
     categorical_sampling_policy: str = "legacy_low"
     cache_predictions: bool = False
     model_sharding: bool = False
@@ -474,6 +488,28 @@ class MDLM(nn.Module):
             known_token_mask = jnp.zeros_like(tokens, dtype=jnp.bool_)
         return (tokens == self.mask_token_id) & (~known_token_mask)
 
+    def _sampling_step_info(
+        self,
+        *,
+        masked_unknown: Array,
+        reveal_positions: Array | None = None,
+        margins: Array | None = None,
+    ) -> dict[str, Array]:
+        info = _zero_sampling_info()
+        info["masked_unknown_total"] = jnp.sum(masked_unknown.astype(jnp.float32))
+        if reveal_positions is None:
+            return info
+
+        reveal_positions = jnp.asarray(reveal_positions, dtype=jnp.bool_)
+        selected = reveal_positions.astype(jnp.float32)
+        info["selected_count_total"] = jnp.sum(selected)
+        info["selected_margin_count_total"] = info["selected_count_total"]
+        if margins is not None:
+            info["selected_margin_sum_total"] = jnp.sum(
+                jnp.asarray(margins, dtype=jnp.float32) * selected
+            )
+        return info
+
     def ancestral_sample_step(
         self,
         rng: Array,
@@ -484,7 +520,8 @@ class MDLM(nn.Module):
         conditioning: Array | None = None,
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
-    ) -> Array | SamplingState:
+        return_info: bool = False,
+    ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
         rng_body = jax.random.fold_in(rng, i)
         s, t = self.get_sampling_grid(i, timesteps)
 
@@ -512,12 +549,16 @@ class MDLM(nn.Module):
         )
 
         cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
-        return self._pack_sampling_state(
+        next_state = self._pack_sampling_state(
             next_tokens,
             log_probs=log_probs,
             cache_valid=cache_valid,
             structured=structured,
         )
+        if not bool(return_info):
+            return next_state
+        masked_unknown = self._masked_unknown_positions(tokens, known_token_mask=known_token_mask)
+        return next_state, self._sampling_step_info(masked_unknown=masked_unknown)
 
     def topp_sample_step(
         self,
@@ -530,7 +571,8 @@ class MDLM(nn.Module):
         topp: float = 0.98,
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
-    ) -> Array | SamplingState:
+        return_info: bool = False,
+    ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
         rng_body = jax.random.fold_in(rng, i)
         s, t = self.get_sampling_grid(i, timesteps)
 
@@ -563,12 +605,16 @@ class MDLM(nn.Module):
         )
 
         cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
-        return self._pack_sampling_state(
+        next_state = self._pack_sampling_state(
             next_tokens,
             log_probs=log_probs,
             cache_valid=cache_valid,
             structured=structured,
         )
+        if not bool(return_info):
+            return next_state
+        masked_unknown = self._masked_unknown_positions(tokens, known_token_mask=known_token_mask)
+        return next_state, self._sampling_step_info(masked_unknown=masked_unknown)
 
     def mean_sample_step(
         self,
@@ -580,7 +626,8 @@ class MDLM(nn.Module):
         conditioning: Array | None = None,
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
-    ) -> Array | SamplingState:
+        return_info: bool = False,
+    ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
         tokens, _, _, structured = self._unpack_sampling_state(state)
         rng_body = jax.random.fold_in(rng, i)
         s, t = self.get_sampling_grid(i, timesteps)
@@ -610,12 +657,16 @@ class MDLM(nn.Module):
             known_token_mask=known_token_mask,
             known_tokens=known_tokens,
         )
-        return self._pack_sampling_state(
+        next_state = self._pack_sampling_state(
             next_tokens,
             log_probs=None,
             cache_valid=None,
             structured=structured,
         )
+        if not bool(return_info):
+            return next_state
+        masked_unknown = self._masked_unknown_positions(tokens, known_token_mask=known_token_mask)
+        return next_state, self._sampling_step_info(masked_unknown=masked_unknown)
 
     def reveal_order_sample_step(
         self,
@@ -628,7 +679,8 @@ class MDLM(nn.Module):
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
         method: str,
-    ) -> Array | SamplingState:
+        return_info: bool = False,
+    ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
         rng_body = jax.random.fold_in(rng, i)
         rng_select, rng_sample = jax.random.split(rng_body)
         s, t = self.get_sampling_grid(i, timesteps)
@@ -642,6 +694,7 @@ class MDLM(nn.Module):
             tokens,
             known_token_mask=known_token_mask,
         )
+        margins = position_probability_margins(log_probs)
         alpha_t = self.noise_schedule.alpha(t)
         alpha_s = self.noise_schedule.alpha(s)
         reveal_prob = (alpha_s - alpha_t) / (1.0 - alpha_t)
@@ -652,11 +705,23 @@ class MDLM(nn.Module):
                 masked_unknown,
                 reveal_prob=reveal_prob,
             )
+        elif method == "top_probability":
+            reveal_positions = select_top_probability_positions(
+                log_probs,
+                masked_unknown,
+                reveal_prob=reveal_prob,
+                rng=rng_select,
+                oracle_noise_type=self.oracle_noise_type,
+                oracle_noise_scale=self.oracle_noise_scale,
+            )
         elif method == "top_prob_margin":
             reveal_positions = select_top_prob_margin_positions(
                 log_probs,
                 masked_unknown,
                 reveal_prob=reveal_prob,
+                rng=rng_select,
+                oracle_noise_type=self.oracle_noise_type,
+                oracle_noise_scale=self.oracle_noise_scale,
             )
         else:
             raise NotImplementedError(f"Unknown reveal-order method={method!r}")
@@ -680,11 +745,18 @@ class MDLM(nn.Module):
         )
 
         cache_valid = jnp.asarray(self._use_cache()) & (~jnp.any(next_tokens != tokens))
-        return self._pack_sampling_state(
+        next_state = self._pack_sampling_state(
             next_tokens,
             log_probs=log_probs,
             cache_valid=cache_valid,
             structured=structured,
+        )
+        if not bool(return_info):
+            return next_state
+        return next_state, self._sampling_step_info(
+            masked_unknown=masked_unknown,
+            reveal_positions=reveal_positions,
+            margins=margins,
         )
 
     def sample_step(
@@ -698,7 +770,8 @@ class MDLM(nn.Module):
         topp: float | None = None,
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
-    ) -> Array | SamplingState:
+        return_info: bool = False,
+    ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
         if self.sampler == "ancestral":
             return self.ancestral_sample_step(
                 rng,
@@ -708,6 +781,7 @@ class MDLM(nn.Module):
                 conditioning=conditioning,
                 known_token_mask=known_token_mask,
                 known_tokens=known_tokens,
+                return_info=return_info,
             )
         if self.sampler == "topp":
             topp_eff = self.topp if topp is None else topp
@@ -720,6 +794,7 @@ class MDLM(nn.Module):
                 topp=topp_eff,
                 known_token_mask=known_token_mask,
                 known_tokens=known_tokens,
+                return_info=return_info,
             )
         if self.sampler == "mean":
             return self.mean_sample_step(
@@ -730,6 +805,7 @@ class MDLM(nn.Module):
                 conditioning=conditioning,
                 known_token_mask=known_token_mask,
                 known_tokens=known_tokens,
+                return_info=return_info,
             )
         if self.sampler == "uniform":
             return self.reveal_order_sample_step(
@@ -741,6 +817,19 @@ class MDLM(nn.Module):
                 known_token_mask=known_token_mask,
                 known_tokens=known_tokens,
                 method="uniform",
+                return_info=return_info,
+            )
+        if self.sampler == "top_probability":
+            return self.reveal_order_sample_step(
+                rng,
+                i,
+                timesteps,
+                state,
+                conditioning=conditioning,
+                known_token_mask=known_token_mask,
+                known_tokens=known_tokens,
+                method="top_probability",
+                return_info=return_info,
             )
         if self.sampler == "top_prob_margin":
             return self.reveal_order_sample_step(
@@ -752,6 +841,7 @@ class MDLM(nn.Module):
                 known_token_mask=known_token_mask,
                 known_tokens=known_tokens,
                 method="top_prob_margin",
+                return_info=return_info,
             )
         raise NotImplementedError(f"Unknown sampler={self.sampler}")
 

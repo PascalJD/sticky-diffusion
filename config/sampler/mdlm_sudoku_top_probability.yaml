@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-method: top_prob_margin
+method: top_probability
 sampling_grid: loglinear
 cache_predictions: false
 oracle_noise_type: none

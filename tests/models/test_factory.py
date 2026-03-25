@@ -229,9 +229,11 @@ def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):
                 "model_sharding": False,
             },
             "sampler": {
-                "method": "ancestral",
-                "sampling_grid": "uniform",
+                "method": "top_prob_margin",
+                "sampling_grid": "loglinear",
                 "topp": 0.95,
+                "oracle_noise_type": "gumbel",
+                "oracle_noise_scale": 0.5,
                 "categorical_sampling_policy": "exact",
                 "cache_predictions": True,
             },
@@ -242,9 +244,11 @@ def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):
 
     assert isinstance(model, _DummyMDLM)
     assert model.kwargs["image_backbone"] == "adm_unet5d"
-    assert model.kwargs["sampler"] == "ancestral"
-    assert model.kwargs["sampling_grid"] == "uniform"
+    assert model.kwargs["sampler"] == "top_prob_margin"
+    assert model.kwargs["sampling_grid"] == "loglinear"
     assert model.kwargs["topp"] == 0.95
+    assert model.kwargs["oracle_noise_type"] == "gumbel"
+    assert model.kwargs["oracle_noise_scale"] == 0.5
     assert model.kwargs["categorical_sampling_policy"] == "exact"
     assert model.kwargs["cache_predictions"] is True
 

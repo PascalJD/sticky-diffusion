@@ -207,6 +207,7 @@ class CheckpointWriter:
     save_final: bool = True
     best_metric_key: str = "eval/fid"
     best_mode: str = "min"
+    best_update_on_equal: bool = False
 
     def __post_init__(self):
         self.root_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +268,8 @@ class CheckpointWriter:
             improved = value < self._best_value
         else:
             improved = value > self._best_value
+        if (not improved) and bool(self.best_update_on_equal) and (self._best_value is not None):
+            improved = value == self._best_value
 
         if not improved:
             return False

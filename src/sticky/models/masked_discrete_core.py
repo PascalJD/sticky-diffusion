@@ -31,6 +31,11 @@ def _base_schedule(t: Array, schedule_fn_type: str) -> Array:
     key = str(schedule_fn_type)
     if key == "linear":
         return 1.0 - t
+    if key == "loglinear":
+        # Match the reference MDLM "loglinear" parameterization by treating
+        # time as linearly spaced mask/move probability; this implies
+        # alpha(t)=1-move_chance(t)=1-t up to endpoint clipping.
+        return 1.0 - t
     if key == "cosine":
         return 1.0 - jax.lax.cos(math.pi / 2.0 * (1.0 - t))
     if key.startswith("poly"):
@@ -42,6 +47,8 @@ def _base_schedule(t: Array, schedule_fn_type: str) -> Array:
 def _base_schedule_derivative(t: Array, schedule_fn_type: str) -> Array:
     key = str(schedule_fn_type)
     if key == "linear":
+        return -jnp.ones_like(t)
+    if key == "loglinear":
         return -jnp.ones_like(t)
     if key == "cosine":
         return -math.pi / 2.0 * jax.lax.sin(math.pi / 2.0 * (1.0 - t))
@@ -60,6 +67,16 @@ def clipped_schedule_alpha(
     return (1.0 - 2.0 * float(eps)) * _base_schedule(t, schedule_fn_type) + float(eps)
 
 
+def clipped_schedule_move_chance(
+    t: Array,
+    *,
+    schedule_fn_type: str = "linear",
+    eps: float = 1e-4,
+) -> Array:
+    alpha = clipped_schedule_alpha(t, schedule_fn_type=schedule_fn_type, eps=eps)
+    return 1.0 - alpha
+
+
 def clipped_schedule_dalpha(
     t: Array,
     *,
@@ -69,14 +86,24 @@ def clipped_schedule_dalpha(
     return (1.0 - 2.0 * float(eps)) * _base_schedule_derivative(t, schedule_fn_type)
 
 
-def masked_logit_schedule(
+def masked_sigma_schedule(
     t: Array,
     *,
     schedule_fn_type: str = "linear",
     eps: float = 1e-4,
 ) -> Array:
     alpha = clipped_schedule_alpha(t, schedule_fn_type=schedule_fn_type, eps=eps)
-    return jnp.log(alpha / (1.0 - alpha))
+    return -jnp.log(alpha)
+
+
+def masked_logit_schedule(
+    t: Array,
+    *,
+    schedule_fn_type: str = "linear",
+    eps: float = 1e-4,
+) -> Array:
+    sigma = masked_sigma_schedule(t, schedule_fn_type=schedule_fn_type, eps=eps)
+    return -jnp.log(jnp.expm1(sigma))
 
 
 def masked_dgamma_times_alpha(
@@ -98,9 +125,16 @@ def make_sampling_time_pair(
 ) -> tuple[Array, Array]:
     t = (timesteps - i) / timesteps
     s = t - 1.0 / timesteps
-    if str(sampling_grid) == "cosine":
+    key = str(sampling_grid).strip().lower()
+    if key == "cosine":
         t = jnp.cos(math.pi / 2.0 * (1.0 - t))
         s = jnp.cos(math.pi / 2.0 * (1.0 - s))
+    elif key in {"uniform", "loglinear"}:
+        pass
+    else:
+        raise ValueError(
+            f"Unknown sampling_grid={sampling_grid!r}. Expected 'uniform', 'loglinear', or 'cosine'."
+        )
     return s, t
 
 

@@ -11,9 +11,9 @@
 
 set -euo pipefail
 
-EXPERIMENT="${EXPERIMENT:-mdlm_sudoku_top_prob_margin}"
+EXPERIMENT="${EXPERIMENT:-mdlm_sudoku_tfw_top_prob_margin}"
 EVAL_CONFIG="${EVAL_CONFIG:-sudoku_mdlm}"
-WANDB_ENABLED="${WANDB_ENABLED:-false}"
+WANDB_ENABLED="${WANDB_ENABLED:-true}"
 REPO_ROOT="${REPO_ROOT:-$SLURM_SUBMIT_DIR}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 ENV_PREFIX="${ENV_PREFIX:-/anvil/scratch/x-pjutrasdube/envs/sticky}"

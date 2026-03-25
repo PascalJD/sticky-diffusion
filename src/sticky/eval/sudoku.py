@@ -250,6 +250,7 @@ def build_sudoku_eval_logger(
                 timesteps=n_steps,
                 conditioning=None,
                 use_ema=False,
+                return_diagnostics=True,
             )
 
     def _run_eval(step_i: int, params_for_sampling, *, num_batches: int) -> Dict[str, float]:
@@ -285,6 +286,13 @@ def build_sudoku_eval_logger(
             "given_token_correct": 0,
             "given_token_total": 0,
             "num_batches": 0,
+            "example_step_count": 0.0,
+            "masked_unknown_total_across_steps": 0.0,
+            "selected_count_total_across_steps": 0.0,
+            "selected_margin_sum_total": 0.0,
+            "selected_margin_count_total": 0.0,
+            "unknown_token_total": 0.0,
+            "final_masked_unknown_total": 0.0,
         }
 
         base_rng = jax.random.fold_in(
@@ -321,12 +329,27 @@ def build_sudoku_eval_logger(
             known_idx = np.where(known_mask, input_seq, 0).astype(np.int32)
 
             rng_batch = jax.random.fold_in(base_rng, totals["num_batches"])
-            pred_seq = _sample_conditional(
+            sample_out = _sample_conditional(
                 params_for_sampling,
                 rng_batch,
                 known_idx,
                 known_mask,
             )
+            if model_name == "mdlm":
+                pred_seq, diag = sample_out
+                diag = jax.device_get(diag)
+                for key in (
+                    "example_step_count",
+                    "masked_unknown_total_across_steps",
+                    "selected_count_total_across_steps",
+                    "selected_margin_sum_total",
+                    "selected_margin_count_total",
+                    "unknown_token_total",
+                    "final_masked_unknown_total",
+                ):
+                    totals[key] += float(diag[key])
+            else:
+                pred_seq = sample_out
             pred_seq = np.asarray(jax.device_get(pred_seq), dtype=np.int32)
 
             counts = _evaluate_batch_counts(
@@ -359,6 +382,22 @@ def build_sudoku_eval_logger(
             totals["given_token_correct"],
             totals["given_token_total"],
         )
+        step_den = max(float(totals["example_step_count"]), 1.0)
+        margin_den = max(float(totals["selected_margin_count_total"]), 1.0)
+        unknown_den = max(float(totals["unknown_token_total"]), 1.0)
+        mean_masked_unknown_per_step = (
+            float(totals["masked_unknown_total_across_steps"]) / step_den
+        )
+        mean_k_selected_per_step = (
+            float(totals["selected_count_total_across_steps"]) / step_den
+        )
+        mean_selected_top_prob_margin = (
+            float(totals["selected_margin_sum_total"]) / margin_den
+        )
+        final_masked_unknown_fraction = (
+            float(totals["final_masked_unknown_total"]) / unknown_den
+        )
+        checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
 
         metrics = {
             f"{prefix}/acc": float(acc),
@@ -367,6 +406,22 @@ def build_sudoku_eval_logger(
             f"{prefix}/acc_solve_strict": float(strict_solve),
             f"{prefix}/given_token_acc": float(given_token_acc),
             f"{prefix}/solve_rate": float(strict_solve),
+            f"{prefix}/mean_masked_unknown_positions_per_step": float(
+                mean_masked_unknown_per_step
+            ),
+            f"{prefix}/mean_k_selected_per_step": float(mean_k_selected_per_step),
+            f"{prefix}/mean_selected_top_prob_margin": float(
+                mean_selected_top_prob_margin
+            ),
+            f"{prefix}/final_masked_unknown_fraction": float(
+                final_masked_unknown_fraction
+            ),
+            f"{prefix}/checkpoint_is_live": float(checkpoint_source == "live"),
+            f"{prefix}/checkpoint_is_latest": float(
+                checkpoint_source in {"latest", "periodic", "root"}
+            ),
+            f"{prefix}/checkpoint_is_best": float(checkpoint_source == "best"),
+            f"{prefix}/checkpoint_is_final": float(checkpoint_source == "final"),
             f"{prefix}/num_examples": float(totals["num_examples"]),
             f"{prefix}/num_pred_cells": float(totals["total_pred"]),
             f"{prefix}/num_batches": float(totals["num_batches"]),
