@@ -86,11 +86,13 @@ def test_mdlm_sudoku_train_and_eval_configs_compose():
         assert cfg.experiment.sampler.method == sampler_method
         assert cfg.experiment.sampler.n_steps == 50
         assert cfg.experiment.sampler.sampling_grid == "loglinear"
+        assert cfg.experiment.sampler.revealed_token_sample_mode == "sample"
         assert cfg.experiment.sampler.oracle_noise_type == "none"
         assert cfg.experiment.sampler.oracle_noise_scale == 0.0
         assert cfg.experiment.training.best_checkpoint_metric == "eval/solve_rate"
         assert cfg.experiment.training.best_update_on_equal is True
         assert cfg.eval.mode == "sudoku"
+        assert cfg.eval.param_source == "ema"
 
         task = build_task(cfg.experiment)
         model = build_model(
@@ -126,13 +128,16 @@ def test_mdlm_sudoku_tfw_config_composes():
     assert cfg.experiment.optim.learning_rate == 1.0e-3
     assert cfg.experiment.sampler.method == "top_prob_margin"
     assert cfg.experiment.sampler.sampling_grid == "loglinear"
+    assert cfg.experiment.sampler.categorical_sampling_policy == "exact"
+    assert cfg.experiment.sampler.revealed_token_sample_mode == "sample"
     assert cfg.experiment.sampler.oracle_noise_type == "gumbel"
     assert cfg.experiment.sampler.oracle_noise_scale == 0.5
     assert cfg.experiment.training.num_train_epochs == 300
-    assert cfg.experiment.training.best_checkpoint_metric == "eval/solve_rate"
+    assert cfg.experiment.training.best_checkpoint_metric == "eval/acc_complete_puzzle"
     assert cfg.experiment.training.best_checkpoint_mode == "max"
     assert cfg.experiment.training.best_update_on_equal is True
     assert cfg.eval.mode == "sudoku"
+    assert cfg.eval.param_source == "ema"
 
     task = build_task(cfg.experiment)
     model = build_model(
@@ -145,6 +150,33 @@ def test_mdlm_sudoku_tfw_config_composes():
     assert model.sampler == "top_prob_margin"
     assert model.oracle_noise_type == "gumbel"
     assert model.oracle_noise_scale == 0.5
+    assert model.revealed_token_sample_mode == "sample"
+
+
+def test_mdlm_sudoku_tfw_argmax_ablation_config_composes():
+    cfg = _compose(
+        config_name="config.yaml",
+        overrides=["experiment=mdlm_sudoku_tfw_top_prob_margin_argmax", "eval=sudoku_mdlm"],
+    )
+
+    assert cfg.experiment.task.name == "mdlm_sudoku"
+    assert cfg.experiment.dataset.batch_size == 128
+    assert cfg.experiment.dataset.eval_batch_size == 128
+    assert cfg.experiment.sampler.method == "top_prob_margin"
+    assert cfg.experiment.sampler.categorical_sampling_policy == "exact"
+    assert cfg.experiment.sampler.revealed_token_sample_mode == "argmax"
+    assert cfg.experiment.sampler.cache_predictions is True
+    assert cfg.experiment.training.best_checkpoint_metric == "eval/acc_complete_puzzle"
+
+    task = build_task(cfg.experiment)
+    model = build_model(
+        cfg.experiment,
+        data_shape=task.spec.data_shape,
+        vocab_size=task.spec.vocab_size,
+    )
+
+    assert model.revealed_token_sample_mode == "argmax"
+    assert model.cache_predictions is True
 
 
 def test_mdlm_sudoku_overfit_configs_compose():
@@ -161,7 +193,7 @@ def test_mdlm_sudoku_overfit_configs_compose():
         assert cfg.experiment.dataset.max_train_examples == max_examples
         assert cfg.experiment.dataset.max_test_examples == max_examples
         assert cfg.experiment.training.num_train_epochs == 100
-        assert cfg.experiment.training.best_checkpoint_metric == "eval/solve_rate"
+        assert cfg.experiment.training.best_checkpoint_metric == "eval/acc_complete_puzzle"
 
 
 def test_mdlm_sudoku_offline_eval_config_composes():
@@ -184,6 +216,7 @@ def test_root_defaults_now_target_tfw_top_margin_mdlm_sudoku():
     assert cfg.experiment.task.name == "mdlm_sudoku"
     assert cfg.experiment.model.name == "mdlm"
     assert cfg.experiment.sampler.method == "top_prob_margin"
+    assert cfg.experiment.sampler.categorical_sampling_policy == "exact"
     assert cfg.experiment.sampler.oracle_noise_type == "gumbel"
     assert cfg.experiment.sampler.oracle_noise_scale == 0.5
     assert cfg.experiment.training.num_train_epochs == 300

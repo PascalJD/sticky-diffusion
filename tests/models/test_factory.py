@@ -235,6 +235,7 @@ def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):
                 "oracle_noise_type": "gumbel",
                 "oracle_noise_scale": 0.5,
                 "categorical_sampling_policy": "exact",
+                "revealed_token_sample_mode": "argmax",
                 "cache_predictions": True,
             },
         }
@@ -250,6 +251,7 @@ def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["oracle_noise_type"] == "gumbel"
     assert model.kwargs["oracle_noise_scale"] == 0.5
     assert model.kwargs["categorical_sampling_policy"] == "exact"
+    assert model.kwargs["revealed_token_sample_mode"] == "argmax"
     assert model.kwargs["cache_predictions"] is True
 
 

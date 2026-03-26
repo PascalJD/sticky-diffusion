@@ -32,6 +32,9 @@ def _zero_sampling_info(dtype: Any = jnp.float32) -> dict[str, Array]:
         "selected_count_total": zero,
         "selected_margin_sum_total": zero,
         "selected_margin_count_total": zero,
+        "selected_row_total": zero,
+        "selected_col_total": zero,
+        "selected_value_total": zero,
     }
 
 
@@ -148,6 +151,7 @@ class MDLM(nn.Module):
     oracle_noise_type: str = "none"
     oracle_noise_scale: float = 0.0
     categorical_sampling_policy: str = "legacy_low"
+    revealed_token_sample_mode: str = "sample"
     cache_predictions: bool = False
     model_sharding: bool = False
 
@@ -508,6 +512,17 @@ class MDLM(nn.Module):
             info["selected_margin_sum_total"] = jnp.sum(
                 jnp.asarray(margins, dtype=jnp.float32) * selected
             )
+        token_pos = jnp.arange(reveal_positions.shape[-1], dtype=jnp.int32)
+        token_pos = token_pos.reshape((1,) * (reveal_positions.ndim - 1) + (-1,))
+        info["selected_row_total"] = jnp.sum(
+            selected * (jnp.mod(token_pos, 3) == 0).astype(jnp.float32)
+        )
+        info["selected_col_total"] = jnp.sum(
+            selected * (jnp.mod(token_pos, 3) == 1).astype(jnp.float32)
+        )
+        info["selected_value_total"] = jnp.sum(
+            selected * (jnp.mod(token_pos, 3) == 2).astype(jnp.float32)
+        )
         return info
 
     def ancestral_sample_step(
@@ -726,11 +741,20 @@ class MDLM(nn.Module):
         else:
             raise NotImplementedError(f"Unknown reveal-order method={method!r}")
 
-        proposal = categorical_sample_from_logits(
-            rng_sample,
-            log_probs,
-            policy=self.categorical_sampling_policy,
-        )
+        sample_mode = str(self.revealed_token_sample_mode).strip().lower()
+        if sample_mode == "sample":
+            proposal = categorical_sample_from_logits(
+                rng_sample,
+                log_probs,
+                policy=self.categorical_sampling_policy,
+            )
+        elif sample_mode == "argmax":
+            proposal = jnp.argmax(log_probs, axis=-1).astype(jnp.int32)
+        else:
+            raise ValueError(
+                "Unknown revealed_token_sample_mode="
+                f"{self.revealed_token_sample_mode!r}. Expected 'sample' or 'argmax'."
+            )
         proposal = jnp.where(reveal_positions, proposal, self.mask_token_id).astype(jnp.int32)
         next_tokens = masked_core.carry_over_unmasked(
             tokens,

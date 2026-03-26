@@ -120,6 +120,12 @@ def build_model(
                     cfg.model.get("categorical_sampling_policy", "legacy_low"),
                 )
             ),
+            revealed_token_sample_mode=str(
+                sampler_cfg.get(
+                    "revealed_token_sample_mode",
+                    cfg.model.get("revealed_token_sample_mode", "sample"),
+                )
+            ),
             cache_predictions=bool(
                 sampler_cfg.get(
                     "cache_predictions",

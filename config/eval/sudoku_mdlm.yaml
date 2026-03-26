@@ -14,3 +14,7 @@ sudoku_eval_seed_offset: 1776
 sudoku_sample_seed_offset: 314159
 sudoku_eval_fold_in_step: false
 sudoku_progress_every_batches: 20
+
+# Scheduled training-time Sudoku eval uses EMA params by default; offline eval
+# still controls its checkpoint parameter source via offline_eval.use_ema.
+param_source: ema

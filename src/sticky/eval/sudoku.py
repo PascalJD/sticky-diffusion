@@ -81,10 +81,14 @@ def _evaluate_batch_counts(
 
     batch_size = int(pred_seq.shape[0])
     triples = pred_seq.reshape(batch_size, 81, 3)
+    target = input_seq.reshape(batch_size, 81, 3)
 
     row = triples[:, :, 0]
     col = triples[:, :, 1]
     val = triples[:, :, 2]
+    target_row = target[:, :, 0]
+    target_col = target[:, :, 1]
+    target_val = target[:, :, 2]
 
     valid_rcv = (
         (row >= 0)
@@ -100,6 +104,24 @@ def _evaluate_batch_counts(
     pred_cell_mask = np.arange(81, dtype=np.int32)[None, :] >= start_index[:, None]
     success_pred = int(np.sum(valid_rcv & pred_cell_mask & (gt_val == val)))
     total_pred = int(np.sum(pred_cell_mask))
+    row_token_correct = int(np.sum(pred_cell_mask & (row == target_row)))
+    col_token_correct = int(np.sum(pred_cell_mask & (col == target_col)))
+    value_token_correct = int(np.sum(pred_cell_mask & (val == target_val)))
+    rowcol_correct_mask = pred_cell_mask & (row == target_row) & (col == target_col)
+    value_given_correct_rowcol = int(np.sum(rowcol_correct_mask & (val == target_val)))
+    rowcol_correct_total = int(np.sum(rowcol_correct_mask))
+
+    valid_rc = (
+        (row >= 0)
+        & (row < 9)
+        & (col >= 0)
+        & (col < 9)
+    )
+    duplicate_coordinate_total = 0
+    for i in range(batch_size):
+        valid_pred_coords = pred_cell_mask[i] & valid_rc[i]
+        coord_ids = (row[i, valid_pred_coords] * 9) + col[i, valid_pred_coords]
+        duplicate_coordinate_total += int(coord_ids.size - np.unique(coord_ids).size)
 
     known_token_len = (3 * start_index)[:, None]
     known_token_mask = np.arange(243, dtype=np.int32)[None, :] < known_token_len
@@ -125,6 +147,12 @@ def _evaluate_batch_counts(
         "num_examples": batch_size,
         "success_pred": success_pred,
         "total_pred": total_pred,
+        "row_token_correct": row_token_correct,
+        "col_token_correct": col_token_correct,
+        "value_token_correct": value_token_correct,
+        "value_given_correct_rowcol": value_given_correct_rowcol,
+        "rowcol_correct_total": rowcol_correct_total,
+        "duplicate_coordinate_total": duplicate_coordinate_total,
         "valid_complete": valid_complete,
         "board_exact": board_exact,
         "strict_complete": strict_complete,
@@ -280,6 +308,12 @@ def build_sudoku_eval_logger(
             "num_examples": 0,
             "success_pred": 0,
             "total_pred": 0,
+            "row_token_correct": 0,
+            "col_token_correct": 0,
+            "value_token_correct": 0,
+            "value_given_correct_rowcol": 0,
+            "rowcol_correct_total": 0,
+            "duplicate_coordinate_total": 0,
             "valid_complete": 0,
             "board_exact": 0,
             "strict_complete": 0,
@@ -291,6 +325,9 @@ def build_sudoku_eval_logger(
             "selected_count_total_across_steps": 0.0,
             "selected_margin_sum_total": 0.0,
             "selected_margin_count_total": 0.0,
+            "selected_row_total_across_steps": 0.0,
+            "selected_col_total_across_steps": 0.0,
+            "selected_value_total_across_steps": 0.0,
             "unknown_token_total": 0.0,
             "final_masked_unknown_total": 0.0,
         }
@@ -344,6 +381,9 @@ def build_sudoku_eval_logger(
                     "selected_count_total_across_steps",
                     "selected_margin_sum_total",
                     "selected_margin_count_total",
+                    "selected_row_total_across_steps",
+                    "selected_col_total_across_steps",
+                    "selected_value_total_across_steps",
                     "unknown_token_total",
                     "final_masked_unknown_total",
                 ):
@@ -382,9 +422,21 @@ def build_sudoku_eval_logger(
             totals["given_token_correct"],
             totals["given_token_total"],
         )
+        row_token_acc = _safe_ratio(totals["row_token_correct"], totals["total_pred"])
+        col_token_acc = _safe_ratio(totals["col_token_correct"], totals["total_pred"])
+        value_token_acc = _safe_ratio(totals["value_token_correct"], totals["total_pred"])
+        value_acc_given_correct_rowcol = _safe_ratio(
+            totals["value_given_correct_rowcol"],
+            totals["rowcol_correct_total"],
+        )
+        duplicate_coordinate_rate = _safe_ratio(
+            totals["duplicate_coordinate_total"],
+            totals["total_pred"],
+        )
         step_den = max(float(totals["example_step_count"]), 1.0)
         margin_den = max(float(totals["selected_margin_count_total"]), 1.0)
         unknown_den = max(float(totals["unknown_token_total"]), 1.0)
+        selected_den = max(float(totals["selected_count_total_across_steps"]), 1.0)
         mean_masked_unknown_per_step = (
             float(totals["masked_unknown_total_across_steps"]) / step_den
         )
@@ -397,6 +449,15 @@ def build_sudoku_eval_logger(
         final_masked_unknown_fraction = (
             float(totals["final_masked_unknown_total"]) / unknown_den
         )
+        selected_row_fraction = (
+            float(totals["selected_row_total_across_steps"]) / selected_den
+        )
+        selected_col_fraction = (
+            float(totals["selected_col_total_across_steps"]) / selected_den
+        )
+        selected_value_fraction = (
+            float(totals["selected_value_total_across_steps"]) / selected_den
+        )
         checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
 
         metrics = {
@@ -405,6 +466,13 @@ def build_sudoku_eval_logger(
             f"{prefix}/acc_board_exact": float(board_exact),
             f"{prefix}/acc_solve_strict": float(strict_solve),
             f"{prefix}/given_token_acc": float(given_token_acc),
+            f"{prefix}/row_token_acc": float(row_token_acc),
+            f"{prefix}/col_token_acc": float(col_token_acc),
+            f"{prefix}/value_token_acc": float(value_token_acc),
+            f"{prefix}/value_acc_given_correct_rowcol": float(
+                value_acc_given_correct_rowcol
+            ),
+            f"{prefix}/duplicate_coordinate_rate": float(duplicate_coordinate_rate),
             f"{prefix}/solve_rate": float(strict_solve),
             f"{prefix}/mean_masked_unknown_positions_per_step": float(
                 mean_masked_unknown_per_step
@@ -413,6 +481,9 @@ def build_sudoku_eval_logger(
             f"{prefix}/mean_selected_top_prob_margin": float(
                 mean_selected_top_prob_margin
             ),
+            f"{prefix}/selected_row_fraction": float(selected_row_fraction),
+            f"{prefix}/selected_col_fraction": float(selected_col_fraction),
+            f"{prefix}/selected_value_fraction": float(selected_value_fraction),
             f"{prefix}/final_masked_unknown_fraction": float(
                 final_masked_unknown_fraction
             ),

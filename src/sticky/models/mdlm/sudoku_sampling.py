@@ -243,6 +243,9 @@ def conditional_generate(
         "selected_count_total_across_steps": zero,
         "selected_margin_sum_total": zero,
         "selected_margin_count_total": zero,
+        "selected_row_total_across_steps": zero,
+        "selected_col_total_across_steps": zero,
+        "selected_value_total_across_steps": zero,
     }
 
     def body_fn(i, carry):
@@ -276,6 +279,15 @@ def conditional_generate(
             ),
             "selected_margin_count_total": (
                 diag["selected_margin_count_total"] + step_info["selected_margin_count_total"]
+            ),
+            "selected_row_total_across_steps": (
+                diag["selected_row_total_across_steps"] + step_info["selected_row_total"]
+            ),
+            "selected_col_total_across_steps": (
+                diag["selected_col_total_across_steps"] + step_info["selected_col_total"]
+            ),
+            "selected_value_total_across_steps": (
+                diag["selected_value_total_across_steps"] + step_info["selected_value_total"]
             ),
         }
         return next_state, diag

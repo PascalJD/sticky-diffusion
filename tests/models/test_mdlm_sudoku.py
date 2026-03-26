@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
+import sticky.models.mdlm.mdlm_model as mdlm_model_mod
 from sticky.models.mdlm.mdlm_model import MDLM, _selected_log_prob_sums
 from sticky.models.mdlm.sudoku_sampling import (
     conditional_generate,
@@ -236,12 +237,22 @@ class _ToyConditionalModel:
             return next_state
         masked_unknown = (state == self.mask_token_id) & (~known_token_mask)
         selected = masked_unknown
+        token_pos = jnp.arange(state.shape[-1], dtype=jnp.int32)
         return next_state, {
             "masked_unknown_total": jnp.sum(masked_unknown.astype(jnp.float32)),
             "selected_count_total": jnp.sum(selected.astype(jnp.float32)),
             "selected_margin_sum_total": jnp.asarray(0.5, dtype=jnp.float32)
             * jnp.sum(selected.astype(jnp.float32)),
             "selected_margin_count_total": jnp.sum(selected.astype(jnp.float32)),
+            "selected_row_total": jnp.sum(
+                selected.astype(jnp.float32) * (jnp.mod(token_pos, 3) == 0).astype(jnp.float32)
+            ),
+            "selected_col_total": jnp.sum(
+                selected.astype(jnp.float32) * (jnp.mod(token_pos, 3) == 1).astype(jnp.float32)
+            ),
+            "selected_value_total": jnp.sum(
+                selected.astype(jnp.float32) * (jnp.mod(token_pos, 3) == 2).astype(jnp.float32)
+            ),
         }
 
     def decode(self, state, *, conditioning=None):
@@ -288,8 +299,166 @@ def test_conditional_generate_preserves_known_tokens_and_reports_diagnostics():
     assert float(diagnostics["masked_unknown_total_across_steps"]) == 3.0
     assert float(diagnostics["selected_count_total_across_steps"]) == 3.0
     assert float(diagnostics["selected_margin_sum_total"]) == 1.5
+    assert float(diagnostics["selected_row_total_across_steps"]) == 1.0
+    assert float(diagnostics["selected_col_total_across_steps"]) == 1.0
+    assert float(diagnostics["selected_value_total_across_steps"]) == 1.0
     assert float(diagnostics["example_step_count"]) == 3.0
     assert float(diagnostics["final_masked_unknown_total"]) == 0.0
+
+
+class _IdentityNoiseSchedule:
+    def alpha(self, t):
+        return jnp.asarray(t, dtype=jnp.float32)
+
+
+class _FakeRevealOrderModel:
+    def __init__(self, *, log_probs: jnp.ndarray, revealed_token_sample_mode: str):
+        self.log_probs = jnp.asarray(log_probs, dtype=jnp.float32)
+        self.mask_token_id = 99
+        self.categorical_sampling_policy = "exact"
+        self.oracle_noise_type = "none"
+        self.oracle_noise_scale = 0.0
+        self.revealed_token_sample_mode = revealed_token_sample_mode
+        self.noise_schedule = _IdentityNoiseSchedule()
+
+    def get_sampling_grid(self, i: int, timesteps: int):
+        del i, timesteps
+        return jnp.asarray(0.75, dtype=jnp.float32), jnp.asarray(0.5, dtype=jnp.float32)
+
+    def _sampling_log_probs(self, state, *, t, conditioning=None):
+        del t, conditioning
+        return jnp.asarray(state, dtype=jnp.int32), self.log_probs, False
+
+    def _masked_unknown_positions(self, tokens, *, known_token_mask=None):
+        known = (
+            jnp.zeros_like(tokens, dtype=jnp.bool_)
+            if known_token_mask is None
+            else jnp.asarray(known_token_mask, dtype=jnp.bool_)
+        )
+        return (jnp.asarray(tokens, dtype=jnp.int32) == self.mask_token_id) & (~known)
+
+    def _clamp_known_tokens(
+        self,
+        tokens,
+        *,
+        current_tokens,
+        known_token_mask=None,
+        known_tokens=None,
+    ):
+        if known_token_mask is None:
+            return jnp.asarray(tokens, dtype=jnp.int32)
+        source = (
+            jnp.asarray(current_tokens, dtype=jnp.int32)
+            if known_tokens is None
+            else jnp.asarray(known_tokens, dtype=jnp.int32)
+        )
+        return jnp.where(known_token_mask, source, tokens).astype(jnp.int32)
+
+    def _use_cache(self) -> bool:
+        return False
+
+    def _pack_sampling_state(self, tokens, *, log_probs, cache_valid, structured):
+        del log_probs, cache_valid, structured
+        return jnp.asarray(tokens, dtype=jnp.int32)
+
+    def _sampling_step_info(self, *, masked_unknown, reveal_positions=None, margins=None):
+        return MDLM._sampling_step_info(
+            self,
+            masked_unknown=masked_unknown,
+            reveal_positions=reveal_positions,
+            margins=margins,
+        )
+
+
+def test_reveal_order_sample_mode_preserves_default_sampling(monkeypatch):
+    reveal_positions = jnp.asarray([[True, False, True, False]], dtype=jnp.bool_)
+    log_probs = jnp.log(
+        jnp.asarray(
+            [[[0.1, 0.9, 0.0], [0.8, 0.2, 0.0], [0.05, 0.05, 0.9], [0.6, 0.4, 0.0]]],
+            dtype=jnp.float32,
+        )
+    )
+    sampled = jnp.asarray([[7, 7, 7, 7]], dtype=jnp.int32)
+
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "select_top_prob_margin_positions",
+        lambda *args, **kwargs: reveal_positions,
+    )
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "categorical_sample_from_logits",
+        lambda *args, **kwargs: sampled,
+    )
+
+    model = _FakeRevealOrderModel(
+        log_probs=log_probs,
+        revealed_token_sample_mode="sample",
+    )
+    state = jnp.asarray([[99, 4, 99, 6]], dtype=jnp.int32)
+
+    next_tokens = MDLM.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        4,
+        state,
+        known_token_mask=jnp.zeros_like(state, dtype=jnp.bool_),
+        known_tokens=jnp.zeros_like(state, dtype=jnp.int32),
+        method="top_prob_margin",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(next_tokens),
+        np.asarray([[7, 4, 7, 6]], dtype=np.int32),
+    )
+
+
+def test_reveal_order_sample_mode_argmax_only_decodes_new_reveals(monkeypatch):
+    reveal_positions = jnp.asarray([[True, False, True, False]], dtype=jnp.bool_)
+    log_probs = jnp.log(
+        jnp.asarray(
+            [[[0.1, 0.9, 0.0], [0.8, 0.2, 0.0], [0.05, 0.05, 0.9], [0.6, 0.4, 0.0]]],
+            dtype=jnp.float32,
+        )
+    )
+
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "select_top_prob_margin_positions",
+        lambda *args, **kwargs: reveal_positions,
+    )
+
+    def _unexpected_sample(*args, **kwargs):
+        raise AssertionError("categorical sampling should not run in argmax reveal mode")
+
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "categorical_sample_from_logits",
+        _unexpected_sample,
+    )
+
+    model = _FakeRevealOrderModel(
+        log_probs=log_probs,
+        revealed_token_sample_mode="argmax",
+    )
+    state = jnp.asarray([[99, 4, 99, 6]], dtype=jnp.int32)
+
+    next_tokens = MDLM.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        4,
+        state,
+        known_token_mask=jnp.zeros_like(state, dtype=jnp.bool_),
+        known_tokens=jnp.zeros_like(state, dtype=jnp.int32),
+        method="top_prob_margin",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(next_tokens),
+        np.asarray([[1, 4, 2, 6]], dtype=np.int32),
+    )
 
 
 def test_tiny_sudoku_overfit_reaches_exact_completion():

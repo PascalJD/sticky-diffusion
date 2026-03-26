@@ -69,6 +69,28 @@ def _maybe_sync_training_metric(metric: Array, *, sync: bool) -> None:
         jax.block_until_ready(metric)
 
 
+def _normalize_sudoku_eval_param_source(source: Any) -> str:
+    key = str(source).strip().lower()
+    if key in {"", "auto"}:
+        return "auto"
+    if key in {"ema", "ema_params"}:
+        return "ema"
+    if key in {"live", "params"}:
+        return "live"
+    raise ValueError(
+        f"Unknown eval.param_source={source!r}. Expected one of: ema, live, auto."
+    )
+
+
+def _params_for_sudoku_eval(state: Any, *, eval_cfg: DictConfig):
+    source = _normalize_sudoku_eval_param_source(eval_cfg.get("param_source", "ema"))
+    if source == "live":
+        return state.params
+    if getattr(state, "ema_params", None) is not None:
+        return state.ema_params
+    return state.params
+
+
 def _resolve_num_train_steps(cfg: DictConfig, task: Any) -> int:
     epochs_cfg = cfg.training.get("num_train_epochs", None)
     if epochs_cfg in (None, "", "null", "None"):
@@ -516,7 +538,12 @@ def main_train_loop(
                             wandb_mod.log(likelihood_metrics, step=step_i)
 
                 if eval_due and maybe_log_eval is not None:
-                    eval_metrics = maybe_log_eval(step_i, params_for_sampling(state_s))
+                    eval_params = (
+                        _params_for_sudoku_eval(state_s, eval_cfg=eval_cfg)
+                        if eval_mode == "sudoku"
+                        else params_for_sampling(state_s)
+                    )
+                    eval_metrics = maybe_log_eval(step_i, eval_params)
                     if eval_metrics:
                         last_eval_metrics.update(eval_metrics)
                         last_eval_step = step_i
@@ -665,7 +692,12 @@ def main_train_loop(
                     if wandb_mod is not None:
                         wandb_mod.log(likelihood_metrics, step=step_i)
             if eval_due and maybe_log_eval is not None:
-                eval_metrics = maybe_log_eval(step_i, params_for_sampling(state))
+                eval_params = (
+                    _params_for_sudoku_eval(state, eval_cfg=eval_cfg)
+                    if eval_mode == "sudoku"
+                    else params_for_sampling(state)
+                )
+                eval_metrics = maybe_log_eval(step_i, eval_params)
                 if eval_metrics:
                     last_eval_metrics.update(eval_metrics)
                     last_eval_step = step_i
@@ -691,7 +723,11 @@ def main_train_loop(
     ):
         final_eval_metrics = maybe_log_eval(
             num_train_steps,
-            params_for_sampling(final_state),
+            (
+                _params_for_sudoku_eval(final_state, eval_cfg=eval_cfg)
+                if eval_mode == "sudoku"
+                else params_for_sampling(final_state)
+            ),
             force_fid=True,
             force_is=True,
         )

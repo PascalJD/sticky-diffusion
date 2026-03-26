@@ -388,7 +388,7 @@ def run_offline_checkpoint_eval(
     use_ema = bool(offline_cfg.get("use_ema", True))
     if use_ema and (state.ema_params is not None):
         params_for_eval = state.ema_params
-        param_source = "ema_params"
+        param_source = "ema"
     else:
         if use_ema and (state.ema_params is None):
             print(
@@ -397,7 +397,7 @@ def run_offline_checkpoint_eval(
                 flush=True,
             )
         params_for_eval = state.params
-        param_source = "params"
+        param_source = "live"
 
     eval_cfg_local = _clone_eval_cfg(eval_cfg)
     eval_cfg_local.run_at_end = True

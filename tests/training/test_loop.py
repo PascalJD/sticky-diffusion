@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import jax
 import jax.numpy as jnp
 from omegaconf import OmegaConf
@@ -84,3 +86,22 @@ def test_resolve_num_train_steps_uses_explicit_steps_without_epochs():
     num_steps = loop_mod._resolve_num_train_steps(cfg, object())
 
     assert num_steps == 777
+
+
+def test_params_for_sudoku_eval_honors_requested_param_source():
+    state = SimpleNamespace(params={"w": 1}, ema_params={"w": 2})
+
+    assert loop_mod._params_for_sudoku_eval(
+        state,
+        eval_cfg=OmegaConf.create({"param_source": "live"}),
+    ) is state.params
+    assert loop_mod._params_for_sudoku_eval(
+        state,
+        eval_cfg=OmegaConf.create({"param_source": "ema"}),
+    ) is state.ema_params
+
+    no_ema_state = SimpleNamespace(params={"w": 3}, ema_params=None)
+    assert loop_mod._params_for_sudoku_eval(
+        no_ema_state,
+        eval_cfg=OmegaConf.create({"param_source": "ema"}),
+    ) is no_ema_state.params
