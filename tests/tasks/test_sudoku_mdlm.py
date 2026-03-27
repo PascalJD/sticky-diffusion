@@ -3,6 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+import sticky.tasks.sudoku_base as sudoku_base_mod
 from sticky.tasks.sudoku_mdlm import SudokuMDLMTask
 
 
@@ -64,3 +65,94 @@ def test_sudoku_mdlm_loss_masks_out_the_clue_prefix():
     assert bool(jnp.array_equal(model.loss_mask.sum(axis=1), jnp.asarray([243, 237, 0])))
     assert float(loss) == 480.0
     assert float(stats["loss_diff"]) == 480.0
+
+
+def test_sudoku_mdlm_loader_and_count_plumbing_is_stable(monkeypatch):
+    task = SudokuMDLMTask(
+        data_dir="/tmp/sudoku",
+        train_file="train.npy",
+        test_file="test.npy",
+        batch_size=8,
+        eval_batch_size=4,
+        data_shape=(243,),
+        vocab_size=10,
+        num_classes=-1,
+        drop_remainder=True,
+        shuffle=True,
+        seq_order="fixed",
+        mmap=False,
+        max_train_examples=11,
+        max_test_examples=7,
+        auto_download=False,
+        download_timeout_sec=33,
+        download_retries=5,
+    )
+    iterator_calls = []
+    count_calls = []
+
+    def fake_make_sudoku_iterator(**kwargs):
+        iterator_calls.append(dict(kwargs))
+        return iter([{"image": "ok"}])
+
+    def fake_get_sudoku_num_examples(**kwargs):
+        count_calls.append(dict(kwargs))
+        return 123
+
+    monkeypatch.setattr(sudoku_base_mod, "make_sudoku_iterator", fake_make_sudoku_iterator)
+    monkeypatch.setattr(sudoku_base_mod, "get_sudoku_num_examples", fake_get_sudoku_num_examples)
+
+    train_it, eval_it = task.make_dataloaders(seed=17)
+
+    assert next(train_it) == {"image": "ok"}
+    assert next(eval_it) == {"image": "ok"}
+    assert iterator_calls == [
+        {
+            "split": "train",
+            "batch_size": 8,
+            "seed": 17,
+            "data_dir": "/tmp/sudoku",
+            "train_file": "train.npy",
+            "test_file": "test.npy",
+            "shuffle": True,
+            "repeat": True,
+            "drop_remainder": True,
+            "seq_order": "fixed",
+            "mmap": False,
+            "max_examples": 11,
+            "auto_download": False,
+            "download_timeout_sec": 33,
+            "download_retries": 5,
+        },
+        {
+            "split": "test",
+            "batch_size": 4,
+            "seed": 18,
+            "data_dir": "/tmp/sudoku",
+            "train_file": "train.npy",
+            "test_file": "test.npy",
+            "shuffle": False,
+            "repeat": False,
+            "drop_remainder": False,
+            "seq_order": "fixed",
+            "mmap": False,
+            "max_examples": 7,
+            "auto_download": False,
+            "download_timeout_sec": 33,
+            "download_retries": 5,
+        },
+    ]
+
+    assert task.train_num_examples() == 123
+    assert count_calls == [
+        {
+            "split": "train",
+            "data_dir": "/tmp/sudoku",
+            "train_file": "train.npy",
+            "test_file": "test.npy",
+            "mmap": False,
+            "max_examples": 11,
+            "auto_download": False,
+            "download_timeout_sec": 33,
+            "download_retries": 5,
+        }
+    ]
