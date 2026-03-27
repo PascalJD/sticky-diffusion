@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from sticky.training.offline_eval import _extract_forward_config_metadata
+from pathlib import Path
+
+from sticky.training.eval import resolve_from_original_cwd
+from sticky.training.offline_eval import (
+    _extract_forward_config_metadata,
+    _resolve_run_dir_from_offline_cfg,
+)
 
 
 def test_extract_forward_config_metadata_handles_missing_forward():
@@ -38,3 +44,28 @@ def test_extract_forward_config_metadata_reads_sjd_forward_fields():
         "forward_jump_target": "sticky.jump.vp_matched",
         "jump_eta": 0.9,
     }
+
+
+def test_resolve_from_original_cwd_keeps_empty_string_as_relative(monkeypatch):
+    monkeypatch.setattr(
+        "hydra.utils.get_original_cwd",
+        lambda: "/tmp/sticky-original-cwd",
+    )
+
+    assert resolve_from_original_cwd("") == "/tmp/sticky-original-cwd"
+
+
+def test_offline_eval_treats_empty_run_dir_as_unset():
+    assert _resolve_run_dir_from_offline_cfg({"run_dir": ""}) is None
+    assert _resolve_run_dir_from_offline_cfg({"run_dir": "null"}) is None
+
+
+def test_offline_eval_resolves_run_dir_against_original_cwd(monkeypatch):
+    monkeypatch.setattr(
+        "hydra.utils.get_original_cwd",
+        lambda: "/tmp/sticky-original-cwd",
+    )
+
+    assert _resolve_run_dir_from_offline_cfg({"run_dir": "runs/demo"}) == Path(
+        "/tmp/sticky-original-cwd/runs/demo"
+    )

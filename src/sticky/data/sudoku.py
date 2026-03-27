@@ -9,6 +9,8 @@ from typing import Iterator, Mapping, Optional
 
 import numpy as np
 
+from sticky.core.paths import resolve_against_original_cwd
+
 
 _SUDOKU_DATA_URL = "https://drive.google.com/drive/folders/1TluiZjYl-zLdbxjVmhfWl-WyX_OvD7UW"
 _VALID_SEQ_ORDERS = {"dataset", "fixed", "random"}
@@ -16,19 +18,6 @@ _SUDOKU_DRIVE_FILE_IDS = {
     "sudoku-train-data.npy": "1msLy7AXAr4VBXXv7Xfkc_IG3E7retWza",
     "sudoku-test-data.npy": "1HlKFzrkhMUAOoDU9qGUjkMD6IjlT40v7",
 }
-
-
-def _resolve_against_original_cwd(path_like: str) -> Path:
-    path = Path(str(path_like))
-    if path.is_absolute():
-        return path
-
-    try:
-        import hydra
-
-        return Path(hydra.utils.get_original_cwd()) / path
-    except Exception:
-        return path.resolve()
 
 
 def _resolve_data_root(data_dir: Optional[str]) -> Path:
@@ -46,7 +35,7 @@ def _resolve_data_root(data_dir: Optional[str]) -> Path:
         if scratch:
             return Path(scratch) / "sticky-diffusion" / "data" / "sudoku"
 
-    return _resolve_against_original_cwd(str(rel))
+    return resolve_against_original_cwd(str(rel))
 
 
 def _resolve_data_file(

@@ -8,6 +8,7 @@ import jax
 from flax.training import checkpoints
 from omegaconf import DictConfig, OmegaConf
 
+from sticky.core.paths import is_nullish, resolve_optional_path
 from sticky.models.factory import build_model
 from sticky.rng import ensure_prng_key, legacy_prng_key_data, make_rng
 from sticky.tasks.factory import build_task
@@ -20,18 +21,12 @@ from sticky.training.persistence import (
 from sticky.training.sampling import build_sampling_fns
 from sticky.training.state import init_state
 
-
-def _is_nullish(value: Any) -> bool:
-    return value in (None, "", "null")
-
-
 def _resolve_path_from_original_cwd(path_like: Optional[str]) -> Optional[Path]:
-    if _is_nullish(path_like):
-        return None
-    resolved = resolve_from_original_cwd(path_like)
-    if resolved is None:
-        return None
-    return Path(resolved)
+    return resolve_optional_path(
+        path_like,
+        nullish=(None, "", "null"),
+        fallback_to_resolve=False,
+    )
 
 
 def _clone_cfg(cfg: DictConfig) -> DictConfig:
@@ -40,7 +35,7 @@ def _clone_cfg(cfg: DictConfig) -> DictConfig:
 
 def _resolve_run_dir_from_offline_cfg(offline_cfg: DictConfig) -> Optional[Path]:
     run_dir_cfg = offline_cfg.get("run_dir", None)
-    if _is_nullish(run_dir_cfg):
+    if is_nullish(run_dir_cfg, nullish=(None, "", "null")):
         return None
     run_dir = _resolve_path_from_original_cwd(str(run_dir_cfg))
     if run_dir is None:
@@ -78,7 +73,7 @@ def _apply_environment_overrides(
     dataset_cfg = fallback_cfg.get("dataset", None)
     if dataset_cfg is not None:
         data_dir = dataset_cfg.get("data_dir", None)
-        if not _is_nullish(data_dir):
+        if not is_nullish(data_dir, nullish=(None, "", "null")):
             effective_cfg.dataset.data_dir = data_dir
 
     runtime_cfg = fallback_cfg.get("runtime", None)
@@ -97,7 +92,7 @@ def _apply_explicit_eval_overrides(
         effective_cfg.sampler.n_steps = int(sample_timesteps)
 
     jump_eta_cfg = offline_cfg.get("jump_eta", None)
-    if not _is_nullish(jump_eta_cfg):
+    if not is_nullish(jump_eta_cfg, nullish=(None, "", "null")):
         if effective_cfg.get("forward", None) is None:
             raise ValueError("offline_eval.jump_eta requires experiment.forward to be configured.")
         if effective_cfg.forward.get("jump", None) is None:
@@ -107,7 +102,7 @@ def _apply_explicit_eval_overrides(
         effective_cfg.forward.jump.eta = float(jump_eta_cfg)
 
     tau_cfg = offline_cfg.get("logit_temperature", None)
-    if not _is_nullish(tau_cfg):
+    if not is_nullish(tau_cfg, nullish=(None, "", "null")):
         effective_cfg.sampler.logit_temperature = float(tau_cfg)
 
 
@@ -188,7 +183,7 @@ def _checkpoint_root_from_run_dir(run_dir: Path, cfg: DictConfig) -> Path:
 
 def _resolve_checkpoint_root(cfg: DictConfig, offline_cfg: DictConfig) -> Path:
     ckpt_dir_cfg = offline_cfg.get("checkpoint_dir", None)
-    if not _is_nullish(ckpt_dir_cfg):
+    if not is_nullish(ckpt_dir_cfg, nullish=(None, "", "null")):
         out = _resolve_path_from_original_cwd(str(ckpt_dir_cfg))
         if out is None:
             raise ValueError("offline_eval.checkpoint_dir was set but could not be resolved.")
