@@ -31,60 +31,20 @@ from sticky.models.discrete_mixture import (
     sample_mixture_categorical,
 )
 from sticky.models import masked_discrete_core as masked_core
+from sticky.models.masked.common import (
+    MaskingSchedule,
+    forward_sample as shared_forward_sample,
+    get_cond_embedding as shared_get_cond_embedding,
+    get_sampling_grid as shared_get_sampling_grid,
+    mask_token_id as shared_mask_token_id,
+    prior_sample as shared_prior_sample,
+    sample_training_times,
+)
 
 from . import binary_search
 from . import utils
 
 Array = jnp.ndarray
-
-
-class MaskingSchedule(nn.Module):
-
-  data_shape: tuple[int, ...]
-  schedule_fn_type: str = "cosine"
-  eps: float = 1e-4
-
-  def __call__(self, t: Array) -> Array:
-    return masked_core.masked_logit_schedule(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=self.eps,
-    )
-
-  def _dalpha(self, t: Array) -> Array:
-    return masked_core.clipped_schedule_dalpha(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=0.0,
-    )
-
-  def dalpha(self, t: Array) -> Array:
-    return masked_core.clipped_schedule_dalpha(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=self.eps,
-    )
-
-  def _alpha(self, t: Array) -> Array:
-    return masked_core.clipped_schedule_alpha(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=0.0,
-    )
-
-  def alpha(self, t: Array) -> Array:
-    return masked_core.clipped_schedule_alpha(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=self.eps,
-    )
-
-  def dgamma_times_alpha(self, t: Array) -> Array:
-    return masked_core.masked_dgamma_times_alpha(
-        t,
-        schedule_fn_type=self.schedule_fn_type,
-        eps=self.eps,
-    )
 
 
 class MD4(nn.Module):
@@ -166,21 +126,21 @@ class MD4(nn.Module):
 
   @property
   def mask_token_id(self) -> int:
-    return masked_core.mask_token_id(self.vocab_size)
+    return shared_mask_token_id(self.vocab_size)
 
   # Forward (noising) process
 
   def forward_sample(self, x: Array, t: Array) -> Array:
-    keep_prob = self.noise_schedule.alpha(masked_core.reverse_broadcast(t, x.ndim))
-    return masked_core.sample_masked_discrete_forward(
-        self.make_rng("sample"),
+    return shared_forward_sample(
+        self,
         x,
-        keep_prob=keep_prob,
-        mask_token_id=self.mask_token_id,
+        t,
+        noise_schedule=self.noise_schedule,
+        vocab_size=self.vocab_size,
     )
 
   def prior_sample(self, batch_size: int) -> Array:
-    return masked_core.make_masked_token_prior(
+    return shared_prior_sample(
         batch_size=batch_size,
         data_shape=self.data_shape,
         vocab_size=self.vocab_size,
@@ -189,9 +149,7 @@ class MD4(nn.Module):
   # Conditioning helpers
 
   def get_cond_embedding(self, conditioning: Array | None) -> Array | None:
-    if (self.classes > 0) and (conditioning is not None):
-      return self.cond_embeddings(conditioning)
-    return None
+    return shared_get_cond_embedding(self, conditioning, classes=self.classes)
 
   # Model prediction utilities
 
@@ -250,12 +208,11 @@ class MD4(nn.Module):
     loss_recon = self.recon_loss()
     loss_prior = self.latent_loss()
 
-    rng1 = self.make_rng("sample")
-    if self.antithetic_time_sampling:
-      t0 = jax.random.uniform(rng1)
-      t = jnp.mod(t0 + jnp.arange(0.0, 1.0, step=1.0 / bs), 1.0)
-    else:
-      t = jax.random.uniform(rng1, shape=[bs])
+    t = sample_training_times(
+        self,
+        batch_size=bs,
+        antithetic_time_sampling=self.antithetic_time_sampling,
+    )
 
     loss_diff = self.diffusion_loss(t, x, cond=cond_emb, train=train).mean()
     loss = loss_diff + loss_prior + loss_recon
@@ -271,7 +228,7 @@ class MD4(nn.Module):
   # Sampling utilities
 
   def get_sampling_grid(self, i: int, timesteps: int) -> tuple[Array, Array]:
-    return masked_core.make_sampling_time_pair(
+    return shared_get_sampling_grid(
         i,
         timesteps,
         sampling_grid=self.sampling_grid,

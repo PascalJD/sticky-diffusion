@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-import sticky.models.mdlm.mdlm_model as mdlm_model_mod
+import sticky.models.mdlm.sudoku_sampling as sudoku_sampling_mod
 from sticky.models.mdlm.mdlm_model import MDLM, _selected_log_prob_sums
 from sticky.models.mdlm.sudoku_sampling import (
     conditional_generate,
@@ -381,12 +381,12 @@ def test_reveal_order_sample_mode_preserves_default_sampling(monkeypatch):
     sampled = jnp.asarray([[7, 7, 7, 7]], dtype=jnp.int32)
 
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "select_top_prob_margin_positions",
         lambda *args, **kwargs: reveal_positions,
     )
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "categorical_sample_from_logits",
         lambda *args, **kwargs: sampled,
     )
@@ -424,7 +424,7 @@ def test_reveal_order_sample_mode_argmax_only_decodes_new_reveals(monkeypatch):
     )
 
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "select_top_prob_margin_positions",
         lambda *args, **kwargs: reveal_positions,
     )
@@ -433,7 +433,7 @@ def test_reveal_order_sample_mode_argmax_only_decodes_new_reveals(monkeypatch):
         raise AssertionError("categorical sampling should not run in argmax reveal mode")
 
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "categorical_sample_from_logits",
         _unexpected_sample,
     )
@@ -471,12 +471,12 @@ def test_reveal_order_sample_step_clamps_known_tokens_even_if_selector_targets_t
     sampled = jnp.asarray([[7, 7, 7, 7]], dtype=jnp.int32)
 
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "select_top_prob_margin_positions",
         lambda *args, **kwargs: jnp.ones((1, 4), dtype=jnp.bool_),
     )
     monkeypatch.setattr(
-        mdlm_model_mod,
+        sudoku_sampling_mod,
         "categorical_sample_from_logits",
         lambda *args, **kwargs: sampled,
     )

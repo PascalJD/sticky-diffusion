@@ -1,15 +1,46 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import jax
 import jax.numpy as jnp
 
 from sticky.models import masked_discrete_core as masked_core
-from sticky.models.mdlm import sampling as mdlm_sampling
-from sticky.models.mdlm.mdlm_model import MDLM, _selected_log_prob_sums
 
 
-def _make_model() -> MDLM:
-    return MDLM(
+def _install_md4_optional_dependency_stubs() -> None:
+    def _ensure_module(name: str, *, attr_name: str | None = None, attr_value=None):
+        if name in sys.modules:
+            return sys.modules[name]
+        module = ModuleType(name)
+        if attr_name is not None:
+            setattr(module, attr_name, attr_value)
+        sys.modules[name] = module
+        return module
+
+    _ensure_module("distrax", attr_name="Distribution", attr_value=object)
+    matplotlib_mod = _ensure_module("matplotlib")
+    pyplot_mod = _ensure_module("matplotlib.pyplot")
+    if not hasattr(matplotlib_mod, "pyplot"):
+        matplotlib_mod.pyplot = pyplot_mod
+    orbax_mod = _ensure_module("orbax")
+    checkpoint_mod = _ensure_module("orbax.checkpoint")
+    if not hasattr(checkpoint_mod, "CheckpointManager"):
+        checkpoint_mod.CheckpointManager = object
+    if not hasattr(orbax_mod, "checkpoint"):
+        orbax_mod.checkpoint = checkpoint_mod
+    _ensure_module("seaborn")
+
+
+_install_md4_optional_dependency_stubs()
+
+from sticky.models.md4 import sampling as md4_sampling
+from sticky.models.md4.md4_model import MD4
+
+
+def _make_model() -> MD4:
+    return MD4(
         data_shape=(8, 8, 3),
         cont_time=True,
         timesteps=8,
@@ -46,16 +77,17 @@ def _make_model() -> MDLM:
         sampler="ancestral",
         sampling_grid="cosine",
         categorical_sampling_policy="legacy_low",
-        cache_predictions=False,
         model_sharding=False,
     )
 
 
-def test_mdlm_smoke_end_to_end():
+def test_md4_smoke_end_to_end():
     model = _make_model()
 
     rng = jax.random.PRNGKey(0)
-    rng_params, rng_sample, rng_loss, rng_step, rng_generate = jax.random.split(rng, 5)
+    rng_params, rng_sample, rng_loss, rng_forward, rng_step, rng_generate = jax.random.split(
+        rng, 6
+    )
 
     x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
     variables = model.init({"params": rng_params, "sample": rng_sample}, x, train=False)
@@ -69,13 +101,15 @@ def test_mdlm_smoke_end_to_end():
 
     assert jnp.isfinite(stats["loss"])
     assert jnp.isfinite(stats["loss_diff"])
+    assert jnp.isfinite(stats["loss_prior"])
     assert jnp.isfinite(stats["loss_recon"])
     assert stats["loss"].shape == ()
     assert stats["loss_diff"].shape == ()
+    assert stats["loss_prior"].shape == ()
     assert stats["loss_recon"].shape == ()
     assert float(stats["loss"]) > 0.0
     assert float(stats["loss_diff"]) > 0.0
-    assert float(stats["loss_recon"]) == 0.0
+    assert float(stats["loss_recon"]) > 0.0
 
     prior = model.apply(
         variables,
@@ -85,6 +119,33 @@ def test_mdlm_smoke_end_to_end():
     assert prior.shape == (2, 8, 8, 3)
     assert prior.dtype == jnp.int32
     assert bool(jnp.all(prior == model.mask_token_id))
+
+    s, t = model.apply(
+        variables,
+        0,
+        8,
+        method=model.get_sampling_grid,
+    )
+    expected_s, expected_t = masked_core.make_sampling_time_pair(
+        0,
+        8,
+        sampling_grid=model.sampling_grid,
+    )
+    assert jnp.allclose(s, expected_s)
+    assert jnp.allclose(t, expected_t)
+
+    forward = model.apply(
+        variables,
+        x,
+        jnp.asarray([0.37, 0.81], dtype=jnp.float32),
+        method=model.forward_sample,
+        rngs={"sample": rng_forward},
+    )
+    assert forward.shape == x.shape
+    assert forward.dtype == jnp.int32
+    assert bool(
+        jnp.all((forward == x) | (forward == jnp.asarray(model.mask_token_id, dtype=jnp.int32)))
+    )
 
     reverse_step = model.apply(
         variables,
@@ -109,7 +170,7 @@ def test_mdlm_smoke_end_to_end():
     assert int(decoded.max()) <= 255
     assert not bool(jnp.any(decoded == model.mask_token_id))
 
-    generated = mdlm_sampling.simple_generate(
+    generated = md4_sampling.simple_generate(
         rng_generate,
         {"params": variables["params"], "ema_params": None},
         model=model,
@@ -122,98 +183,3 @@ def test_mdlm_smoke_end_to_end():
     assert generated.dtype == jnp.int32
     assert int(generated.min()) >= 0
     assert int(generated.max()) <= 255
-
-
-def test_mdlm_masked_discrete_helpers_preserve_core_semantics():
-    model = _make_model()
-
-    rng = jax.random.PRNGKey(11)
-    rng_params, rng_sample, rng_forward = jax.random.split(rng, 3)
-    x = jnp.reshape(jnp.arange(2 * 8 * 8 * 3, dtype=jnp.int32), (2, 8, 8, 3)) % 256
-    variables = model.init({"params": rng_params, "sample": rng_sample}, x, train=False)
-
-    prior = model.apply(
-        variables,
-        2,
-        method=model.prior_sample,
-    )
-    assert bool(jnp.all(prior == model.mask_token_id))
-
-    s, t = model.apply(
-        variables,
-        0,
-        8,
-        method=model.get_sampling_grid,
-    )
-    expected_s, expected_t = masked_core.make_sampling_time_pair(
-        0,
-        8,
-        sampling_grid=model.sampling_grid,
-    )
-    assert jnp.allclose(s, expected_s)
-    assert jnp.allclose(t, expected_t)
-
-    zt = model.apply(
-        variables,
-        x,
-        jnp.asarray([0.37, 0.81], dtype=jnp.float32),
-        method=model.forward_sample,
-        rngs={"sample": rng_forward},
-    )
-    assert zt.shape == x.shape
-    assert zt.dtype == jnp.int32
-    assert bool(
-        jnp.all((zt == x) | (zt == jnp.asarray(model.mask_token_id, dtype=jnp.int32)))
-    )
-
-
-def test_mdlm_diffusion_loss_matches_md4_sign_convention():
-    model = _make_model()
-
-    rng = jax.random.PRNGKey(17)
-    rng_params, rng_sample, rng_noise = jax.random.split(rng, 3)
-    x = (jnp.reshape(jnp.arange(8 * 8 * 3, dtype=jnp.int32), (1, 8, 8, 3)) * 7) % 256
-    variables = model.init({"params": rng_params, "sample": rng_sample}, x, train=False)
-
-    t = jnp.asarray([0.37], dtype=jnp.float32)
-    zt = model.apply(
-        variables,
-        x,
-        t,
-        method=model.forward_sample,
-        rngs={"sample": rng_noise},
-    )
-    logits, _ = model.apply(
-        variables,
-        zt,
-        t,
-        method=model.predict_x,
-        train=False,
-    )
-    log_probs, _ = model.apply(
-        variables,
-        zt,
-        t,
-        method=model.predict_clean_log_probs,
-        train=False,
-    )
-    weight = masked_core.masked_dgamma_times_alpha(
-        t,
-        schedule_fn_type=model.noise_schedule_type,
-    )
-    mask = masked_core.masked_positions(zt, mask_token_id=model.mask_token_id)
-
-    expected = weight * _selected_log_prob_sums(log_probs, x)
-    md4_style = weight * masked_core.masked_logprob_sums(logits, x, mask=mask)
-    actual = model.apply(
-        variables,
-        t,
-        x,
-        method=model.diffusion_loss,
-        train=False,
-        rngs={"sample": rng_noise},
-    )
-
-    assert jnp.allclose(actual, expected)
-    assert jnp.allclose(actual, md4_style)
-    assert float(actual[0]) > 0.0

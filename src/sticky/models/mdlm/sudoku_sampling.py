@@ -5,6 +5,9 @@ from typing import Any, Optional
 import jax
 import jax.numpy as jnp
 
+from sticky.models import masked_discrete_core as masked_core
+from sticky.models.discrete_mixture import categorical_sample_from_logits
+
 from .sampling import _get_params, _initialize_sampling_state
 
 
@@ -59,6 +62,102 @@ def position_probability_margins(log_probs: Array) -> Array:
         return probs[..., 0]
     top2 = jnp.sort(probs, axis=-1)[..., -2:]
     return top2[..., 1] - top2[..., 0]
+
+
+def _zero_sampling_info(dtype: Any = jnp.float32) -> dict[str, Array]:
+    zero = jnp.asarray(0.0, dtype=dtype)
+    return {
+        "masked_unknown_total": zero,
+        "selected_count_total": zero,
+        "selected_margin_sum_total": zero,
+        "selected_margin_count_total": zero,
+        "selected_row_total": zero,
+        "selected_col_total": zero,
+        "selected_value_total": zero,
+    }
+
+
+def is_reveal_order_sampler(sampler: str) -> bool:
+    return sampler in {"uniform", "top_probability", "top_prob_margin"}
+
+
+def _normalize_token_mask(
+    mask: Array | None,
+    *,
+    ref: Array,
+    name: str,
+) -> Array | None:
+    if mask is None:
+        return None
+    mask = jnp.asarray(mask, dtype=jnp.bool_)
+    if mask.shape != ref.shape:
+        raise ValueError(f"{name} must match reference shape {ref.shape}, got {mask.shape}.")
+    return mask
+
+
+def clamp_known_tokens(
+    tokens: Array,
+    *,
+    current_tokens: Array,
+    known_token_mask: Array | None = None,
+    known_tokens: Array | None = None,
+) -> Array:
+    known_token_mask = _normalize_token_mask(
+        known_token_mask,
+        ref=tokens,
+        name="known_token_mask",
+    )
+    if known_token_mask is None:
+        return tokens
+    source = current_tokens if known_tokens is None else jnp.asarray(known_tokens, dtype=jnp.int32)
+    return jnp.where(known_token_mask, source, tokens).astype(jnp.int32)
+
+
+def masked_unknown_positions(
+    tokens: Array,
+    *,
+    mask_token_id: int,
+    known_token_mask: Array | None = None,
+) -> Array:
+    known_token_mask = _normalize_token_mask(
+        known_token_mask,
+        ref=tokens,
+        name="known_token_mask",
+    )
+    if known_token_mask is None:
+        known_token_mask = jnp.zeros_like(tokens, dtype=jnp.bool_)
+    return (tokens == mask_token_id) & (~known_token_mask)
+
+
+def sampling_step_info(
+    *,
+    masked_unknown: Array,
+    reveal_positions: Array | None = None,
+    margins: Array | None = None,
+) -> dict[str, Array]:
+    info = _zero_sampling_info()
+    info["masked_unknown_total"] = jnp.sum(masked_unknown.astype(jnp.float32))
+    if reveal_positions is None:
+        return info
+
+    reveal_positions = jnp.asarray(reveal_positions, dtype=jnp.bool_)
+    selected = reveal_positions.astype(jnp.float32)
+    info["selected_count_total"] = jnp.sum(selected)
+    info["selected_margin_count_total"] = info["selected_count_total"]
+    if margins is not None:
+        info["selected_margin_sum_total"] = jnp.sum(jnp.asarray(margins, dtype=jnp.float32) * selected)
+    token_pos = jnp.arange(reveal_positions.shape[-1], dtype=jnp.int32)
+    token_pos = token_pos.reshape((1,) * (reveal_positions.ndim - 1) + (-1,))
+    info["selected_row_total"] = jnp.sum(
+        selected * (jnp.mod(token_pos, 3) == 0).astype(jnp.float32)
+    )
+    info["selected_col_total"] = jnp.sum(
+        selected * (jnp.mod(token_pos, 3) == 1).astype(jnp.float32)
+    )
+    info["selected_value_total"] = jnp.sum(
+        selected * (jnp.mod(token_pos, 3) == 2).astype(jnp.float32)
+    )
+    return info
 
 
 def _apply_oracle_noise(
@@ -177,6 +276,108 @@ def _clamp_known_tokens_in_state(
         cache_valid = jnp.asarray(cache_valid, dtype=jnp.bool_) & (~changed)
         return (clamped, cached_log_probs, cache_valid)
     return jnp.where(known_token_mask, known_tokens, state).astype(jnp.int32)
+
+
+def reveal_order_sample_step(
+    model: Any,
+    rng: Array,
+    i: int,
+    timesteps: int,
+    state: Array | tuple[Array, Array, Array],
+    *,
+    conditioning: Array | None = None,
+    known_token_mask: Array | None = None,
+    known_tokens: Array | None = None,
+    method: str,
+    return_info: bool = False,
+) -> Array | tuple[Array, Array, Array] | tuple[Array | tuple[Array, Array, Array], dict[str, Array]]:
+    rng_body = jax.random.fold_in(rng, i)
+    rng_select, rng_sample = jax.random.split(rng_body)
+    s, t = model.get_sampling_grid(i, timesteps)
+
+    tokens, log_probs, structured = model._sampling_log_probs(
+        state,
+        t=t,
+        conditioning=conditioning,
+    )
+    masked_unknown = masked_unknown_positions(
+        tokens,
+        mask_token_id=model.mask_token_id,
+        known_token_mask=known_token_mask,
+    )
+    margins = position_probability_margins(log_probs)
+    alpha_t = model.noise_schedule.alpha(t)
+    alpha_s = model.noise_schedule.alpha(s)
+    reveal_prob = (alpha_s - alpha_t) / (1.0 - alpha_t)
+
+    if method == "uniform":
+        reveal_positions = select_uniform_reveal_positions(
+            rng_select,
+            masked_unknown,
+            reveal_prob=reveal_prob,
+        )
+    elif method == "top_probability":
+        reveal_positions = select_top_probability_positions(
+            log_probs,
+            masked_unknown,
+            reveal_prob=reveal_prob,
+            rng=rng_select,
+            oracle_noise_type=model.oracle_noise_type,
+            oracle_noise_scale=model.oracle_noise_scale,
+        )
+    elif method == "top_prob_margin":
+        reveal_positions = select_top_prob_margin_positions(
+            log_probs,
+            masked_unknown,
+            reveal_prob=reveal_prob,
+            rng=rng_select,
+            oracle_noise_type=model.oracle_noise_type,
+            oracle_noise_scale=model.oracle_noise_scale,
+        )
+    else:
+        raise NotImplementedError(f"Unknown reveal-order method={method!r}")
+
+    sample_mode = str(model.revealed_token_sample_mode).strip().lower()
+    if sample_mode == "sample":
+        proposal = categorical_sample_from_logits(
+            rng_sample,
+            log_probs,
+            policy=model.categorical_sampling_policy,
+        )
+    elif sample_mode == "argmax":
+        proposal = jnp.argmax(log_probs, axis=-1).astype(jnp.int32)
+    else:
+        raise ValueError(
+            "Unknown revealed_token_sample_mode="
+            f"{model.revealed_token_sample_mode!r}. Expected 'sample' or 'argmax'."
+        )
+    proposal = jnp.where(reveal_positions, proposal, model.mask_token_id).astype(jnp.int32)
+    next_tokens = masked_core.carry_over_unmasked(
+        tokens,
+        proposal,
+        mask_token_id=model.mask_token_id,
+    )
+    next_tokens = clamp_known_tokens(
+        next_tokens,
+        current_tokens=tokens,
+        known_token_mask=known_token_mask,
+        known_tokens=known_tokens,
+    )
+
+    cache_valid = jnp.asarray(model._use_cache()) & (~jnp.any(next_tokens != tokens))
+    next_state = model._pack_sampling_state(
+        next_tokens,
+        log_probs=log_probs,
+        cache_valid=cache_valid,
+        structured=structured,
+    )
+    if not bool(return_info):
+        return next_state
+    return next_state, sampling_step_info(
+        masked_unknown=masked_unknown,
+        reveal_positions=reveal_positions,
+        margins=margins,
+    )
 
 
 def conditional_generate(
