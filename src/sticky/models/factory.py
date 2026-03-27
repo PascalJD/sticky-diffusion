@@ -80,7 +80,7 @@ def _adm_backbone_kwargs(
 
 
 def _build_md4(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
-    from sticky.models.md4.md4_model import MD4
+    from sticky.models.baselines.md4.md4_model import MD4
 
     return MD4(
         data_shape=data_shape,
@@ -122,7 +122,7 @@ def _build_md4(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
 
 
 def _build_mdlm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
-    from sticky.models.mdlm.mdlm_model import MDLM
+    from sticky.models.baselines.mdlm.mdlm_model import MDLM
 
     sampler_cfg = cfg.get("sampler", {})
     return MDLM(
@@ -192,7 +192,7 @@ def _build_mdlm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 
 
 def _build_d3pm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
-    from sticky.models.d3pm.d3pm_model import D3PM
+    from sticky.models.baselines.d3pm.d3pm_model import D3PM
 
     return D3PM(
         data_shape=data_shape,
@@ -281,7 +281,7 @@ def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
 
 
 def _build_cadd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
-    from sticky.models.cadd.cadd_model import CADD
+    from sticky.models.baselines.cadd.cadd_model import CADD
 
     sampler_cfg = cfg.get("sampler", {})
     latent_cfg = cfg.model.get("cadd_latent", {})
@@ -386,7 +386,7 @@ def _build_cadd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 
 def _build_bitdiff(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
     del vocab_size
-    from sticky.models.bitdiff.bitdiff_model import BitDiffusion
+    from sticky.models.baselines.bitdiff.bitdiff_model import BitDiffusion
 
     sampler_cfg = cfg.get("sampler", {})
     return BitDiffusion(
@@ -442,7 +442,7 @@ def _build_bitdiff(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: 
 
 
 def _build_candi(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
-    from sticky.models.candi.candi_model import CANDI
+    from sticky.models.baselines.candi.candi_model import CANDI
 
     sampler_cfg = cfg.get("sampler", {})
     return CANDI(
@@ -498,7 +498,7 @@ def _build_candi(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: in
 
 def _build_ddpm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
     del vocab_size
-    from sticky.models.ddpm.ddpm_model import DDPM
+    from sticky.models.baselines.ddpm.ddpm_model import DDPM
 
     return DDPM(
         data_shape=data_shape,

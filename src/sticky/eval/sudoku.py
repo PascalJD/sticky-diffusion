@@ -265,7 +265,7 @@ def build_sudoku_eval_logger(
             )
             return out.k_filled
     else:
-        from sticky.models.mdlm.sudoku_sampling import conditional_generate
+        from sticky.models.baselines.mdlm.sudoku_sampling import conditional_generate
 
         @jax.jit
         def _sample_conditional(params, rng, known_idx, known_mask):

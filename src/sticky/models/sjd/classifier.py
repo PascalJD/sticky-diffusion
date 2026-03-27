@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import flax.linen as nn
 import jax.numpy as jnp
 
-from sticky.models.architectures import (
+from sticky.models.backbones import (
     CondEmbedding,
     build_image_backbone,
     build_sequence_backbone,

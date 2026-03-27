@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -9,11 +8,13 @@ import pytest
 from omegaconf import OmegaConf
 
 import sticky.models.sjd.anchors as anchor_mod
-import sticky.models.bitdiff.sampling as bitdiff_sampling_mod
-import sticky.models.candi.sampling as candi_sampling_mod
-import sticky.models.d3pm.sampling as d3pm_sampling_mod
-import sticky.models.ddpm.sampling as ddpm_sampling_mod
-import sticky.models.mdlm.sampling as mdlm_sampling_mod
+import sticky.models.baselines.bitdiff.sampling as bitdiff_sampling_mod
+import sticky.models.baselines.cadd.sampling as cadd_sampling_mod
+import sticky.models.baselines.candi.sampling as candi_sampling_mod
+import sticky.models.baselines.d3pm.sampling as d3pm_sampling_mod
+import sticky.models.baselines.ddpm.sampling as ddpm_sampling_mod
+import sticky.models.baselines.md4.sampling as md4_sampling_mod
+import sticky.models.baselines.mdlm.sampling as mdlm_sampling_mod
 import sticky.models.sjd.sampler as sampler_mod
 import sticky.models.sjd.sampling as sjd_sampling_mod
 from sticky.training.sampling import build_sampling_fns
@@ -160,10 +161,10 @@ def test_sjd_sampling_time_grid_supports_cosine():
 @pytest.mark.parametrize(
     ("model_name", "sampling_module", "timesteps"),
     [
-        pytest.param("md4", None, 13, id="md4"),
+        pytest.param("md4", md4_sampling_mod, 13, id="md4"),
         pytest.param("mdlm", mdlm_sampling_mod, 23, id="mdlm"),
         pytest.param("d3pm", d3pm_sampling_mod, 19, id="d3pm"),
-        pytest.param("cadd", None, 15, id="cadd"),
+        pytest.param("cadd", cadd_sampling_mod, 15, id="cadd"),
         pytest.param("candi", candi_sampling_mod, 21, id="candi"),
         pytest.param("ddpm", ddpm_sampling_mod, 17, id="ddpm"),
         pytest.param("bitdiff", bitdiff_sampling_mod, 25, id="bitdiff"),
@@ -200,16 +201,7 @@ def test_non_sjd_sampling_wrappers_preserve_generation_contract(
         )
         return jnp.full((batch_size, 2, 3), int(batch_size), dtype=jnp.int32)
 
-    if sampling_module is None:
-        package_name = f"sticky.models.{model_name}"
-        package_module = ModuleType(package_name)
-        fake_sampling_module = ModuleType(f"{package_name}.sampling")
-        fake_sampling_module.simple_generate = fake_simple_generate
-        package_module.sampling = fake_sampling_module
-        monkeypatch.setitem(sys.modules, package_name, package_module)
-        monkeypatch.setitem(sys.modules, f"{package_name}.sampling", fake_sampling_module)
-    else:
-        monkeypatch.setattr(sampling_module, "simple_generate", fake_simple_generate)
+    monkeypatch.setattr(sampling_module, "simple_generate", fake_simple_generate)
 
     cfg = OmegaConf.create({"model": {"name": model_name}})
     task = SimpleNamespace(

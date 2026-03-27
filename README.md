@@ -1,4 +1,4 @@
-# Sticky Jump Diffusion
+# Sticky Jump Diffusions and Discrete Diffusion Baselines
 
 **Status:** 🚧 active research
 
@@ -20,27 +20,27 @@ conda activate sticky
 
 Train (defaults to the paper-faithful TrainForWorst MDLM Sudoku setup):
 ```bash
-python -m sticky.entrypoints.train
+python -m sticky.cli.train
 ```
 
 Train SJD on Sudoku:
 ```bash
-python -m sticky.entrypoints.train experiment=sjd_sudoku eval=sjd_sudoku
+python -m sticky.cli.train experiment=sudoku/sjd_sudoku eval=sjd_sudoku
 ```
 
 Train the paper-faithful TrainForWorst MDLM Sudoku setup:
 ```bash
-python -m sticky.entrypoints.train experiment=mdlm_sudoku_tfw_top_prob_margin eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin eval=sudoku_mdlm
 ```
 
 Train vanilla MDLM on Sudoku with uniform reveal order:
 ```bash
-python -m sticky.entrypoints.train experiment=mdlm_sudoku_uniform eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_uniform eval=sudoku_mdlm
 ```
 
 Train vanilla MDLM on Sudoku with top-probability-margin reveal order:
 ```bash
-python -m sticky.entrypoints.train experiment=mdlm_sudoku_top_prob_margin eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_top_prob_margin eval=sudoku_mdlm
 ```
 
 Launch the default Sudoku training job on Anvil:
@@ -54,8 +54,8 @@ to the paper-faithful `mdlm_sudoku_tfw_top_prob_margin` experiment; override
 
 Offline Sudoku checkpoint evaluation:
 ```bash
-python -m sticky.entrypoints.eval_checkpoint \
-  experiment=sjd_sudoku \
+python -m sticky.cli.eval_checkpoint \
+  experiment=sudoku/sjd_sudoku \
   eval=sjd_sudoku \
   offline_eval.run_dir=/absolute/path/to/run \
   offline_eval.checkpoint_source=best \
@@ -80,18 +80,18 @@ scripts/compare_sudoku_mdlm_samplers.sh /absolute/path/to/run best
 ```
 - Tiny overfit bring-up configs:
 ```bash
-python -m sticky.entrypoints.train experiment=mdlm_sudoku_overfit_512 eval=sudoku_mdlm
-python -m sticky.entrypoints.train experiment=mdlm_sudoku_overfit_2048 eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_overfit_512 eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_overfit_2048 eval=sudoku_mdlm
 ```
 - Optional manual prefetch:
 ```bash
-python -m sticky.scripts.prepare_sudoku_data --data-dir data/sudoku
+python tools/prepare_sudoku_data.py --data-dir data/sudoku
 ```
 
 Offline checkpoint evaluation (FID/IS):
 ```bash
-python -m sticky.entrypoints.eval_checkpoint \
-  experiment=md4_cifar10 \
+python -m sticky.cli.eval_checkpoint \
+  experiment=cifar10/md4_cifar10 \
   offline_eval.run_dir=outputs/2026-02-24/12-00-00_md4_cifar10_md4_md4_cifar10 \
   offline_eval.checkpoint_source=best \
   eval.fid_enabled=true \
@@ -101,8 +101,8 @@ python -m sticky.entrypoints.eval_checkpoint \
 
 Evaluate periodic checkpoint at a specific step:
 ```bash
-python -m sticky.entrypoints.eval_checkpoint \
-  experiment=sjd_cifar10 \
+python -m sticky.cli.eval_checkpoint \
+  experiment=cifar10/sjd_cifar10 \
   offline_eval.checkpoint_dir=/absolute/path/to/checkpoints \
   offline_eval.checkpoint_source=periodic \
   offline_eval.checkpoint_step=50000 \
@@ -126,9 +126,15 @@ The sweep script evaluates `logit_temperature` over `0.70, 0.75, 0.80, 0.85, 0.9
 
 To rank completed runs:
 ```bash
-python scripts/collect_sjd_temperature_sweep.py \
+python tools/collect_sjd_temperature_sweep.py \
   /home/x-pjutrasdube/scratch/sticky-diffusion/evals/sjd_logit_temperature_sweep_<jobid>
 ```
+
+See [docs/repo_layout.md](docs/repo_layout.md) for the repository layout and
+[docs/configs.md](docs/configs.md) for the Hydra layout,
+[docs/datasets.md](docs/datasets.md) for dataset notes, and
+[docs/adding_a_baseline.md](docs/adding_a_baseline.md) for the
+baseline-extension conventions used in the canonical tree.
 
 ## Contribute 
 

@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-EXPERIMENT="${EXPERIMENT:-mdlm_sudoku_tfw_top_prob_margin}"
+EXPERIMENT="${EXPERIMENT:-sudoku/mdlm_sudoku_tfw_top_prob_margin}"
 EVAL_CONFIG="${EVAL_CONFIG:-sudoku_mdlm}"
 WANDB_ENABLED="${WANDB_ENABLED:-true}"
 REPO_ROOT="${REPO_ROOT:-$SLURM_SUBMIT_DIR}"
@@ -68,7 +68,7 @@ echo "env_prefix=${ENV_PREFIX}"
 echo "python_bin=${PYTHON_BIN}"
 echo "extra_overrides=$*"
 
-"${PYTHON_BIN}" -m sticky.entrypoints.train \
+"${PYTHON_BIN}" -m sticky.cli.train \
   "experiment=${EXPERIMENT}" \
   "eval=${EVAL_CONFIG}" \
   "wandb.enabled=${WANDB_ENABLED}" \

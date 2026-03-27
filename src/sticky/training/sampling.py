@@ -56,7 +56,7 @@ def build_sampling_fns(
     sample_images_fid_jit = None
 
     if str(cfg.model.name) == "md4":
-        from sticky.models.md4 import sampling as md4_sampling
+        from sticky.models.baselines.md4 import sampling as md4_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             md4_sampling.simple_generate,
@@ -68,7 +68,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "mdlm":
-        from sticky.models.mdlm import sampling as mdlm_sampling
+        from sticky.models.baselines.mdlm import sampling as mdlm_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             mdlm_sampling.simple_generate,
@@ -80,7 +80,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "d3pm":
-        from sticky.models.d3pm import sampling as d3pm_sampling
+        from sticky.models.baselines.d3pm import sampling as d3pm_sampling
 
         def _validate_d3pm(*, model: Any, timesteps: int) -> None:
             d3pm_sampling.validate_timesteps(model=model, timesteps=timesteps)
@@ -97,7 +97,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "cadd":
-        from sticky.models.cadd import sampling as cadd_sampling
+        from sticky.models.baselines.cadd import sampling as cadd_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             cadd_sampling.simple_generate,
@@ -109,7 +109,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "candi":
-        from sticky.models.candi import sampling as candi_sampling
+        from sticky.models.baselines.candi import sampling as candi_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             candi_sampling.simple_generate,
@@ -122,7 +122,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "ddpm":
-        from sticky.models.ddpm import sampling as ddpm_sampling
+        from sticky.models.baselines.ddpm import sampling as ddpm_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             ddpm_sampling.simple_generate,
@@ -135,7 +135,7 @@ def build_sampling_fns(
         )
 
     elif str(cfg.model.name) == "bitdiff":
-        from sticky.models.bitdiff import sampling as bitdiff_sampling
+        from sticky.models.baselines.bitdiff import sampling as bitdiff_sampling
 
         sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
             bitdiff_sampling.simple_generate,

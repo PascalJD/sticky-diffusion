@@ -26,7 +26,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from sticky.models.discrete_mixture import (
+from sticky.models.common.discrete_mixture import (
     categorical_sample_from_logits,
     sample_mixture_categorical,
 )

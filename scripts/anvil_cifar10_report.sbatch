@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-EXPERIMENT="${EXPERIMENT:-sjd_cifar10}"
+EXPERIMENT="${EXPERIMENT:-cifar10/sjd_cifar10}"
 EVAL_CONFIG="${EVAL_CONFIG:-cifar10_report}"
 BEST_CHECKPOINT_DIR="${BEST_CHECKPOINT_DIR:-}"
 FID_NUM_SAMPLES="${FID_NUM_SAMPLES:-50000}"
@@ -109,7 +109,7 @@ echo "logit_temperature=${LOGIT_TEMPERATURE:-}"
 echo "env_prefix=${ENV_PREFIX}"
 echo "python_bin=${PYTHON_BIN}"
 
-"${PYTHON_BIN}" -m sticky.entrypoints.eval_checkpoint \
+"${PYTHON_BIN}" -m sticky.cli.eval_checkpoint \
   "experiment=${EXPERIMENT}" \
   "eval=${EVAL_CONFIG}" \
   wandb.enabled=false \

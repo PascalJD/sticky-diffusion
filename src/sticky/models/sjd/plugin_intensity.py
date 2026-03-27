@@ -6,7 +6,7 @@ from typing import Any, Tuple
 import jax
 import jax.numpy as jnp
 
-from sticky.models.discrete_mixture import categorical_sample_from_probs, normalize_probs
+from sticky.models.common.discrete_mixture import categorical_sample_from_probs, normalize_probs
 from sticky.rng import PRNGKey
 
 from .hazard import HazardSchedule, lam_off_star

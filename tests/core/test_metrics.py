@@ -35,7 +35,7 @@ def _import_md4_utils():
     _ensure_module("seaborn")
 
     try:
-        from sticky.models.md4 import utils as md4_utils
+        from sticky.models.baselines.md4 import utils as md4_utils
 
         return md4_utils
     finally:
@@ -64,7 +64,7 @@ def test_scale_loss_metrics_to_bits_scales_only_loss_keys():
     assert jnp.array_equal(scaled["t_mean"], metrics["t_mean"])
 
 
-def test_md4_loss2bpt_is_a_compatibility_wrapper():
+def test_md4_loss2bpt_matches_shared_metric_scaling():
     md4_utils = _import_md4_utils()
     metrics = {
         "loss": jnp.asarray(8.0, dtype=jnp.float32),

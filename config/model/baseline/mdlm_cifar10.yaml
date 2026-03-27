@@ -1,0 +1,31 @@
+# MDLM model config for CIFAR-10 discrete pixels.
+defaults:
+  - /model/backbone@_here_: adm_unet
+  - _self_
+
+name: mdlm
+
+# Core diffusion setup.
+cont_time: true
+timesteps: 256
+noise_schedule_type: linear
+time_features: t
+
+# Reuse the canonical masked-discrete optimizer-facing knobs.
+antithetic_time_sampling: true
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false
+
+# Image-first default: reuse the ADM bundle already used by CIFAR baselines.
+image_backbone: adm_unet5d
+
+# Conditioning.
+classes: -1
+
+# Optional MDLM-specific sampling acceleration for time-independent models.
+cache_predictions: false

@@ -103,8 +103,8 @@ echo "best_checkpoint_dir=${BEST_CHECKPOINT_DIR}"
 echo "env_prefix=${ENV_PREFIX}"
 echo "python_bin=${PYTHON_BIN}"
 
-"${PYTHON_BIN}" -m sticky.entrypoints.eval_checkpoint \
-  experiment=sjd_cifar10 \
+"${PYTHON_BIN}" -m sticky.cli.eval_checkpoint \
+  experiment=cifar10/sjd_cifar10 \
   eval=cifar10 \
   wandb.enabled=false \
   eval.fid_enabled=true \

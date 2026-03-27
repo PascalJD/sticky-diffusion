@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from hydra import compose, initialize_config_dir
 
+from sticky.core.config_paths import config_root
 from sticky.models.factory import build_model
 from sticky.tasks.factory import build_task
 
 
-CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "config")
+CONFIG_DIR = str(config_root())
 
 
 def _compose(*, config_name: str, overrides: list[str]):
@@ -19,7 +18,7 @@ def _compose(*, config_name: str, overrides: list[str]):
 def test_sjd_sudoku_train_and_eval_configs_compose():
     cfg = _compose(
         config_name="config.yaml",
-        overrides=["experiment=sjd_sudoku", "eval=sjd_sudoku"],
+        overrides=["experiment=sudoku/sjd_sudoku", "eval=sjd_sudoku"],
     )
 
     assert cfg.experiment.task.name == "sjd_sudoku"
@@ -50,10 +49,21 @@ def test_sjd_sudoku_train_and_eval_configs_compose():
     assert model.anchor_config.anchor_dim == 64
 
 
+def test_grouped_sudoku_experiment_paths_compose():
+    cfg = _compose(
+        config_name="config.yaml",
+        overrides=["experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin", "eval=sudoku_mdlm"],
+    )
+
+    assert cfg.experiment.task.name == "mdlm_sudoku"
+    assert cfg.experiment.model.name == "mdlm"
+    assert cfg.experiment.sampler.method == "top_prob_margin"
+
+
 def test_sjd_sudoku_offline_eval_config_composes():
     cfg = _compose(
         config_name="eval_checkpoint.yaml",
-        overrides=["experiment=sjd_sudoku", "eval=sjd_sudoku"],
+        overrides=["experiment=sudoku/sjd_sudoku", "eval=sjd_sudoku"],
     )
 
     assert cfg.experiment.task.name == "sjd_sudoku"
@@ -68,7 +78,7 @@ def test_mdlm_sudoku_train_and_eval_configs_compose():
     ):
         cfg = _compose(
             config_name="config.yaml",
-            overrides=[f"experiment={experiment}", "eval=sudoku_mdlm"],
+            overrides=[f"experiment=sudoku/{experiment}", "eval=sudoku_mdlm"],
         )
 
         assert cfg.experiment.task.name == "mdlm_sudoku"
@@ -113,7 +123,7 @@ def test_mdlm_sudoku_train_and_eval_configs_compose():
 def test_mdlm_sudoku_tfw_config_composes():
     cfg = _compose(
         config_name="config.yaml",
-        overrides=["experiment=mdlm_sudoku_tfw_top_prob_margin", "eval=sudoku_mdlm"],
+        overrides=["experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin", "eval=sudoku_mdlm"],
     )
 
     assert cfg.experiment.task.name == "mdlm_sudoku"
@@ -156,7 +166,7 @@ def test_mdlm_sudoku_tfw_config_composes():
 def test_mdlm_sudoku_tfw_argmax_ablation_config_composes():
     cfg = _compose(
         config_name="config.yaml",
-        overrides=["experiment=mdlm_sudoku_tfw_top_prob_margin_argmax", "eval=sudoku_mdlm"],
+        overrides=["experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin_argmax", "eval=sudoku_mdlm"],
     )
 
     assert cfg.experiment.task.name == "mdlm_sudoku"
@@ -186,7 +196,7 @@ def test_mdlm_sudoku_overfit_configs_compose():
     ):
         cfg = _compose(
             config_name="config.yaml",
-            overrides=[f"experiment={experiment}", "eval=sudoku_mdlm"],
+            overrides=[f"experiment=sudoku/{experiment}", "eval=sudoku_mdlm"],
         )
 
         assert cfg.experiment.task.name == "mdlm_sudoku"
@@ -199,7 +209,7 @@ def test_mdlm_sudoku_overfit_configs_compose():
 def test_mdlm_sudoku_offline_eval_config_composes():
     cfg = _compose(
         config_name="eval_checkpoint.yaml",
-        overrides=["experiment=mdlm_sudoku_uniform", "eval=sudoku_mdlm"],
+        overrides=["experiment=sudoku/mdlm_sudoku_uniform", "eval=sudoku_mdlm"],
     )
 
     assert cfg.experiment.task.name == "mdlm_sudoku"

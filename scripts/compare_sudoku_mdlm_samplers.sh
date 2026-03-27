@@ -15,8 +15,8 @@ mkdir -p "${OUT_DIR}"
 run_eval() {
   local name="$1"
   shift
-  python -m sticky.entrypoints.eval_checkpoint \
-    experiment=mdlm_sudoku_tfw_top_prob_margin \
+  python -m sticky.cli.eval_checkpoint \
+    experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin \
     eval=sudoku_mdlm \
     offline_eval.run_dir="${RUN_DIR}" \
     offline_eval.use_run_config=false \
