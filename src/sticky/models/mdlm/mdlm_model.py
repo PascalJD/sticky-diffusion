@@ -7,6 +7,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from sticky.core.metrics import scale_loss_metrics_to_bits
 from sticky.models import masked_discrete_core as masked_core
 from sticky.models.architectures import DiscreteClassifier
 from sticky.models.discrete_mixture import (
@@ -36,12 +37,6 @@ def _zero_sampling_info(dtype: Any = jnp.float32) -> dict[str, Array]:
         "selected_col_total": zero,
         "selected_value_total": zero,
     }
-
-
-def _loss_to_bpd(loss_dict: dict[str, Array], data_shape: tuple[int, ...]) -> dict[str, Array]:
-    seq_len = jnp.prod(jnp.asarray(data_shape))
-    scale = 1.0 / (seq_len * jnp.log(2.0))
-    return {k: (v * scale if "loss" in k else v) for k, v in loss_dict.items()}
 
 
 def _selected_log_prob_sums(
@@ -376,7 +371,7 @@ class MDLM(nn.Module):
             "loss_prior": loss_prior,
             "loss_recon": loss_recon,
         }
-        return _loss_to_bpd(stats, self.data_shape)
+        return scale_loss_metrics_to_bits(stats, self.data_shape)
 
     def _use_cache(self) -> bool:
         return bool(self.cache_predictions) and str(self.time_features) == "none"

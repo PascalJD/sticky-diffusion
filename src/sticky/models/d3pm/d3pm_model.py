@@ -8,6 +8,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from sticky.core.metrics import scale_loss_metrics_to_bits
 from sticky.models.architectures import DiscreteClassifier
 from sticky.models.discrete_mixture import (
     categorical_sample_from_probs,
@@ -16,12 +17,6 @@ from sticky.models.discrete_mixture import (
 
 
 Array = jnp.ndarray
-
-
-def _loss_to_bpd(loss_dict: dict[str, Array], data_shape: tuple[int, ...]) -> dict[str, Array]:
-    seq_len = jnp.prod(jnp.asarray(data_shape))
-    scale = 1.0 / (seq_len * jnp.log(2.0))
-    return {k: (v * scale if "loss" in k else v) for k, v in loss_dict.items()}
 
 
 def _gather_log_probs(log_probs: Array, targets: Array) -> Array:
@@ -470,7 +465,7 @@ class D3PM(nn.Module):
             "loss_aux": loss_aux,
             "loss_prior": loss_prior,
         }
-        return _loss_to_bpd(stats, self.data_shape)
+        return scale_loss_metrics_to_bits(stats, self.data_shape)
 
     def sample_step(
         self,

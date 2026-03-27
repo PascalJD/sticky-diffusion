@@ -2,42 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import sys
-from types import ModuleType
 
 import jax
 import jax.numpy as jnp
-
-
-def _install_md4_utils_stub() -> None:
-    if "sticky.models.md4.utils" in sys.modules:
-        return
-
-    md4_mod = ModuleType("sticky.models.md4")
-    md4_utils_mod = ModuleType("sticky.models.md4.utils")
-
-    def reverse_broadcast(value, ndim):
-        if value.ndim > ndim:
-            raise ValueError(
-                f"Cannot reverse broadcast a value with {value.ndim} dimensions to {ndim} dimensions."
-            )
-        if value.ndim < ndim:
-            return value.reshape(value.shape + (ndim - value.ndim) * (1,))
-        return value
-
-    def loss2bpt(loss_dict, data_shape):
-        del data_shape
-        return loss_dict
-
-    md4_utils_mod.reverse_broadcast = reverse_broadcast
-    md4_utils_mod.loss2bpt = loss2bpt
-    md4_mod.utils = md4_utils_mod
-
-    sys.modules["sticky.models.md4"] = md4_mod
-    sys.modules["sticky.models.md4.utils"] = md4_utils_mod
-
-
-_install_md4_utils_stub()
 
 from sticky.models.cadd.cadd_model import CADD
 

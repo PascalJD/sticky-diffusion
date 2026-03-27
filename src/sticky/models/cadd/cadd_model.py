@@ -7,6 +7,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from sticky.core.metrics import scale_loss_metrics_to_bits
 from sticky.models.architectures.factory import (
     build_image_backbone,
     build_sequence_backbone,
@@ -17,7 +18,6 @@ from sticky.models.discrete_mixture import (
 )
 from sticky.models.architectures.networks.conditioning import CondEmbedding
 from sticky.models import masked_discrete_core as masked_core
-from sticky.models.md4 import utils as md4_utils
 
 
 Array = jnp.ndarray
@@ -390,7 +390,7 @@ class CADD(nn.Module):
         metrics["t_mean"] = jnp.mean(t)
 
         # Match MD4-style logging: convert losses to bits-per-token.
-        return md4_utils.loss2bpt(metrics, self.data_shape)
+        return scale_loss_metrics_to_bits(metrics, self.data_shape)
 
     # ------------------------------- Sampling -------------------------------
 

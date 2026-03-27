@@ -6,6 +6,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
+from sticky.core.metrics import scale_loss_metrics_to_bits
 from sticky.models import masked_discrete_core as masked_core
 from sticky.models.architectures.factory import build_image_token_backbone
 from sticky.models.architectures.networks.conditioning import CondEmbedding
@@ -13,15 +14,6 @@ from sticky.models.discrete_mixture import categorical_sample_from_logits
 
 
 Array = jnp.ndarray
-
-
-def _loss2bpt(loss_dict: dict[str, Array], data_shape: tuple[int, ...]) -> dict[str, Array]:
-    seq_len = jnp.prod(jnp.asarray(data_shape))
-    scale = 1.0 / (seq_len * jnp.log(2.0))
-    return {
-        key: value * scale if "loss" in key else value
-        for key, value in loss_dict.items()
-    }
 
 
 class TokenEmbedding(nn.Module):
@@ -567,7 +559,7 @@ class CANDI(nn.Module):
             "sigma_mean": jnp.mean(corruption["sigma"]),
             "t_mean": jnp.mean(t),
         }
-        return _loss2bpt(metrics, self.data_shape)
+        return scale_loss_metrics_to_bits(metrics, self.data_shape)
 
     def prior_sample(self, batch_size: int) -> dict[str, Array]:
         batch_size = int(batch_size)
