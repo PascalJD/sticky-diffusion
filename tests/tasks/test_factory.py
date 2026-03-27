@@ -29,6 +29,13 @@ class _DummySudokuMDLMTask:
         self.kwargs = kwargs
 
 
+def _fake_instantiate(cfg, **kwargs):
+    data = OmegaConf.to_container(cfg, resolve=True)
+    if kwargs:
+        return {"cfg": data, **kwargs}
+    return {"cfg": data}
+
+
 def test_build_task_accepts_canonical_discrete_cifar_names(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -82,12 +89,6 @@ def test_build_task_accepts_canonical_sjd_name(monkeypatch):
         SimpleNamespace(CIFAR10SJDTask=_DummySJDTask),
     )
 
-    def _fake_instantiate(cfg, **kwargs):
-        data = OmegaConf.to_container(cfg, resolve=True)
-        if kwargs:
-            return {"cfg": data, **kwargs}
-        return {"cfg": data}
-
     monkeypatch.setattr(hydra.utils, "instantiate", _fake_instantiate)
 
     cfg = OmegaConf.create(
@@ -133,6 +134,71 @@ def test_build_task_accepts_canonical_sjd_name(monkeypatch):
     assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 3.0}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched"}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["state_dep_log_ratio_clip"] == 7.0
+
+
+def test_build_task_accepts_sjd_sudoku_name(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.sudoku_sjd",
+        SimpleNamespace(SudokuSJDTask=_DummySJDTask),
+    )
+    monkeypatch.setattr(hydra.utils, "instantiate", _fake_instantiate)
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "sjd_sudoku"},
+            "dataset": {
+                "data_dir": "/tmp/sudoku",
+                "train_file": "train.npy",
+                "test_file": "test.npy",
+                "batch_size": 256,
+                "eval_batch_size": 128,
+                "data_shape": [243],
+                "vocab_size": 10,
+                "num_classes": -1,
+                "drop_remainder": True,
+                "shuffle": True,
+                "mmap": False,
+                "seq_order": "fixed",
+                "max_train_examples": 1024,
+                "max_test_examples": 128,
+                "auto_download": False,
+                "download_timeout_sec": 45,
+                "download_retries": 3,
+            },
+            "forward": {
+                "beta": {"name": "vp_linear"},
+                "hazard": {"name": "poly_alpha", "p": 2.0},
+                "jump": {"name": "vp_matched_sudoku"},
+            },
+            "sampler": {
+                "T": 0.8,
+                "log_ratio_clip": 10.0,
+            },
+            "training": {
+                "log_state_dependency": True,
+                "state_dep_log_ratio_clip": 5.5,
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummySJDTask)
+    assert task.kwargs["data_dir"] == "/tmp/sudoku"
+    assert task.kwargs["train_file"] == "train.npy"
+    assert task.kwargs["test_file"] == "test.npy"
+    assert task.kwargs["batch_size"] == 256
+    assert task.kwargs["eval_batch_size"] == 128
+    assert task.kwargs["seq_order"] == "fixed"
+    assert task.kwargs["auto_download"] is False
+    assert task.kwargs["download_timeout_sec"] == 45
+    assert task.kwargs["download_retries"] == 3
+    assert task.kwargs["beta"] == {"cfg": {"name": "vp_linear"}}
+    assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 2.0}, "beta": {"cfg": {"name": "vp_linear"}}}
+    assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched_sudoku"}, "beta": {"cfg": {"name": "vp_linear"}}}
+    assert task.kwargs["T"] == 0.8
+    assert task.kwargs["state_dep_log_ratio_clip"] == 5.5
 
 
 def test_build_task_accepts_openwebtext_discrete_name(monkeypatch):

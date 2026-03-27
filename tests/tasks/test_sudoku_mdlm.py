@@ -40,23 +40,27 @@ def _make_task() -> SudokuMDLMTask:
 def test_sudoku_mdlm_loss_masks_out_the_clue_prefix():
     task = _make_task()
     model = _DummyMDLMModel()
+    start_index = jnp.asarray([[0], [2], [81]], dtype=jnp.int32)
+    token_pos = jnp.arange(243, dtype=jnp.int32)[None, :]
+    expected_known_token_mask = token_pos < (3 * start_index)
+    expected_loss_mask = ~expected_known_token_mask
 
     loss, stats = task.loss_fn(
         rng=jax.random.PRNGKey(0),
         model=model,
         params={},
         batch={
-            "image": jnp.zeros((1, 243), dtype=jnp.int32),
-            "start_index": jnp.asarray([[2]], dtype=jnp.int32),
+            "image": jnp.zeros((3, 243), dtype=jnp.int32),
+            "start_index": start_index,
         },
         train=False,
     )
 
     assert model.known_token_mask is not None
     assert model.loss_mask is not None
-    assert bool(jnp.all(model.known_token_mask[:, :6]))
-    assert bool(jnp.all(~model.known_token_mask[:, 6:]))
-    assert bool(jnp.all(~model.loss_mask[:, :6]))
-    assert bool(jnp.all(model.loss_mask[:, 6:]))
-    assert float(loss) == 237.0
-    assert float(stats["loss_diff"]) == 237.0
+    assert bool(jnp.array_equal(model.known_token_mask, expected_known_token_mask))
+    assert bool(jnp.array_equal(model.loss_mask, expected_loss_mask))
+    assert bool(jnp.array_equal(model.known_token_mask.sum(axis=1), jnp.asarray([0, 6, 243])))
+    assert bool(jnp.array_equal(model.loss_mask.sum(axis=1), jnp.asarray([243, 237, 0])))
+    assert float(loss) == 480.0
+    assert float(stats["loss_diff"]) == 480.0

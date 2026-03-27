@@ -461,6 +461,50 @@ def test_reveal_order_sample_mode_argmax_only_decodes_new_reveals(monkeypatch):
     )
 
 
+def test_reveal_order_sample_step_clamps_known_tokens_even_if_selector_targets_them(monkeypatch):
+    log_probs = jnp.log(
+        jnp.asarray(
+            [[[0.1, 0.9, 0.0], [0.8, 0.2, 0.0], [0.05, 0.05, 0.9], [0.6, 0.4, 0.0]]],
+            dtype=jnp.float32,
+        )
+    )
+    sampled = jnp.asarray([[7, 7, 7, 7]], dtype=jnp.int32)
+
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "select_top_prob_margin_positions",
+        lambda *args, **kwargs: jnp.ones((1, 4), dtype=jnp.bool_),
+    )
+    monkeypatch.setattr(
+        mdlm_model_mod,
+        "categorical_sample_from_logits",
+        lambda *args, **kwargs: sampled,
+    )
+
+    model = _FakeRevealOrderModel(
+        log_probs=log_probs,
+        revealed_token_sample_mode="sample",
+    )
+    state = jnp.asarray([[5, 99, 8, 99]], dtype=jnp.int32)
+    known_token_mask = jnp.asarray([[True, False, True, False]], dtype=jnp.bool_)
+
+    next_tokens = MDLM.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        4,
+        state,
+        known_token_mask=known_token_mask,
+        known_tokens=state,
+        method="top_prob_margin",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(next_tokens),
+        np.asarray([[5, 7, 8, 7]], dtype=np.int32),
+    )
+
+
 def test_tiny_sudoku_overfit_reaches_exact_completion():
     seq = _canonical_sudoku_sequence()
     batch_size = 512

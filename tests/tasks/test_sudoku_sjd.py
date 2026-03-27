@@ -80,3 +80,29 @@ def test_sudoku_loss_ignores_given_clue_prefix():
     assert float(loss_masked) < 1e-6
     assert float(loss_unmasked) > 0.1
     assert float(metrics_masked["CE/frac_uncommitted"]) == 1.0
+
+
+def test_sudoku_loss_is_zero_when_the_full_sequence_is_given():
+    task = _make_task()
+    model = _DummySudokuModel()
+
+    x0_idx = jnp.zeros((1, 243), dtype=jnp.int32)
+    logits = -20.0 * jnp.ones((1, 243, 10), dtype=jnp.float32)
+    logits = logits.at[:, :, 0].set(20.0)
+    logits = logits.at[:, :3, 0].set(-20.0)
+    logits = logits.at[:, :3, 1].set(20.0)
+    params = {"logits": logits}
+
+    loss, metrics = task.loss_fn(
+        rng=jax.random.PRNGKey(0),
+        model=model,
+        params=params,
+        batch={
+            "image": x0_idx,
+            "start_index": jnp.asarray([[81]], dtype=jnp.int32),
+        },
+        train=False,
+    )
+
+    assert float(loss) == 0.0
+    assert float(metrics["CE/frac_uncommitted"]) == 0.0
