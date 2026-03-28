@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from sticky.core.sampling_loop import get_params
+from sticky.data.sudoku import SUDOKU_EOS_TOKEN_ID, SUDOKU_SEP_TOKEN_ID
 from sticky.models.common import masked_discrete_core as masked_core
 from sticky.models.baselines.mdlm.sudoku_sampling import (
     clamp_known_tokens,
@@ -77,6 +78,53 @@ def _response_positions(
     if known_token_mask is None:
         return jnp.ones_like(tokens, dtype=jnp.bool_)
     return ~jnp.asarray(known_token_mask, dtype=jnp.bool_)
+
+
+def _terminal_eos_positions(
+    tokens: Array,
+    *,
+    known_token_mask: Array | None = None,
+) -> Array:
+    response_positions = _response_positions(tokens, known_token_mask=known_token_mask)
+    eos_positions = jnp.zeros_like(response_positions, dtype=jnp.bool_)
+    eos_positions = eos_positions.at[..., -1].set(response_positions[..., -1])
+    return eos_positions
+
+
+def _apply_structural_token_constraints(
+    log_probs: Array,
+    *,
+    known_token_mask: Array | None = None,
+) -> tuple[Array, Array]:
+    """Disallow structural ids in response content while reserving EOS for the tail.
+
+    Sudoku content tokens must stay in the original 0..9 range. During packed
+    MDM decoding, `[SEP]` is purely structural and `[EOS]` is only valid in the
+    terminal packed slot.
+    """
+    log_probs = jnp.asarray(log_probs, dtype=jnp.float32)
+    token_positions = jnp.zeros(log_probs.shape[:-1], dtype=jnp.int32)
+    response_positions = _response_positions(
+        token_positions, known_token_mask=known_token_mask
+    )
+    eos_positions = _terminal_eos_positions(
+        token_positions, known_token_mask=known_token_mask
+    )
+    response_content_positions = response_positions & (~eos_positions)
+
+    token_ids = jnp.arange(log_probs.shape[-1], dtype=jnp.int32)
+    token_ids = token_ids.reshape((1,) * (log_probs.ndim - 1) + (-1,))
+    neg_inf = jnp.asarray(-1.0e9, dtype=log_probs.dtype)
+
+    constrained = log_probs
+    sep_forbidden = (token_ids == int(SUDOKU_SEP_TOKEN_ID)) & response_positions[..., None]
+    constrained = jnp.where(sep_forbidden, neg_inf, constrained)
+
+    eos_forbidden = (token_ids == int(SUDOKU_EOS_TOKEN_ID)) & response_content_positions[
+        ..., None
+    ]
+    constrained = jnp.where(eos_forbidden, neg_inf, constrained)
+    return constrained, eos_positions
 
 
 def _remask_counts(
@@ -276,6 +324,10 @@ def reveal_order_sample_step(
         train=False,
     )
     log_probs = jax.nn.log_softmax(logits, axis=-1)
+    log_probs, eos_positions = _apply_structural_token_constraints(
+        log_probs,
+        known_token_mask=known_token_mask,
+    )
     masked_unknown = masked_unknown_positions(
         tokens,
         mask_token_id=model.mask_token_id,
@@ -285,6 +337,7 @@ def reveal_order_sample_step(
     margins = position_probability_margins(log_probs)
 
     proposal = jnp.argmax(log_probs, axis=-1).astype(jnp.int32)
+    proposal = jnp.where(eos_positions, int(SUDOKU_EOS_TOKEN_ID), proposal)
 
     if method == "uniform" or decoding_style == "monotone_reveal":
         if method == "uniform":
@@ -324,9 +377,11 @@ def reveal_order_sample_step(
         )
     else:
         # Ye-style top-k remasking predicts argmax token values for the whole
-        # response suffix, then re-masks the lowest-confidence response slots
-        # according to the current linear schedule. Already revealed response
-        # tokens may therefore be masked again.
+        # current `x_t`, writes those predictions only into the positions that
+        # are still masked, and then re-masks the lowest-confidence response
+        # slots according to the current linear schedule. Already revealed
+        # response tokens therefore stay fixed unless they are explicitly
+        # selected for remasking.
         rate = _linear_rate(i, timesteps)
         score_source = top_probabilities if method == "top_probability" else margins
         selected_positions = _select_low_confidence_positions(
@@ -337,9 +392,12 @@ def reveal_order_sample_step(
             oracle_noise_type=model.oracle_noise_type,
             oracle_noise_scale=model.oracle_noise_scale,
         )
-        next_tokens = jnp.where(selected_positions, model.mask_token_id, proposal).astype(
-            jnp.int32
-        )
+        updated_tokens = jnp.where(masked_unknown, proposal, tokens).astype(jnp.int32)
+        next_tokens = jnp.where(
+            selected_positions,
+            int(model.mask_token_id),
+            updated_tokens,
+        ).astype(jnp.int32)
 
     next_tokens = clamp_known_tokens(
         next_tokens,

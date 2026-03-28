@@ -351,6 +351,36 @@ def test_mdm_sudoku_offline_eval_config_composes():
     assert cfg.offline_eval.checkpoint_source == "best"
 
 
+def test_mdm_sudoku_offline_eval_ablation_config_composes():
+    cfg = _compose(
+        config_name="eval_checkpoint.yaml",
+        overrides=["experiment=sudoku/mdm_sudoku_tfw", "eval=sudoku_discrete_mdm_ablation"],
+    )
+
+    assert cfg.experiment.task.name == "mdm_sudoku"
+    assert cfg.eval.mode == "sudoku"
+    assert cfg.eval.sudoku_run_all_sampler_modes is True
+    assert cfg.eval.sudoku_primary_sampler_label == "top_prob_margin"
+    assert list(cfg.eval.sudoku_eval_samplers.keys()) == [
+        "vanilla",
+        "top_probability_monotone",
+        "top_prob_margin_monotone",
+        "top_probability",
+        "top_prob_margin",
+    ]
+    assert [
+        cfg.eval.sudoku_eval_samplers[label].decoding_style
+        for label in cfg.eval.sudoku_eval_samplers
+    ] == [
+        "monotone_reveal",
+        "monotone_reveal",
+        "monotone_reveal",
+        "topk_remask",
+        "topk_remask",
+    ]
+    assert cfg.offline_eval.checkpoint_source == "best"
+
+
 def test_root_defaults_now_target_tfw_top_margin_mdlm_sudoku():
     cfg = _compose(
         config_name="config.yaml",

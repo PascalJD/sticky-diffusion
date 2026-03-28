@@ -544,6 +544,92 @@ def test_mdm_topk_remask_can_remask_already_revealed_response_tokens():
     assert int(next_tokens[0, 3]) == 0
 
 
+def test_mdm_topk_remask_keeps_unmasked_response_tokens_unless_selected(monkeypatch):
+    monkeypatch.setattr(
+        mdm_sampling_mod,
+        "_select_low_confidence_positions",
+        lambda *args, **kwargs: jnp.asarray([[False, False, False, False]], dtype=jnp.bool_),
+    )
+
+    model = _ToyMDMConditionalModel(
+        aligned_probs=jnp.asarray(
+            [
+                [
+                    [0.05, 0.95, 0.00],
+                    [0.80, 0.20, 0.00],
+                    [0.10, 0.90, 0.00],
+                    [0.85, 0.15, 0.00],
+                ]
+            ],
+            dtype=jnp.float32,
+        ),
+        sampler="top_probability",
+        decoding_style="topk_remask",
+        timesteps=4,
+    )
+    state = jnp.asarray([[1, 2, model.mask_token_id, 0]], dtype=jnp.int32)
+    known_token_mask = jnp.asarray([[True, False, False, False]], dtype=jnp.bool_)
+
+    next_tokens = mdm_sampling_mod.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        4,
+        state,
+        known_token_mask=known_token_mask,
+        known_tokens=jnp.asarray([[1, 0, 0, 0]], dtype=jnp.int32),
+        method="top_probability",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(next_tokens),
+        np.asarray([[1, 2, 1, 0]], dtype=np.int32),
+    )
+
+
+def test_mdm_topk_remask_updates_masked_positions_before_remasking(monkeypatch):
+    monkeypatch.setattr(
+        mdm_sampling_mod,
+        "_select_low_confidence_positions",
+        lambda *args, **kwargs: jnp.asarray([[False, False, True, True]], dtype=jnp.bool_),
+    )
+
+    model = _ToyMDMConditionalModel(
+        aligned_probs=jnp.asarray(
+            [
+                [
+                    [0.05, 0.95, 0.00],
+                    [0.10, 0.10, 0.80],
+                    [0.05, 0.95, 0.00],
+                    [0.80, 0.20, 0.00],
+                ]
+            ],
+            dtype=jnp.float32,
+        ),
+        sampler="top_probability",
+        decoding_style="topk_remask",
+        timesteps=4,
+    )
+    state = jnp.asarray([[1, model.mask_token_id, model.mask_token_id, 0]], dtype=jnp.int32)
+    known_token_mask = jnp.asarray([[True, False, False, False]], dtype=jnp.bool_)
+
+    next_tokens = mdm_sampling_mod.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        4,
+        state,
+        known_token_mask=known_token_mask,
+        known_tokens=jnp.asarray([[1, 0, 0, 0]], dtype=jnp.int32),
+        method="top_probability",
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(next_tokens),
+        np.asarray([[1, 2, model.mask_token_id, model.mask_token_id]], dtype=np.int32),
+    )
+
+
 def test_mdm_packed_selection_diagnostics_use_original_triplet_coordinates():
     packed = pack_sudoku_seq2seq(
         triplet_seq=(jnp.arange(243, dtype=jnp.int32) % 10)[None, :],
@@ -569,6 +655,68 @@ def test_mdm_packed_selection_diagnostics_use_original_triplet_coordinates():
     assert float(totals["selected_col_total"]) == 1.0
     assert float(totals["selected_value_total"]) == 1.0
     assert float(totals["selected_eos_total"]) == 1.0
+
+
+def test_mdm_response_content_cannot_generate_sep_token():
+    probs = jnp.full((1, 4, 12), 1.0e-6, dtype=jnp.float32)
+    probs = probs.at[0, 0, 1].set(1.0)
+    probs = probs.at[0, 1, 10].set(0.90)
+    probs = probs.at[0, 1, 4].set(0.80)
+    probs = probs.at[0, 2, 10].set(0.95)
+    probs = probs.at[0, 2, 5].set(0.70)
+    probs = probs.at[0, 3, 10].set(0.99)
+    probs = probs.at[0, 3, 7].set(0.60)
+    model = _ToyMDMConditionalModel(
+        aligned_probs=probs,
+        sampler="vanilla",
+        decoding_style="monotone_reveal",
+        timesteps=1,
+    )
+
+    next_tokens = mdm_sampling_mod.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        1,
+        jnp.asarray([[1, model.mask_token_id, model.mask_token_id, model.mask_token_id]], dtype=jnp.int32),
+        known_token_mask=jnp.asarray([[True, False, False, False]], dtype=jnp.bool_),
+        known_tokens=jnp.asarray([[1, 0, 0, 0]], dtype=jnp.int32),
+        method="vanilla",
+    )
+
+    assert int(next_tokens[0, 1]) == 4
+    assert int(next_tokens[0, 2]) == 5
+    assert int(next_tokens[0, 1]) != 10
+    assert int(next_tokens[0, 2]) != 10
+
+
+def test_mdm_terminal_eos_is_forced_safely():
+    probs = jnp.full((1, 4, 12), 1.0e-6, dtype=jnp.float32)
+    probs = probs.at[0, 0, 1].set(1.0)
+    probs = probs.at[0, 1, 3].set(1.0)
+    probs = probs.at[0, 2, 4].set(1.0)
+    probs = probs.at[0, 3, 7].set(1.0)
+    model = _ToyMDMConditionalModel(
+        aligned_probs=probs,
+        sampler="top_probability",
+        decoding_style="topk_remask",
+        timesteps=1,
+    )
+
+    next_tokens = mdm_sampling_mod.reveal_order_sample_step(
+        model,
+        jax.random.PRNGKey(0),
+        0,
+        1,
+        jnp.asarray([[1, model.mask_token_id, model.mask_token_id, model.mask_token_id]], dtype=jnp.int32),
+        known_token_mask=jnp.asarray([[True, False, False, False]], dtype=jnp.bool_),
+        known_tokens=jnp.asarray([[1, 0, 0, 0]], dtype=jnp.int32),
+        method="top_probability",
+    )
+
+    assert int(next_tokens[0, 1]) == 3
+    assert int(next_tokens[0, 2]) == 4
+    assert int(next_tokens[0, 3]) == 11
 
 
 def test_mdm_conditional_generate_accepts_sampler_override(monkeypatch):
@@ -618,7 +766,7 @@ def test_mdm_conditional_generate_accepts_sampler_override(monkeypatch):
     assert calls
     np.testing.assert_array_equal(
         np.asarray(generated),
-        np.asarray([[1, 1, 0]], dtype=np.int32),
+        np.asarray([[1, 1, 11]], dtype=np.int32),
     )
 
 
@@ -655,7 +803,7 @@ def test_mdm_conditional_generate_terminates_without_masked_response_tokens():
 
     np.testing.assert_array_equal(
         np.asarray(generated),
-        np.asarray([[1, 2, 0, 2]], dtype=np.int32),
+        np.asarray([[1, 2, 0, 11]], dtype=np.int32),
     )
     assert not bool(jnp.any(generated[~known_token_mask] == model.mask_token_id))
     assert float(diagnostics["final_masked_unknown_total"]) == 0.0
