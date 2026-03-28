@@ -267,6 +267,10 @@ def _clone_eval_cfg(eval_cfg: DictConfig) -> DictConfig:
     return OmegaConf.create(OmegaConf.to_container(eval_cfg, resolve=True))
 
 
+def _is_nullish(value: Any) -> bool:
+    return is_nullish(value, nullish=(None, "", "null"))
+
+
 def _to_float_metrics(metrics: Dict[str, Any]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for k, v in metrics.items():
@@ -282,6 +286,65 @@ def _to_float_scalar(value: Any) -> Optional[float]:
         return float(jax.device_get(value))
     except Exception:
         return None
+
+
+def _extract_sudoku_sampler_summary(
+    *,
+    metrics: Dict[str, float],
+    eval_cfg: DictConfig,
+) -> Optional[Dict[str, Any]]:
+    if str(eval_cfg.get("mode", "fid_is")).lower() != "sudoku":
+        return None
+
+    prefix = str(eval_cfg.get("prefix", "eval"))
+    run_all = bool(eval_cfg.get("sudoku_run_all_sampler_modes", False))
+    primary_label = str(eval_cfg.get("sudoku_primary_sampler_label", "default"))
+
+    def _summary_for(prefix_key: str, label: str) -> Dict[str, Any]:
+        return {
+            "label": label,
+            "metrics_prefix": prefix_key,
+            "acc_complete_puzzle": metrics.get(f"{prefix_key}/acc_complete_puzzle"),
+            "acc_solve_strict": metrics.get(f"{prefix_key}/acc_solve_strict"),
+            "mean_selected_top_probability": metrics.get(
+                f"{prefix_key}/mean_selected_top_probability"
+            ),
+            "mean_selected_top_prob_margin": metrics.get(
+                f"{prefix_key}/mean_selected_top_prob_margin"
+            ),
+            "final_masked_unknown_fraction": metrics.get(
+                f"{prefix_key}/final_masked_unknown_fraction"
+            ),
+            "sampler_steps": metrics.get(f"{prefix_key}/sampler_steps"),
+        }
+
+    if not run_all:
+        return {
+            "run_all_sampler_modes": False,
+            "primary_sampler_label": primary_label,
+            "samplers": [_summary_for(prefix, primary_label)],
+        }
+
+    samplers = []
+    samplers_cfg = eval_cfg.get("sudoku_eval_samplers", None)
+    container = OmegaConf.to_container(samplers_cfg, resolve=True)
+    if isinstance(container, dict):
+        for label in container:
+            samplers.append(_summary_for(f"{prefix}/{label}", str(label)))
+    elif isinstance(container, list):
+        for entry in container:
+            if not isinstance(entry, dict):
+                continue
+            label = str(entry.get("label", "")).strip()
+            if not label:
+                continue
+            samplers.append(_summary_for(f"{prefix}/{label}", label))
+
+    return {
+        "run_all_sampler_modes": True,
+        "primary_sampler_label": primary_label,
+        "samplers": samplers,
+    }
 
 
 def _collect_sjd_sampler_probe_metrics(
@@ -473,6 +536,10 @@ def run_offline_checkpoint_eval(
             "Offline evaluation returned no metrics. "
             "Check eval settings and force flags."
         )
+    sudoku_sampler_summary = _extract_sudoku_sampler_summary(
+        metrics=metrics,
+        eval_cfg=eval_cfg_local,
+    )
 
     probe_batches_cfg = offline_cfg.get("sampler_probe_batches", 0)
     probe_batches = 0 if _is_nullish(probe_batches_cfg) else int(probe_batches_cfg)
@@ -576,6 +643,12 @@ def run_offline_checkpoint_eval(
             "sudoku_every": int(sudoku_every),
             "sudoku_num_batches": int(eval_cfg_local.get("sudoku_num_batches", 64)),
             "sudoku_num_batches_force": int(eval_cfg_local.get("sudoku_num_batches_force", -1)),
+            "sudoku_run_all_sampler_modes": bool(
+                eval_cfg_local.get("sudoku_run_all_sampler_modes", False)
+            ),
+            "sudoku_primary_sampler_label": str(
+                eval_cfg_local.get("sudoku_primary_sampler_label", "default")
+            ),
             "requested_jump_eta_override": _maybe_float(offline_cfg.get("jump_eta", None)),
             "requested_logit_temperature_override": _maybe_float(
                 offline_cfg.get("logit_temperature", None)
@@ -592,6 +665,8 @@ def run_offline_checkpoint_eval(
         }
     if sampling_probe_payload is not None:
         payload["sampling_probe"] = sampling_probe_payload
+    if sudoku_sampler_summary is not None:
+        payload["sudoku_sampler_summary"] = sudoku_sampler_summary
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -612,6 +687,22 @@ def run_offline_checkpoint_eval(
         f"logit_temperature={effective_logit_temperature}",
         flush=True,
     )
+    if sudoku_sampler_summary is not None:
+        print(
+            "[offline-eval] "
+            f"sudoku_primary_sampler={sudoku_sampler_summary['primary_sampler_label']} "
+            f"run_all_sampler_modes={sudoku_sampler_summary['run_all_sampler_modes']}",
+            flush=True,
+        )
+        for sampler_info in sudoku_sampler_summary["samplers"]:
+            print(
+                "[offline-eval] "
+                f"{sampler_info['label']}: "
+                f"acc_complete_puzzle={sampler_info['acc_complete_puzzle']} "
+                f"acc_solve_strict={sampler_info['acc_solve_strict']} "
+                f"mean_selected_top_prob_margin={sampler_info['mean_selected_top_prob_margin']}",
+                flush=True,
+            )
     print(
         f"[offline-eval] Wrote metrics report to {output_path}",
         flush=True,

@@ -1,0 +1,16 @@
+# Config scaffolding for a TFW-faithful Ye-style Sudoku MDM path.
+defaults:
+  - /dataset: sudoku
+  - /model/baseline@model: mdm_sudoku
+  - /optim: adamw_sudoku_tfw
+  - /sampler: mdm_sudoku_top_prob_margin
+  - /training: sudoku_mdm_tfw
+  - /runtime: default
+  - _self_
+
+task:
+  name: mdm_sudoku
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128

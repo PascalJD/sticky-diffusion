@@ -129,12 +129,11 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
         if int(cfg.dataset.per_device_batch_size) > 0
         else 1
     )
+    data_shape = tuple(getattr(model, "data_shape", tuple(cfg.dataset.data_shape)))
 
-    if name in ("md4", "mdlm", "d3pm", "candi", "cadd", "bitdiff", "ddpm"):
+    if name in ("md4", "mdlm", "mdm", "d3pm", "candi", "cadd", "bitdiff", "ddpm"):
         rng, rng_params, rng_sample = jax.random.split(rng, 3)
-        dummy_x = jnp.zeros(
-            (batch_size,) + tuple(cfg.dataset.data_shape), dtype=jnp.int32
-        )
+        dummy_x = jnp.zeros((batch_size,) + data_shape, dtype=jnp.int32)
         dummy_cond = (
             jnp.zeros((batch_size,), dtype=jnp.int32)
             if int(cfg.model.classes) > 0
@@ -171,8 +170,8 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
     params = variables["params"]
     model_name = str(cfg.model.get("name", "unknown"))
     sequence_backbone = str(cfg.model.get("sequence_backbone", ""))
-    if (model_name == "mdlm") and (sequence_backbone == "gpt2_like"):
-        key = (model_name, sequence_backbone, tuple(cfg.dataset.data_shape))
+    if (model_name in {"mdlm", "mdm"}) and (sequence_backbone == "gpt2_like"):
+        key = (model_name, sequence_backbone, data_shape)
         if key not in _LOGGED_PARAM_COUNT_KEYS:
             _LOGGED_PARAM_COUNT_KEYS.add(key)
             param_count = int(

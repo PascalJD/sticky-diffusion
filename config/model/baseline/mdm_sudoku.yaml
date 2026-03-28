@@ -1,0 +1,22 @@
+defaults:
+  - /model/backbone@_here_: gpt2_like_sudoku_tfw_6m
+  - _self_
+
+# Ye-style masked discrete diffusion baseline for packed Sudoku seq2seq.
+name: mdm
+
+cont_time: false
+timesteps: 50
+noise_schedule_type: loglinear
+time_features: none
+
+antithetic_time_sampling: false
+classes: -1
+cache_predictions: false
+decoding_style: monotone_reveal
+
+# Ye/MGDM-style training knobs to be consumed by a future implementation.
+token_reweighting: true
+alpha: 0.25
+gamma: 1.0
+time_reweighting: linear

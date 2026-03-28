@@ -191,6 +191,85 @@ def _build_mdlm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
     )
 
 
+def _build_mdm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
+    from sticky.models.baselines.mdm.mdm_model import MDM
+
+    sampler_cfg = cfg.get("sampler", {})
+    return MDM(
+        data_shape=data_shape,
+        cont_time=bool(cfg.model.cont_time),
+        timesteps=int(cfg.model.timesteps),
+        feature_dim=int(cfg.model.feature_dim),
+        num_heads=int(cfg.model.num_heads),
+        antithetic_time_sampling=bool(cfg.model.antithetic_time_sampling),
+        n_layers=int(cfg.model.n_layers),
+        n_dit_layers=int(cfg.model.n_dit_layers),
+        dit_num_heads=int(cfg.model.dit_num_heads),
+        dit_hidden_size=int(cfg.model.dit_hidden_size),
+        ch_mult=tuple(cfg.model.ch_mult),
+        vocab_size=vocab_size,
+        noise_schedule_type=str(cfg.model.noise_schedule_type),
+        dropout_rate=float(cfg.model.dropout_rate),
+        use_attn_dropout=bool(cfg.model.use_attn_dropout),
+        mlp_type=str(cfg.model.mlp_type),
+        depth_scaled_init=bool(cfg.model.depth_scaled_init),
+        cond_type=str(cfg.model.cond_type),
+        outside_embed=bool(cfg.model.outside_embed),
+        sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+        sequence_mlp_hidden_dim=cfg.model.get("sequence_mlp_hidden_dim", None),
+        sequence_max_length=cfg.model.get("sequence_max_length", None),
+        sequence_causal=bool(cfg.model.get("sequence_causal", False)),
+        **_adm_backbone_kwargs(
+            cfg.model,
+            image_backbone_default="auto",
+            adm_num_res_blocks_default=2,
+            adm_attention_resolutions_default=(2, 4),
+            adm_num_heads_default=4,
+            adm_num_head_channels_default=-1,
+        ),
+        time_features=str(cfg.model.get("time_features", "none")),
+        classes=int(cfg.model.get("classes", -1)),
+        sampler=_sampler_method(cfg, default="top_prob_margin", allow_sampler_alias=True),
+        sampling_grid=_sampling_grid(cfg, default="loglinear"),
+        categorical_sampling_policy=_categorical_sampling_policy(cfg, default="exact"),
+        oracle_noise_type=str(
+            sampler_cfg.get(
+                "oracle_noise_type",
+                cfg.model.get("oracle_noise_type", "none"),
+            )
+        ),
+        oracle_noise_scale=float(
+            sampler_cfg.get(
+                "oracle_noise_scale",
+                cfg.model.get("oracle_noise_scale", 0.0),
+            )
+        ),
+        decoding_style=str(
+            sampler_cfg.get(
+                "decoding_style",
+                cfg.model.get("decoding_style", "monotone_reveal"),
+            )
+        ),
+        revealed_token_sample_mode=str(
+            sampler_cfg.get(
+                "revealed_token_sample_mode",
+                cfg.model.get("revealed_token_sample_mode", "sample"),
+            )
+        ),
+        cache_predictions=bool(
+            sampler_cfg.get(
+                "cache_predictions",
+                cfg.model.get("cache_predictions", False),
+            )
+        ),
+        token_reweighting=bool(cfg.model.get("token_reweighting", False)),
+        alpha=float(cfg.model.get("alpha", 0.25)),
+        gamma=float(cfg.model.get("gamma", 1.0)),
+        time_reweighting=str(cfg.model.get("time_reweighting", "none")),
+        model_sharding=bool(cfg.model.model_sharding),
+    )
+
+
 def _build_d3pm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
     from sticky.models.baselines.d3pm.d3pm_model import D3PM
 
@@ -527,6 +606,7 @@ def _build_ddpm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 MODEL_BUILDERS: dict[str, Callable[..., Any]] = {
     "md4": _build_md4,
     "mdlm": _build_mdlm,
+    "mdm": _build_mdm,
     "d3pm": _build_d3pm,
     "sjd": _build_sjd,
     "cadd": _build_cadd,

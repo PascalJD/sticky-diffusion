@@ -1,13 +1,21 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from dataclasses import replace
+from typing import Any, Dict, Optional
 
 import hydra
 import jax
 import numpy as np
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-from sticky.data.sudoku import make_sudoku_iterator
+from sticky.core.config_paths import config_root
+from sticky.data.sudoku import (
+    SUDOKU_PACKED_SEQ_LEN,
+    SUDOKU_TRIPLET_SEQ_LEN,
+    make_sudoku_iterator,
+    pack_sudoku_seq2seq,
+    packed_sudoku_positions,
+)
 from sticky.models.sjd.anchors import AnchorTable
 from sticky.models.sjd.sampler import SamplerConfig
 from sticky.models.sjd import sampling as sjd_sampling
@@ -65,6 +73,246 @@ def _safe_ratio(num: int, den: int) -> float:
     if den <= 0:
         return 0.0
     return float(num) / float(den)
+
+
+def _normalize_sampler_method(method: str | None) -> str:
+    key = str("uniform" if method is None else method).strip().lower()
+    if key == "vanilla":
+        return "uniform"
+    return key
+
+
+def _is_interpolation(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().startswith("${")
+
+
+def _load_sampler_group_overrides(name: str) -> dict[str, Any]:
+    path = config_root() / "sampler" / f"{name}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"Unknown sampler config group {name!r}: {path}")
+    raw = OmegaConf.to_container(OmegaConf.load(path), resolve=False)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Sampler config {name!r} did not load as a mapping.")
+    raw.pop("defaults", None)
+    return raw
+
+
+def _overlay_sampler_fields(dst: dict[str, Any], src: dict[str, Any]) -> None:
+    for key in (
+        "n_steps",
+        "method",
+        "sampling_grid",
+        "categorical_sampling_policy",
+        "decoding_style",
+        "revealed_token_sample_mode",
+        "cache_predictions",
+        "oracle_noise_type",
+        "oracle_noise_scale",
+    ):
+        if key not in src:
+            continue
+        value = src[key]
+        if value is None or _is_interpolation(value):
+            continue
+        dst[key] = value
+
+
+def _iter_named_sudoku_sampler_entries(
+    samplers_cfg: Any,
+) -> list[tuple[str | None, dict[str, Any]]]:
+    if samplers_cfg is None:
+        return []
+
+    container = OmegaConf.to_container(samplers_cfg, resolve=False)
+    if isinstance(container, dict):
+        entries: list[tuple[str | None, dict[str, Any]]] = []
+        for label, entry in container.items():
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    "Each sudoku_eval_samplers entry must be a mapping of sampler options."
+                )
+            entries.append((str(label), dict(entry)))
+        return entries
+
+    if isinstance(container, list):
+        entries = []
+        for entry in container:
+            if not isinstance(entry, dict):
+                raise ValueError("Each sudoku_eval_samplers entry must be a mapping.")
+            label = entry.get("label", None)
+            entries.append((None if label is None else str(label), dict(entry)))
+        return entries
+
+    raise ValueError(
+        "sudoku_eval_samplers must be either a mapping of named samplers or a list of mappings."
+    )
+
+
+def _resolve_sudoku_sampler_specs(
+    *,
+    cfg: DictConfig,
+    eval_cfg: DictConfig,
+    prefix: str,
+) -> tuple[list[dict[str, Any]], str, bool]:
+    base = {
+        "label": "default",
+        "metrics_prefix": str(prefix),
+        "n_steps": int(cfg.sampler.get("n_steps", cfg.model.get("timesteps", 50))),
+        "method": str(cfg.sampler.get("method", "uniform")),
+        "sampling_grid": str(cfg.sampler.get("sampling_grid", "loglinear")),
+        "categorical_sampling_policy": str(
+            cfg.sampler.get("categorical_sampling_policy", "exact")
+        ),
+        "decoding_style": str(
+            cfg.sampler.get(
+                "decoding_style",
+                cfg.model.get("decoding_style", "monotone_reveal"),
+            )
+        ),
+        "revealed_token_sample_mode": str(
+            cfg.sampler.get("revealed_token_sample_mode", "sample")
+        ),
+        "cache_predictions": bool(cfg.sampler.get("cache_predictions", False)),
+        "oracle_noise_type": str(cfg.sampler.get("oracle_noise_type", "none")),
+        "oracle_noise_scale": float(cfg.sampler.get("oracle_noise_scale", 0.0)),
+    }
+    base["effective_method"] = _normalize_sampler_method(base["method"])
+
+    primary_label = str(eval_cfg.get("sudoku_primary_sampler_label", base["label"]))
+    run_all = bool(eval_cfg.get("sudoku_run_all_sampler_modes", False))
+    if not run_all:
+        return [base], primary_label, False
+
+    resolved_specs: list[dict[str, Any]] = []
+    for entry_label, entry in _iter_named_sudoku_sampler_entries(
+        eval_cfg.get("sudoku_eval_samplers", None)
+    ):
+        spec = dict(base)
+        sampler_group = entry.get("sampler")
+        if sampler_group:
+            _overlay_sampler_fields(spec, _load_sampler_group_overrides(str(sampler_group)))
+        _overlay_sampler_fields(spec, entry)
+        label = str(entry_label if entry_label is not None else entry.get("label", spec["method"])).strip()
+        if not label:
+            raise ValueError("Each sudoku_eval_samplers entry requires a non-empty label.")
+        spec["label"] = label
+        spec["metrics_prefix"] = f"{prefix}/{label}"
+        spec["n_steps"] = int(spec["n_steps"])
+        spec["oracle_noise_scale"] = float(spec["oracle_noise_scale"])
+        spec["effective_method"] = _normalize_sampler_method(spec["method"])
+        resolved_specs.append(spec)
+
+    if not resolved_specs:
+        return [base], primary_label, False
+
+    labels = {spec["label"] for spec in resolved_specs}
+    if primary_label not in labels:
+        primary_label = resolved_specs[0]["label"]
+    return resolved_specs, primary_label, True
+
+
+def _clone_model_for_sampler(model, *, sampler_spec: dict[str, Any]):
+    replace_kwargs = {}
+    for field, spec_key in (
+        ("sampler", "effective_method"),
+        ("sampling_grid", "sampling_grid"),
+        ("categorical_sampling_policy", "categorical_sampling_policy"),
+        ("decoding_style", "decoding_style"),
+        ("revealed_token_sample_mode", "revealed_token_sample_mode"),
+        ("cache_predictions", "cache_predictions"),
+        ("oracle_noise_type", "oracle_noise_type"),
+        ("oracle_noise_scale", "oracle_noise_scale"),
+    ):
+        if hasattr(model, field):
+            replace_kwargs[field] = sampler_spec[spec_key]
+    if not replace_kwargs:
+        return model
+    return replace(model, **replace_kwargs)
+
+
+def _prepare_conditional_inputs(
+    *,
+    model_name: str,
+    input_seq: np.ndarray,
+    start_index: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    if model_name == "mdm":
+        packed = pack_sudoku_seq2seq(
+            triplet_seq=input_seq,
+            start_index=start_index,
+        )
+        known_mask = np.asarray(packed["prompt_mask"], dtype=np.bool_)
+        known_tokens = np.where(
+            known_mask,
+            np.asarray(packed["packed_seq"], dtype=np.int32),
+            0,
+        ).astype(np.int32)
+        return known_tokens, known_mask
+
+    start_index = np.asarray(start_index, dtype=np.int32).reshape(-1)
+    known_token_len = (3 * start_index)[:, None]
+    token_pos = np.arange(SUDOKU_TRIPLET_SEQ_LEN, dtype=np.int32)[None, :]
+    known_mask = token_pos < known_token_len
+    known_tokens = np.where(known_mask, input_seq, 0).astype(np.int32)
+    return known_tokens, known_mask
+
+
+def _decode_mdm_prediction_to_triplets(
+    *,
+    packed_seq: np.ndarray,
+    start_index: np.ndarray,
+) -> np.ndarray:
+    packed_seq = np.asarray(packed_seq, dtype=np.int32)
+    if packed_seq.ndim != 2 or packed_seq.shape[1] != SUDOKU_PACKED_SEQ_LEN:
+        raise ValueError(
+            "MDM Sudoku evaluator expects packed decoded sequences with shape "
+            f"[B, {SUDOKU_PACKED_SEQ_LEN}], got {packed_seq.shape}."
+        )
+
+    positions = packed_sudoku_positions(start_index=np.asarray(start_index, dtype=np.int32))
+    sep_index = np.asarray(positions["sep_index"], dtype=np.int32).reshape(-1)
+    response_start = np.asarray(
+        positions["response_start_index"], dtype=np.int32
+    ).reshape(-1)
+    eos_index = np.asarray(positions["eos_index"], dtype=np.int32).reshape(-1)
+
+    triplet_seq = np.empty((packed_seq.shape[0], SUDOKU_TRIPLET_SEQ_LEN), dtype=np.int32)
+    for i in range(packed_seq.shape[0]):
+        prompt_len = int(sep_index[i])
+        response = packed_seq[i, int(response_start[i]) : int(eos_index[i])]
+        if response.shape[0] != SUDOKU_TRIPLET_SEQ_LEN - prompt_len:
+            raise ValueError(
+                "Invalid packed MDM decode length after removing [SEP]/[EOS]: "
+                f"expected {SUDOKU_TRIPLET_SEQ_LEN - prompt_len}, got {response.shape[0]}."
+            )
+        triplet_seq[i, :prompt_len] = packed_seq[i, :prompt_len]
+        triplet_seq[i, prompt_len:] = response
+    return triplet_seq
+
+
+def _accumulate_sudoku_diagnostics(
+    totals: dict[str, float],
+    diag: dict[str, Any],
+) -> None:
+    for key in (
+        "example_step_count",
+        "masked_unknown_total_across_steps",
+        "selected_count_total_across_steps",
+        "selected_top_probability_sum_total",
+        "selected_top_probability_count_total",
+        "selected_top_prob_margin_sum_total",
+        "selected_top_prob_margin_count_total",
+        "selected_margin_sum_total",
+        "selected_margin_count_total",
+        "selected_row_total_across_steps",
+        "selected_col_total_across_steps",
+        "selected_value_total_across_steps",
+        "selected_eos_total_across_steps",
+        "unknown_token_total",
+        "final_masked_unknown_total",
+    ):
+        if key in diag:
+            totals[key] += float(diag[key])
 
 
 def _evaluate_batch_counts(
@@ -173,10 +421,25 @@ def build_sudoku_eval_logger(
     sample_timesteps_override: Optional[int] = None,
 ):
     model_name = str(cfg.model.name)
-    if model_name not in {"sjd", "mdlm"}:
-        raise ValueError("Sudoku evaluator currently supports model.name in {'sjd', 'mdlm'}.")
+    if model_name not in {"sjd", "mdlm", "mdm"}:
+        raise ValueError(
+            "Sudoku evaluator currently supports model.name in {'sjd', 'mdlm', 'mdm'}."
+        )
     if task is None or model is None:
         raise ValueError("Sudoku evaluator requires `task` and `model`.")
+
+    prefix = str(eval_cfg.get("prefix", "eval"))
+    verbose = bool(eval_cfg.get("verbose", False))
+    progress_every_batches = int(eval_cfg.get("sudoku_progress_every_batches", 20))
+    eval_seed_offset = int(eval_cfg.get("sudoku_eval_seed_offset", 1776))
+    sample_seed_offset = int(eval_cfg.get("sudoku_sample_seed_offset", 314159))
+    fold_in_step = bool(eval_cfg.get("sudoku_eval_fold_in_step", False))
+    num_batches_default = int(eval_cfg.get("sudoku_num_batches", 64))
+    num_batches_force = int(eval_cfg.get("sudoku_num_batches_force", -1))
+    num_batches_per_sampler = int(
+        eval_cfg.get("sudoku_num_batches_per_sampler", num_batches_default)
+    )
+    checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
 
     if model_name == "sjd":
         beta = getattr(task, "beta", None)
@@ -226,62 +489,100 @@ def build_sudoku_eval_logger(
                 cfg.sampler.get("refresh_logits_after_em_step", False)
             ),
         )
+        sampler_specs = [
+            {
+                "label": "default",
+                "metrics_prefix": prefix,
+                "n_steps": n_steps,
+            }
+        ]
+        primary_sampler_label = "default"
+        run_all_sampler_modes = False
     else:
-        n_steps = (
+        default_n_steps = (
             int(sample_timesteps_override)
             if sample_timesteps_override is not None
             else int(cfg.sampler.get("n_steps", cfg.model.get("timesteps", 50)))
         )
-
-    prefix = str(eval_cfg.get("prefix", "eval"))
-    verbose = bool(eval_cfg.get("verbose", False))
-    progress_every_batches = int(eval_cfg.get("sudoku_progress_every_batches", 20))
-    eval_seed_offset = int(eval_cfg.get("sudoku_eval_seed_offset", 1776))
-    sample_seed_offset = int(eval_cfg.get("sudoku_sample_seed_offset", 314159))
-    fold_in_step = bool(eval_cfg.get("sudoku_eval_fold_in_step", False))
-    num_batches_default = int(eval_cfg.get("sudoku_num_batches", 64))
-    num_batches_force = int(eval_cfg.get("sudoku_num_batches_force", -1))
+        sampler_specs, primary_sampler_label, run_all_sampler_modes = _resolve_sudoku_sampler_specs(
+            cfg=cfg,
+            eval_cfg=eval_cfg,
+            prefix=prefix,
+        )
+        if sample_timesteps_override is not None:
+            for sampler_spec in sampler_specs:
+                sampler_spec["n_steps"] = int(sample_timesteps_override)
 
     shape = tuple(task.spec.data_shape)
 
-    if model_name == "sjd":
-        @jax.jit
-        def _sample_conditional(params, rng, known_idx, known_mask):
-            a_table = model.apply({"params": params}, method=model.anchor_table)
-            anchors = AnchorTable(table_float=a_table)
-            out = sjd_sampling.simple_generate(
-                rng=rng,
-                params=params,
-                model=model,
-                anchors=anchors,
-                beta=beta,
-                hazard=hazard,
-                jump=jump,
-                cfg=sampler_cfg,
-                batch_size=int(known_idx.shape[0]),
-                shape=shape,
-                known_idx=known_idx,
-                known_mask=known_mask,
-            )
-            return out.k_filled
-    else:
-        from sticky.models.baselines.mdlm.sudoku_sampling import conditional_generate
+    def _make_sample_conditional_fn(
+        *,
+        model_for_eval,
+        sampler_steps: int,
+    ):
+        if model_name == "sjd":
+            @jax.jit
+            def _sample_conditional(params, rng, known_idx, known_mask):
+                a_table = model_for_eval.apply({"params": params}, method=model_for_eval.anchor_table)
+                anchors = AnchorTable(table_float=a_table)
+                out = sjd_sampling.simple_generate(
+                    rng=rng,
+                    params=params,
+                    model=model_for_eval,
+                    anchors=anchors,
+                    beta=beta,
+                    hazard=hazard,
+                    jump=jump,
+                    cfg=sampler_cfg,
+                    batch_size=int(known_idx.shape[0]),
+                    shape=shape,
+                    known_idx=known_idx,
+                    known_mask=known_mask,
+                )
+                return out.k_filled
+
+            return _sample_conditional
+
+        if model_name == "mdm":
+            from sticky.models.baselines.mdm import conditional_generate
+        else:
+            from sticky.models.baselines.mdlm.sudoku_sampling import conditional_generate
 
         @jax.jit
         def _sample_conditional(params, rng, known_idx, known_mask):
             return conditional_generate(
                 rng,
                 {"params": params, "ema_params": None},
-                model=model,
+                model=model_for_eval,
                 known_tokens=known_idx,
                 known_token_mask=known_mask,
-                timesteps=n_steps,
+                timesteps=int(sampler_steps),
                 conditioning=None,
                 use_ema=False,
                 return_diagnostics=True,
             )
 
-    def _run_eval(step_i: int, params_for_sampling, *, num_batches: int) -> Dict[str, float]:
+        return _sample_conditional
+
+    sampler_eval_fns: dict[str, Any] = {}
+    for sampler_spec in sampler_specs:
+        sampler_model = (
+            model
+            if model_name == "sjd"
+            else _clone_model_for_sampler(model, sampler_spec=sampler_spec)
+        )
+        sampler_eval_fns[sampler_spec["label"]] = _make_sample_conditional_fn(
+            model_for_eval=sampler_model,
+            sampler_steps=int(sampler_spec["n_steps"]),
+        )
+
+    def _run_eval(
+        step_i: int,
+        params_for_sampling,
+        *,
+        num_batches: int,
+        sampler_spec: dict[str, Any],
+    ) -> Dict[str, float]:
         eval_seed = int(cfg.training.seed) + eval_seed_offset
         if fold_in_step:
             eval_seed += int(step_i)
@@ -323,11 +624,16 @@ def build_sudoku_eval_logger(
             "example_step_count": 0.0,
             "masked_unknown_total_across_steps": 0.0,
             "selected_count_total_across_steps": 0.0,
+            "selected_top_probability_sum_total": 0.0,
+            "selected_top_probability_count_total": 0.0,
+            "selected_top_prob_margin_sum_total": 0.0,
+            "selected_top_prob_margin_count_total": 0.0,
             "selected_margin_sum_total": 0.0,
             "selected_margin_count_total": 0.0,
             "selected_row_total_across_steps": 0.0,
             "selected_col_total_across_steps": 0.0,
             "selected_value_total_across_steps": 0.0,
+            "selected_eos_total_across_steps": 0.0,
             "unknown_token_total": 0.0,
             "final_masked_unknown_total": 0.0,
         }
@@ -360,34 +666,31 @@ def build_sudoku_eval_logger(
                     f"got {puzzle_sol.shape}."
                 )
 
-            known_token_len = (3 * start_index)[:, None]
-            token_pos = np.arange(243, dtype=np.int32)[None, :]
-            known_mask = token_pos < known_token_len
-            known_idx = np.where(known_mask, input_seq, 0).astype(np.int32)
+            known_idx, known_mask = _prepare_conditional_inputs(
+                model_name=model_name,
+                input_seq=input_seq,
+                start_index=start_index,
+            )
 
             rng_batch = jax.random.fold_in(base_rng, totals["num_batches"])
-            sample_out = _sample_conditional(
+            sample_out = sampler_eval_fns[sampler_spec["label"]](
                 params_for_sampling,
                 rng_batch,
                 known_idx,
                 known_mask,
             )
-            if model_name == "mdlm":
-                pred_seq, diag = sample_out
-                diag = jax.device_get(diag)
-                for key in (
-                    "example_step_count",
-                    "masked_unknown_total_across_steps",
-                    "selected_count_total_across_steps",
-                    "selected_margin_sum_total",
-                    "selected_margin_count_total",
-                    "selected_row_total_across_steps",
-                    "selected_col_total_across_steps",
-                    "selected_value_total_across_steps",
-                    "unknown_token_total",
-                    "final_masked_unknown_total",
-                ):
-                    totals[key] += float(diag[key])
+            if model_name in {"mdlm", "mdm"}:
+                pred_tokens, diag = sample_out
+                _accumulate_sudoku_diagnostics(totals, jax.device_get(diag))
+                pred_tokens = np.asarray(jax.device_get(pred_tokens), dtype=np.int32)
+                pred_seq = (
+                    _decode_mdm_prediction_to_triplets(
+                        packed_seq=pred_tokens,
+                        start_index=start_index,
+                    )
+                    if model_name == "mdm"
+                    else pred_tokens
+                )
             else:
                 pred_seq = sample_out
             pred_seq = np.asarray(jax.device_get(pred_seq), dtype=np.int32)
@@ -434,6 +737,8 @@ def build_sudoku_eval_logger(
             totals["total_pred"],
         )
         step_den = max(float(totals["example_step_count"]), 1.0)
+        top_prob_den = max(float(totals["selected_top_probability_count_total"]), 1.0)
+        top_margin_den = max(float(totals["selected_top_prob_margin_count_total"]), 1.0)
         margin_den = max(float(totals["selected_margin_count_total"]), 1.0)
         unknown_den = max(float(totals["unknown_token_total"]), 1.0)
         selected_den = max(float(totals["selected_count_total_across_steps"]), 1.0)
@@ -442,6 +747,12 @@ def build_sudoku_eval_logger(
         )
         mean_k_selected_per_step = (
             float(totals["selected_count_total_across_steps"]) / step_den
+        )
+        mean_selected_top_probability = (
+            float(totals["selected_top_probability_sum_total"]) / top_prob_den
+        )
+        mean_selected_top_prob_margin_v2 = (
+            float(totals["selected_top_prob_margin_sum_total"]) / top_margin_den
         )
         mean_selected_top_prob_margin = (
             float(totals["selected_margin_sum_total"]) / margin_den
@@ -458,48 +769,58 @@ def build_sudoku_eval_logger(
         selected_value_fraction = (
             float(totals["selected_value_total_across_steps"]) / selected_den
         )
-        checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
+        selected_eos_fraction = (
+            float(totals["selected_eos_total_across_steps"]) / selected_den
+        )
+        metric_prefix = str(sampler_spec["metrics_prefix"])
 
         metrics = {
-            f"{prefix}/acc": float(acc),
-            f"{prefix}/acc_complete_puzzle": float(complete),
-            f"{prefix}/acc_board_exact": float(board_exact),
-            f"{prefix}/acc_solve_strict": float(strict_solve),
-            f"{prefix}/given_token_acc": float(given_token_acc),
-            f"{prefix}/row_token_acc": float(row_token_acc),
-            f"{prefix}/col_token_acc": float(col_token_acc),
-            f"{prefix}/value_token_acc": float(value_token_acc),
-            f"{prefix}/value_acc_given_correct_rowcol": float(
+            f"{metric_prefix}/acc": float(acc),
+            f"{metric_prefix}/acc_complete_puzzle": float(complete),
+            f"{metric_prefix}/acc_board_exact": float(board_exact),
+            f"{metric_prefix}/acc_solve_strict": float(strict_solve),
+            f"{metric_prefix}/given_token_acc": float(given_token_acc),
+            f"{metric_prefix}/row_token_acc": float(row_token_acc),
+            f"{metric_prefix}/col_token_acc": float(col_token_acc),
+            f"{metric_prefix}/value_token_acc": float(value_token_acc),
+            f"{metric_prefix}/value_acc_given_correct_rowcol": float(
                 value_acc_given_correct_rowcol
             ),
-            f"{prefix}/duplicate_coordinate_rate": float(duplicate_coordinate_rate),
-            f"{prefix}/solve_rate": float(strict_solve),
-            f"{prefix}/mean_masked_unknown_positions_per_step": float(
+            f"{metric_prefix}/duplicate_coordinate_rate": float(duplicate_coordinate_rate),
+            f"{metric_prefix}/solve_rate": float(strict_solve),
+            f"{metric_prefix}/mean_masked_unknown_positions_per_step": float(
                 mean_masked_unknown_per_step
             ),
-            f"{prefix}/mean_k_selected_per_step": float(mean_k_selected_per_step),
-            f"{prefix}/mean_selected_top_prob_margin": float(
+            f"{metric_prefix}/mean_k_selected_per_step": float(mean_k_selected_per_step),
+            f"{metric_prefix}/mean_selected_top_probability": float(
+                mean_selected_top_probability
+            ),
+            f"{metric_prefix}/mean_selected_top_prob_margin": float(
+                mean_selected_top_prob_margin_v2
+                if float(totals["selected_top_prob_margin_count_total"]) > 0.0
+                else mean_selected_top_prob_margin
+            ),
+            f"{metric_prefix}/mean_selected_top_prob_margin_legacy": float(
                 mean_selected_top_prob_margin
             ),
-            f"{prefix}/selected_row_fraction": float(selected_row_fraction),
-            f"{prefix}/selected_col_fraction": float(selected_col_fraction),
-            f"{prefix}/selected_value_fraction": float(selected_value_fraction),
-            f"{prefix}/final_masked_unknown_fraction": float(
+            f"{metric_prefix}/selected_row_fraction": float(selected_row_fraction),
+            f"{metric_prefix}/selected_col_fraction": float(selected_col_fraction),
+            f"{metric_prefix}/selected_value_fraction": float(selected_value_fraction),
+            f"{metric_prefix}/selected_eos_fraction": float(selected_eos_fraction),
+            f"{metric_prefix}/final_masked_unknown_fraction": float(
                 final_masked_unknown_fraction
             ),
-            f"{prefix}/checkpoint_is_live": float(checkpoint_source == "live"),
-            f"{prefix}/checkpoint_is_latest": float(
+            f"{metric_prefix}/checkpoint_is_live": float(checkpoint_source == "live"),
+            f"{metric_prefix}/checkpoint_is_latest": float(
                 checkpoint_source in {"latest", "periodic", "root"}
             ),
-            f"{prefix}/checkpoint_is_best": float(checkpoint_source == "best"),
-            f"{prefix}/checkpoint_is_final": float(checkpoint_source == "final"),
-            f"{prefix}/num_examples": float(totals["num_examples"]),
-            f"{prefix}/num_pred_cells": float(totals["total_pred"]),
-            f"{prefix}/num_batches": float(totals["num_batches"]),
-            f"{prefix}/sampler_steps": float(n_steps),
+            f"{metric_prefix}/checkpoint_is_best": float(checkpoint_source == "best"),
+            f"{metric_prefix}/checkpoint_is_final": float(checkpoint_source == "final"),
+            f"{metric_prefix}/num_examples": float(totals["num_examples"]),
+            f"{metric_prefix}/num_pred_cells": float(totals["total_pred"]),
+            f"{metric_prefix}/num_batches": float(totals["num_batches"]),
+            f"{metric_prefix}/sampler_steps": float(sampler_spec["n_steps"]),
         }
-        if wandb_mod is not None:
-            wandb_mod.log(metrics, step=step_i)
         return metrics
 
     def maybe_eval(
@@ -528,6 +849,51 @@ def build_sudoku_eval_logger(
                 f"for {batch_scope} batch(es).",
                 flush=True,
             )
-        return _run_eval(step_i, params_for_sampling, num_batches=int(num_batches))
+
+        per_sampler_batches = (
+            int(num_batches_per_sampler)
+            if (run_all_sampler_modes and not force_eval)
+            else int(num_batches)
+        )
+        if force_eval and num_batches_force != 0:
+            per_sampler_batches = int(num_batches)
+
+        metrics: Dict[str, float] = {}
+        for sampler_spec in sampler_specs:
+            metrics.update(
+                _run_eval(
+                    step_i,
+                    params_for_sampling,
+                    num_batches=int(per_sampler_batches),
+                    sampler_spec=sampler_spec,
+                )
+            )
+
+        if wandb_mod is not None and metrics:
+            wandb_mod.log(metrics, step=step_i)
+
+        if metrics and (run_all_sampler_modes or verbose):
+            primary_prefix = prefix
+            if run_all_sampler_modes:
+                primary_spec = next(
+                    (
+                        spec
+                        for spec in sampler_specs
+                        if spec["label"] == primary_sampler_label
+                    ),
+                    sampler_specs[0],
+                )
+                primary_prefix = str(primary_spec["metrics_prefix"])
+            summary_acc = metrics.get(f"{primary_prefix}/acc_complete_puzzle")
+            summary_strict = metrics.get(f"{primary_prefix}/acc_solve_strict")
+            if summary_acc is not None and summary_strict is not None:
+                print(
+                    f"[eval:sudoku] step={step_i} primary={primary_sampler_label} "
+                    f"acc_complete_puzzle={float(summary_acc):.4f} "
+                    f"acc_solve_strict={float(summary_strict):.4f}",
+                    flush=True,
+                )
+
+        return metrics
 
     return maybe_eval

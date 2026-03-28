@@ -6,6 +6,7 @@ from typing import Iterator, Mapping, Optional
 import numpy as np
 
 from .download import ensure_sudoku_data_available
+from .packing import pack_sudoku_seq2seq
 from .paths import SUDOKU_DATA_URL, resolve_data_file
 from .transforms import VALID_SEQ_ORDERS, build_solution_board, to_inputs
 
@@ -112,10 +113,17 @@ class SudokuBatchIterator:
             seq_order=self._seq_order,
             rng=self._rng,
         ).astype(np.int32)
+        packed = pack_sudoku_seq2seq(
+            triplet_seq=inputs,
+            start_index=start_index,
+        )
         puzzle = build_solution_board(triples).astype(np.int32)
 
         return {
             "image": inputs,
+            "packed_seq": packed["packed_seq"],
+            "prompt_mask": packed["prompt_mask"],
+            "response_mask": packed["response_mask"],
             "puzzle": puzzle,
             "start_index": start_index.reshape(-1, 1).astype(np.int32),
         }

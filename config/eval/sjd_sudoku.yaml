@@ -22,3 +22,9 @@ sudoku_eval_seed_offset: 1776
 sudoku_sample_seed_offset: 314159
 sudoku_eval_fold_in_step: false
 sudoku_progress_every_batches: 20
+
+# Single-sampler fallback defaults.
+sudoku_run_all_sampler_modes: false
+sudoku_eval_samplers: {}
+sudoku_primary_sampler_label: default
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}

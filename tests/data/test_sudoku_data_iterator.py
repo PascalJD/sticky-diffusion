@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from sticky.data.sudoku import make_sudoku_iterator
+from sticky.data.sudoku import make_sudoku_iterator, pack_sudoku_seq2seq
 
 
 def _solved_board_triples() -> np.ndarray:
@@ -112,6 +112,13 @@ def test_make_sudoku_iterator_matches_original_prefix_suffix_ordering(tmp_path):
         )
 
         np.testing.assert_array_equal(batch["image"], expected)
+        packed = pack_sudoku_seq2seq(
+            triplet_seq=expected,
+            start_index=np.asarray([[2], [5]], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(batch["packed_seq"], packed["packed_seq"])
+        np.testing.assert_array_equal(batch["prompt_mask"], packed["prompt_mask"])
+        np.testing.assert_array_equal(batch["response_mask"], packed["response_mask"])
         np.testing.assert_array_equal(batch["start_index"], np.asarray([[2], [5]], dtype=np.int32))
         np.testing.assert_array_equal(
             batch["puzzle"],

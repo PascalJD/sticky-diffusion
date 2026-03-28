@@ -6,6 +6,8 @@ from typing import Any, Callable
 import hydra
 from omegaconf import DictConfig
 
+from sticky.data.sudoku import SUDOKU_PACKED_SEQ_LEN, SUDOKU_VOCAB_SIZE
+
 
 def _optional_str(value):
     if value in (None, "", "null", "None"):
@@ -134,6 +136,15 @@ def _build_mdlm_sudoku_task(cfg: DictConfig):
     )
 
 
+def _build_mdm_sudoku_task(cfg: DictConfig):
+    from sticky.tasks.sudoku_mdm import SudokuMDMTask
+
+    kwargs = _sudoku_dataset_kwargs(cfg)
+    kwargs["data_shape"] = (SUDOKU_PACKED_SEQ_LEN,)
+    kwargs["vocab_size"] = int(SUDOKU_VOCAB_SIZE)
+    return SudokuMDMTask(**kwargs)
+
+
 TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "md4_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="md4_cifar10"),
     "mdlm_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="mdlm_cifar10"),
@@ -148,6 +159,7 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "sjd_cifar10": _build_sjd_cifar10_task,
     "sjd_sudoku": _build_sjd_sudoku_task,
     "mdlm_sudoku": _build_mdlm_sudoku_task,
+    "mdm_sudoku": _build_mdm_sudoku_task,
 }
 
 
