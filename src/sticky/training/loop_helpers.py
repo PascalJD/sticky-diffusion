@@ -662,6 +662,12 @@ def process_completed_step(
                     )
                 if ctx.wandb_mod is not None:
                     ctx.wandb_mod.log(likelihood_metrics, step=step_i)
+                if ctx.checkpoint_writer is not None:
+                    ctx.checkpoint_writer.maybe_save_best(
+                        target=state_s,
+                        step_i=step_i,
+                        metrics=likelihood_metrics,
+                    )
 
         if eval_due and ctx.maybe_log_eval is not None:
             eval_params = (

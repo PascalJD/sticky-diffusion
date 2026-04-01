@@ -1,7 +1,7 @@
 # Root Hydra config for offline checkpoint evaluation.
 defaults:
-  - experiment: sudoku/mdlm_sudoku_tfw_top_prob_margin
-  - eval: sudoku_mdlm
+  - experiment: sudoku/mdm_sudoku_inpaint_tfw_sanity
+  - eval: sudoku_inpaint_discrete
   - offline_eval: default
   - hydra: default
   - wandb: default

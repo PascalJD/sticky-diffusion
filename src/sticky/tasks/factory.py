@@ -6,8 +6,6 @@ from typing import Any, Callable
 import hydra
 from omegaconf import DictConfig
 
-from sticky.data.sudoku import SUDOKU_PACKED_SEQ_LEN, SUDOKU_VOCAB_SIZE
-
 
 def _optional_str(value):
     if value in (None, "", "null", "None"):
@@ -15,7 +13,7 @@ def _optional_str(value):
     return str(value)
 
 
-def _cifar10_augment_kwargs(cfg: DictConfig) -> dict[str, Any]:
+def _image_augment_kwargs(cfg: DictConfig) -> dict[str, Any]:
     aug_cfg = cfg.dataset.get("augment", {})
     return {
         "augment_enabled": bool(aug_cfg.get("enabled", True)),
@@ -26,19 +24,44 @@ def _cifar10_augment_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
-def _sudoku_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
+def _tfds_include_label(cfg: DictConfig) -> bool | str:
+    include_label = cfg.dataset.get("include_label", "auto")
+    if isinstance(include_label, bool):
+        return bool(include_label)
+    return str(include_label)
+
+
+def _tfds_image_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
+    shuffle_buffer_size = cfg.dataset.get("shuffle_buffer_size", None)
+    return {
+        "dataset_name": str(cfg.dataset.get("tfds_name", "cifar10")),
+        "train_split": str(cfg.dataset.get("train_split", "train")),
+        "eval_split": str(cfg.dataset.get("eval_split", "test")),
+        "include_label": _tfds_include_label(cfg),
+        "data_dir": _optional_str(cfg.dataset.get("data_dir", None)),
+        "batch_size": int(cfg.dataset.get("batch_size")),
+        "eval_batch_size": int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+        "data_shape": tuple(cfg.dataset.get("data_shape", (32, 32, 3))),
+        "vocab_size": int(cfg.dataset.get("vocab_size", 256)),
+        "num_classes": int(cfg.dataset.get("num_classes", -1)),
+        "drop_remainder": bool(cfg.dataset.get("drop_remainder", True)),
+        "shuffle_buffer_size": None if shuffle_buffer_size in (None, "", "null", "None") else int(shuffle_buffer_size),
+        **_image_augment_kwargs(cfg),
+    }
+
+
+def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
     return {
         "data_dir": _optional_str(cfg.dataset.get("data_dir", None)),
         "train_file": str(cfg.dataset.get("train_file", "Sudoku-train-data.npy")),
         "test_file": str(cfg.dataset.get("test_file", "Sudoku-test-data.npy")),
         "batch_size": int(cfg.dataset.get("batch_size")),
         "eval_batch_size": int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
-        "data_shape": tuple(cfg.dataset.get("data_shape", (243,))),
+        "data_shape": tuple(cfg.dataset.get("data_shape", (81,))),
         "vocab_size": int(cfg.dataset.get("vocab_size", 10)),
         "num_classes": int(cfg.dataset.get("num_classes", -1)),
         "drop_remainder": bool(cfg.dataset.get("drop_remainder", True)),
         "shuffle": bool(cfg.dataset.get("shuffle", True)),
-        "seq_order": str(cfg.dataset.get("seq_order", "dataset")),
         "mmap": bool(cfg.dataset.get("mmap", True)),
         "max_train_examples": int(cfg.dataset.get("max_train_examples", -1)),
         "max_test_examples": int(cfg.dataset.get("max_test_examples", -1)),
@@ -69,17 +92,12 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
-def _build_cifar10_discrete_task(cfg: DictConfig, *, task_name: str):
+def _build_tfds_discrete_image_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_discrete import CIFAR10DiscreteTask
 
     return CIFAR10DiscreteTask(
         task_name=task_name,
-        data_dir=str(cfg.dataset.get("data_dir", None)),
-        batch_size=int(cfg.dataset.get("batch_size")),
-        eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
-        vocab_size=int(cfg.dataset.get("vocab_size", 256)),
-        num_classes=int(cfg.dataset.get("num_classes", -1)),
-        **_cifar10_augment_kwargs(cfg),
+        **_tfds_image_dataset_kwargs(cfg),
     )
 
 
@@ -104,62 +122,37 @@ def _build_openwebtext_discrete_task(cfg: DictConfig):
     )
 
 
-def _build_sjd_cifar10_task(cfg: DictConfig):
+def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
     return CIFAR10SJDTask(
-        data_dir=str(cfg.dataset.get("data_dir", None)),
-        batch_size=int(cfg.dataset.get("batch_size")),
-        eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
-        data_shape=tuple(cfg.dataset.data_shape),
-        vocab_size=int(cfg.dataset.get("vocab_size", 256)),
-        num_classes=int(cfg.dataset.get("num_classes", -1)),
-        **_cifar10_augment_kwargs(cfg),
+        task_name=task_name,
+        **_tfds_image_dataset_kwargs(cfg),
         **_sjd_schedule_kwargs(cfg),
     )
 
 
-def _build_sjd_sudoku_task(cfg: DictConfig):
-    from sticky.tasks.sudoku_sjd import SudokuSJDTask
+def _build_mdm_sudoku_inpaint_task(cfg: DictConfig):
+    from sticky.tasks.sudoku_inpaint_mdm import SudokuInpaintMDMTask
 
-    return SudokuSJDTask(
-        **_sudoku_dataset_kwargs(cfg),
-        **_sjd_schedule_kwargs(cfg),
-    )
-
-
-def _build_mdlm_sudoku_task(cfg: DictConfig):
-    from sticky.tasks.sudoku_mdlm import SudokuMDLMTask
-
-    return SudokuMDLMTask(
-        **_sudoku_dataset_kwargs(cfg),
-    )
-
-
-def _build_mdm_sudoku_task(cfg: DictConfig):
-    from sticky.tasks.sudoku_mdm import SudokuMDMTask
-
-    kwargs = _sudoku_dataset_kwargs(cfg)
-    kwargs["data_shape"] = (SUDOKU_PACKED_SEQ_LEN,)
-    kwargs["vocab_size"] = int(SUDOKU_VOCAB_SIZE)
-    return SudokuMDMTask(**kwargs)
+    return SudokuInpaintMDMTask(**_sudoku_board_dataset_kwargs(cfg))
 
 
 TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
-    "md4_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="md4_cifar10"),
-    "mdlm_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="mdlm_cifar10"),
-    "d3pm_absorb_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="d3pm_absorb_cifar10"),
-    "d3pm_uniform_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="d3pm_uniform_cifar10"),
-    "d3pm_gaussian_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="d3pm_gaussian_cifar10"),
-    "candi_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="candi_cifar10"),
-    "cadd_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="cadd_cifar10"),
-    "bitdiff_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="bitdiff_cifar10"),
-    "ddpm_cifar10": lambda cfg: _build_cifar10_discrete_task(cfg, task_name="ddpm_cifar10"),
+    "md4_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="md4_cifar10"),
+    "mdlm_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="mdlm_cifar10"),
+    "d3pm_absorb_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="d3pm_absorb_cifar10"),
+    "d3pm_uniform_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="d3pm_uniform_cifar10"),
+    "d3pm_gaussian_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="d3pm_gaussian_cifar10"),
+    "candi_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="candi_cifar10"),
+    "cadd_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="cadd_cifar10"),
+    "bitdiff_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="bitdiff_cifar10"),
+    "ddpm_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="ddpm_cifar10"),
+    "md4_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="md4_imagenet64"),
     "openwebtext_discrete": _build_openwebtext_discrete_task,
-    "sjd_cifar10": _build_sjd_cifar10_task,
-    "sjd_sudoku": _build_sjd_sudoku_task,
-    "mdlm_sudoku": _build_mdlm_sudoku_task,
-    "mdm_sudoku": _build_mdm_sudoku_task,
+    "sjd_cifar10": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_cifar10"),
+    "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),
+    "mdm_sudoku_inpaint": _build_mdm_sudoku_inpaint_task,
 }
 
 

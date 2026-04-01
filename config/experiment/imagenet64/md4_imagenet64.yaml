@@ -1,0 +1,19 @@
+# MD4 experiment bundle for downsampled ImageNet 64x64.
+
+defaults:
+  - /dataset: imagenet64_discrete
+  - /model/baseline@model: md4_imagenet64
+  - /optim: adamw_imagenet64
+  - /sampler: md4_cifar10
+  - /training: imagenet64
+  - /runtime: default
+  - _self_
+
+task:
+  name: md4_imagenet64
+
+sampler:
+  n_steps: 512
+
+training:
+  sample_timesteps: 512

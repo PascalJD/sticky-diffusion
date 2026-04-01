@@ -1,22 +1,23 @@
-# CIFAR-10 discrete-token dataset settings.
-name: cifar10_discrete
-data_dir: data/cifar10
-tfds_name: cifar10
+# Downsampled ImageNet 64x64 discrete-token dataset settings.
+name: imagenet64_discrete
+data_dir: data/tfds
+tfds_name: downsampled_imagenet/64x64
 train_split: train
-eval_split: test
-include_label: auto
+eval_split: validation
+include_label: false
 
 # Global batch sizes (for single-device and pmap paths).
-batch_size: 512
-eval_batch_size: 512
+batch_size: 128
+eval_batch_size: 128
+shuffle_buffer_size: 50000
 
 # Optional per-device override used for parameter initialization.
 per_device_batch_size: -1
 
 # Token/image geometry.
-data_shape: [32, 32, 3]
+data_shape: [64, 64, 3]
 vocab_size: 256
-num_classes: -1  # unconditional by default (set to 10 for class-conditional)
+num_classes: -1
 
 # Pixel-preserving augmentation: random 90-degree rotations
 # and horizontal flips, applied per training example with probability 15%.

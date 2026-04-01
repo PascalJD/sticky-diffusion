@@ -23,7 +23,7 @@ from sticky.models.common.masked.common import (
     prior_sample as shared_prior_sample,
     sample_training_times,
 )
-from sticky.models.baselines.mdlm import sudoku_sampling
+from sticky.models.common import reveal_order_sampling
 
 
 Array = jnp.ndarray
@@ -263,8 +263,8 @@ class MDLM(nn.Module):
             name="loss_mask",
         )
         if loss_mask is None and known_token_mask is not None:
-            # Conditional Sudoku uses the clue prefix as fixed evidence and
-            # trains only on the unknown suffix tokens.
+            # Conditional sequence tasks can clamp a known prefix and train only
+            # on the unknown suffix tokens.
             loss_mask = ~known_token_mask
 
         if known_token_mask is None:
@@ -416,7 +416,7 @@ class MDLM(nn.Module):
         known_token_mask: Array | None = None,
         known_tokens: Array | None = None,
     ) -> Array:
-        return sudoku_sampling.clamp_known_tokens(
+        return reveal_order_sampling.clamp_known_tokens(
             tokens,
             current_tokens=current_tokens,
             known_token_mask=known_token_mask,
@@ -429,7 +429,7 @@ class MDLM(nn.Module):
         *,
         known_token_mask: Array | None = None,
     ) -> Array:
-        return sudoku_sampling.masked_unknown_positions(
+        return reveal_order_sampling.masked_unknown_positions(
             tokens,
             mask_token_id=self.mask_token_id,
             known_token_mask=known_token_mask,
@@ -442,7 +442,7 @@ class MDLM(nn.Module):
         reveal_positions: Array | None = None,
         margins: Array | None = None,
     ) -> dict[str, Array]:
-        return sudoku_sampling.sampling_step_info(
+        return reveal_order_sampling.sampling_step_info(
             masked_unknown=masked_unknown,
             reveal_positions=reveal_positions,
             margins=margins,
@@ -619,7 +619,7 @@ class MDLM(nn.Module):
         method: str,
         return_info: bool = False,
     ) -> Array | SamplingState | tuple[Array | SamplingState, dict[str, Array]]:
-        return sudoku_sampling.reveal_order_sample_step(
+        return reveal_order_sampling.reveal_order_sample_step(
             self,
             rng,
             i,
@@ -680,7 +680,7 @@ class MDLM(nn.Module):
                 known_tokens=known_tokens,
                 return_info=return_info,
             )
-        if sudoku_sampling.is_reveal_order_sampler(self.sampler):
+        if reveal_order_sampling.is_reveal_order_sampler(self.sampler):
             return self.reveal_order_sample_step(
                 rng,
                 i,

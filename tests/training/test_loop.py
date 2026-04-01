@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from omegaconf import OmegaConf
 
 import sticky.training.loop as loop_mod
+import sticky.training.loop_helpers as loop_helpers_mod
 
 
 def _make_train_cfg(
@@ -448,6 +449,51 @@ def test_main_train_loop_final_eval_only_forces_when_last_periodic_eval_missed(
         {"step": 2, "params": {"ema": 2}, "force_fid": False, "force_is": False},
         {"step": 4, "params": {"ema": 4}, "force_fid": False, "force_is": False},
     ]
+
+
+def test_main_train_loop_likelihood_eval_can_drive_best_checkpoint_selection(
+    monkeypatch,
+    tmp_path,
+):
+    records, _, _, wandb_mod = _install_main_loop_fakes(
+        monkeypatch,
+        tmp_path,
+        num_train_steps=2,
+        platform="single",
+    )
+    cfg = _make_train_cfg(
+        num_train_steps=2,
+        platform="single",
+        metrics_every_steps=1,
+        checkpoint_every_steps=1,
+    )
+    cfg.training.best_checkpoint_metric = "eval/loss"
+    cfg.training.likelihood_eval_every_steps = 1
+    cfg.training.likelihood_eval_max_batches = 4
+    eval_cfg = OmegaConf.create({"enabled": False})
+
+    monkeypatch.setattr(
+        loop_helpers_mod,
+        "run_likelihood_eval",
+        lambda **kwargs: {"eval/loss": 0.5},
+    )
+
+    loop_mod.main_train_loop(cfg, wandb_mod=wandb_mod, eval_cfg=eval_cfg)
+
+    likelihood_events = [
+        event for event in records["metrics_events"] if event[0] == "write" and event[2] == "eval_likelihood"
+    ]
+    assert len(likelihood_events) == 2
+    assert all(event[3]["eval/loss"] == 0.5 for event in likelihood_events)
+    assert records["eval_calls"] == []
+    assert [event[0:2] for event in records["checkpoint_events"]] == [
+        ("best", 1),
+        ("periodic", 1),
+        ("best", 2),
+        ("periodic", 2),
+        ("final", 2),
+    ]
+    assert [step for step, metrics in records["wandb_logs"] if "eval/loss" in metrics] == [1, 2]
 
 
 def test_main_train_loop_pmap_path_uses_replicate_prefetch_and_unreplicate(

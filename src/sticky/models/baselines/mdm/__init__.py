@@ -1,4 +1,7 @@
 from .mdm_model import MDM
-from .sudoku_sampling import conditional_generate
+from .mdm_inpaint_model import MDMInpaint
 
-__all__ = ["MDM", "conditional_generate"]
+__all__ = [
+    "MDM",
+    "MDMInpaint",
+]

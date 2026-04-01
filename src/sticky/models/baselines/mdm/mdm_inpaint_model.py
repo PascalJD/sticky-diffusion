@@ -9,14 +9,19 @@ import jax.numpy as jnp
 
 from sticky.models.backbones import DiscreteClassifier
 
-from . import reveal_order_sampling
+from . import board_sampling
 
 
 Array = jnp.ndarray
 
 
-class MDM(nn.Module):
-    """Ye-style discrete sequence model built on the shared token classifier."""
+class MDMInpaint(nn.Module):
+    """Minimal board-level masked discrete model for Sudoku inpainting.
+
+    This path is intentionally separate from the legacy packed seq2seq Sudoku
+    MDM implementation. It operates directly on 81 board cells with token `0`
+    as the only mask / blank symbol.
+    """
 
     data_shape: tuple[int, ...]
     cont_time: bool = False
@@ -29,7 +34,7 @@ class MDM(nn.Module):
     dit_num_heads: int = 12
     dit_hidden_size: int = 768
     ch_mult: Sequence[int] = (1,)
-    vocab_size: int = 12
+    vocab_size: int = 10
     noise_schedule_type: str = "loglinear"
     dropout_rate: float = 0.0
     use_attn_dropout: bool = True
@@ -57,15 +62,6 @@ class MDM(nn.Module):
     sampler: str = "top_prob_margin"
     sampling_grid: str = "loglinear"
     categorical_sampling_policy: str = "exact"
-    oracle_noise_type: str = "none"
-    oracle_noise_scale: float = 0.5
-    decoding_style: str = "monotone_reveal"
-    revealed_token_sample_mode: str = "sample"
-    cache_predictions: bool = False
-    token_reweighting: bool = False
-    alpha: float = 0.25
-    gamma: float = 1.0
-    time_reweighting: str = "none"
     model_sharding: bool = False
 
     def setup(self):
@@ -104,12 +100,11 @@ class MDM(nn.Module):
 
     @property
     def mask_token_id(self) -> int:
-        return int(self.vocab_size)
+        return 0
 
     def prior_sample(self, batch_size: int) -> Array:
-        return jnp.full(
+        return jnp.zeros(
             (int(batch_size), *tuple(int(v) for v in self.data_shape)),
-            self.mask_token_id,
             dtype=jnp.int32,
         )
 
@@ -121,24 +116,7 @@ class MDM(nn.Module):
         cond: Array | None = None,
         train: bool = False,
     ) -> tuple[Array, dict[str, Any]]:
-        del t
-        return self.classifier(zt, t=None, cond=cond, train=train)
-
-    def align_right_shifted_logits(self, logits: Array) -> Array:
-        """Match the official Ye/MGDM convention: slot i-1 predicts token i.
-
-        Concretely, we right-shift the raw model outputs along the sequence
-        dimension by prepending the first slot and dropping the last slot:
-        `aligned[:, 0] = raw[:, 0]`, `aligned[:, i] = raw[:, i - 1]` for `i > 0`.
-        This mirrors the reference implementation's
-        `torch.cat([logits[:, 0:1], logits[:, :-1]], dim=1)`.
-        """
-        logits = jnp.asarray(logits)
-        if logits.ndim < 2:
-            raise ValueError(
-                f"Expected logits with a sequence axis, got shape {logits.shape}."
-            )
-        return jnp.concatenate([logits[:, 0:1], logits[:, :-1]], axis=1)
+        return self.classifier(zt, t=t, cond=cond, train=train)
 
     def predict_logits(
         self,
@@ -148,10 +126,8 @@ class MDM(nn.Module):
         cond: Array | None = None,
         train: bool = False,
     ) -> Array:
-        raw_logits, _ = self.predict_x(zt, t=t, cond=cond, train=train)
-        # The MDM training family scores token i using the previous sequence
-        # slot, so the loss path always consumes right-shifted logits.
-        return self.align_right_shifted_logits(raw_logits)
+        logits, _ = self.predict_x(zt, t=t, cond=cond, train=train)
+        return logits
 
     def token_cross_entropy(
         self,
@@ -165,33 +141,6 @@ class MDM(nn.Module):
             axis=-1,
         )[..., 0]
 
-    def apply_token_reweighting(
-        self,
-        token_loss: Array,
-    ) -> Array:
-        token_loss = jnp.asarray(token_loss, dtype=jnp.float32)
-        if not bool(self.token_reweighting):
-            return token_loss
-        alpha = jnp.asarray(self.alpha, dtype=token_loss.dtype)
-        gamma = jnp.asarray(self.gamma, dtype=token_loss.dtype)
-        return alpha * (1.0 - jnp.exp(-token_loss)) ** gamma * token_loss
-
-    def time_weights(
-        self,
-        t: Array,
-    ) -> Array:
-        mode = str(self.time_reweighting)
-        t = jnp.asarray(t, dtype=jnp.int32)
-        if mode == "original":
-            return 1.0 / (t.astype(jnp.float32) + 1.0)
-        if mode == "linear":
-            return float(self.timesteps) - t.astype(jnp.float32)
-        if mode == "none":
-            return jnp.ones_like(t, dtype=jnp.float32)
-        raise ValueError(
-            f"Unknown time_reweighting={mode!r}. Expected one of: original, linear, none."
-        )
-
     def __call__(
         self,
         zt: Array,
@@ -202,32 +151,6 @@ class MDM(nn.Module):
     ) -> dict[str, Array]:
         logits = self.predict_logits(zt, t=t, cond=cond, train=train)
         return {"logits": logits}
-
-    def reveal_order_sample_step(
-        self,
-        rng: Array,
-        i: int,
-        timesteps: int,
-        state: Array,
-        *,
-        conditioning: Array | None = None,
-        known_token_mask: Array | None = None,
-        known_tokens: Array | None = None,
-        method: str,
-        return_info: bool = False,
-    ) -> Array | tuple[Array, dict[str, Array]]:
-        return reveal_order_sampling.reveal_order_sample_step(
-            self,
-            rng,
-            i,
-            timesteps,
-            state,
-            conditioning=conditioning,
-            known_token_mask=known_token_mask,
-            known_tokens=known_tokens,
-            method=method,
-            return_info=return_info,
-        )
 
     def sample_step(
         self,
@@ -242,8 +165,9 @@ class MDM(nn.Module):
         sampler_override: str | None = None,
         return_info: bool = False,
     ) -> Array | tuple[Array, dict[str, Array]]:
-        sampler = self.sampler if sampler_override is None else sampler_override
-        return self.reveal_order_sample_step(
+        method = self.sampler if sampler_override is None else sampler_override
+        return board_sampling.reveal_order_sample_step(
+            self,
             rng,
             i,
             timesteps,
@@ -251,7 +175,7 @@ class MDM(nn.Module):
             conditioning=conditioning,
             known_token_mask=known_token_mask,
             known_tokens=known_tokens,
-            method=sampler,
+            method=method,
             return_info=return_info,
         )
 

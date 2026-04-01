@@ -1,11 +1,11 @@
 #!/bin/bash -l
-#SBATCH -A cis260242-gpu
-#SBATCH -p gpu
+#SBATCH -A cis260242-ai
+#SBATCH -p ai
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=32G
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 #SBATCH --job-name=sudoku-train
 

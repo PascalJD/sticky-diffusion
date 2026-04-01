@@ -6,15 +6,15 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import jax
 import jax.numpy as jnp
 
-from sticky.data.cifar10_discrete import make_cifar10_iterator
 from sticky.models.sjd.losses import ce_allocation_loss
-from sticky.tasks.base import Task, TaskSpec
+from sticky.tasks.base import TaskSpec
+from sticky.tasks.tfds_discrete_image import TFDSDiscreteImageTaskBase
 
 Array = jnp.ndarray
 
 
 @dataclass
-class CIFAR10SJDTask(Task):
+class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
     """CIFAR-10 task for training the SJD ContinuousClassifier.
 
     The dataset provides discrete tokens in `[0, vocab_size)` with shape
@@ -37,6 +37,12 @@ class CIFAR10SJDTask(Task):
 
     # VP forward schedule
     beta: Callable[[Array], Array]
+    task_name: str = "sjd_cifar10"
+    dataset_name: str = "cifar10"
+    train_split: str = "train"
+    eval_split: str = "test"
+    include_label: bool | str = "auto"
+    dummy_label_value: int = -1
     hazard: Optional[Any] = None
     jump: Optional[Any] = None
     T: float = 1.0
@@ -51,44 +57,14 @@ class CIFAR10SJDTask(Task):
     augment_eval: bool = False
 
     def __post_init__(self):
-        self._spec = TaskSpec(
-            name="sjd_cifar10",
-            task_type="image",
-            data_shape=tuple(self.data_shape),
-            vocab_size=int(self.vocab_size),
-            num_classes=int(self.num_classes),
-        )
+        self._spec = self._build_image_task_spec(name=str(self.task_name))
 
     @property
     def spec(self) -> TaskSpec:
         return self._spec
 
     def make_dataloaders(self, seed: int):
-        train_it = make_cifar10_iterator(
-            data_dir=self.data_dir,
-            batch_size=self.batch_size,
-            split="train",
-            shuffle=True,
-            seed=seed,
-            repeat=True,
-            augment=self.augment_enabled,
-            augment_prob=self.augment_prob,
-            augment_rotate=self.augment_rotate,
-            augment_hflip=self.augment_hflip,
-        )
-        eval_it = make_cifar10_iterator(
-            data_dir=self.data_dir,
-            batch_size=self.eval_batch_size,
-            split="test",
-            shuffle=False,
-            seed=seed,
-            repeat=False,
-            augment=self.augment_eval,
-            augment_prob=self.augment_prob,
-            augment_rotate=self.augment_rotate,
-            augment_hflip=self.augment_hflip,
-        )
-        return train_it, eval_it
+        return super().make_dataloaders(seed=seed)
 
     def loss_fn(
         self,

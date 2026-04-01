@@ -28,6 +28,11 @@ class _DummyMDM:
         self.kwargs = kwargs
 
 
+class _DummyMDMInpaint:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 class _DummyD3PM:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -335,6 +340,70 @@ def test_build_model_reads_mdm_reweighting_and_decoding_knobs(monkeypatch):
     assert model.kwargs["time_reweighting"] == "linear"
     assert model.kwargs["oracle_noise_type"] == "gumbel"
     assert model.kwargs["oracle_noise_scale"] == 0.5
+
+
+def test_build_model_reads_mdm_inpaint_sampler_knobs(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.baselines.mdm.mdm_inpaint_model",
+        SimpleNamespace(MDMInpaint=_DummyMDMInpaint),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "mdm_inpaint",
+                "cont_time": False,
+                "timesteps": 50,
+                "feature_dim": 32,
+                "num_heads": 12,
+                "antithetic_time_sampling": False,
+                "n_layers": 3,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 384,
+                "ch_mult": [1],
+                "noise_schedule_type": "loglinear",
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "gelu",
+                "depth_scaled_init": False,
+                "cond_type": "adaln",
+                "outside_embed": False,
+                "sequence_backbone": "gpt2_like",
+                "sequence_mlp_hidden_dim": 1536,
+                "sequence_max_length": 81,
+                "sequence_causal": False,
+                "image_backbone": "auto",
+                "adm_num_res_blocks": 2,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": -1,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+                "time_features": "none",
+                "classes": -1,
+                "model_sharding": False,
+            },
+            "sampler": {
+                "method": "top_prob_margin",
+                "sampling_grid": "loglinear",
+                "categorical_sampling_policy": "exact",
+            },
+        }
+    )
+
+    model = build_model(cfg, data_shape=(81,), vocab_size=10)
+
+    assert isinstance(model, _DummyMDMInpaint)
+    assert model.kwargs["sampler"] == "top_prob_margin"
+    assert model.kwargs["sampling_grid"] == "loglinear"
+    assert model.kwargs["categorical_sampling_policy"] == "exact"
+    assert model.kwargs["sequence_max_length"] == 81
 
 
 def test_build_model_reads_d3pm_config_and_sampler_knobs(monkeypatch):

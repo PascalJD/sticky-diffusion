@@ -1,0 +1,24 @@
+# Approximate 64x64 ADM-style image backbone for this codebase.
+# These settings are codebase-adapted approximations of ImageNet64-scale
+# literature presets, not claims of exact architectural reproduction.
+feature_dim: 192
+n_layers: 32
+n_dit_layers: 0
+dit_num_heads: 12
+dit_hidden_size: 768
+dropout_rate: 0.1
+
+sequence_backbone: auto
+image_backbone: adm_unet5d
+
+ch_mult: [1, 2, 3, 4]
+adm_num_res_blocks: 3
+adm_attention_resolutions: [2, 4, 8]
+adm_num_heads: 4
+adm_num_head_channels: 64
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+adm_use_new_attention_order: false

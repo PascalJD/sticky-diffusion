@@ -1,0 +1,7 @@
+defaults:
+  - base
+  - _self_
+
+method: top_probability
+sampling_grid: loglinear
+categorical_sampling_policy: exact

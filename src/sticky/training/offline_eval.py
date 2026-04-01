@@ -304,6 +304,9 @@ def _extract_sudoku_sampler_summary(
         return {
             "label": label,
             "metrics_prefix": prefix_key,
+            "solve_rate": metrics.get(f"{prefix_key}/solve_rate"),
+            "board_acc_exact": metrics.get(f"{prefix_key}/board_acc_exact"),
+            "cell_acc_unknown": metrics.get(f"{prefix_key}/cell_acc_unknown"),
             "acc_complete_puzzle": metrics.get(f"{prefix_key}/acc_complete_puzzle"),
             "acc_solve_strict": metrics.get(f"{prefix_key}/acc_solve_strict"),
             "mean_selected_top_probability": metrics.get(
@@ -695,11 +698,21 @@ def run_offline_checkpoint_eval(
             flush=True,
         )
         for sampler_info in sudoku_sampler_summary["samplers"]:
+            primary_score = (
+                sampler_info["solve_rate"]
+                if sampler_info["solve_rate"] is not None
+                else sampler_info["acc_solve_strict"]
+            )
+            secondary_score = (
+                sampler_info["board_acc_exact"]
+                if sampler_info["board_acc_exact"] is not None
+                else sampler_info["acc_complete_puzzle"]
+            )
             print(
                 "[offline-eval] "
                 f"{sampler_info['label']}: "
-                f"acc_complete_puzzle={sampler_info['acc_complete_puzzle']} "
-                f"acc_solve_strict={sampler_info['acc_solve_strict']} "
+                f"primary_score={primary_score} "
+                f"secondary_score={secondary_score} "
                 f"mean_selected_top_prob_margin={sampler_info['mean_selected_top_prob_margin']}",
                 flush=True,
             )

@@ -5,6 +5,7 @@
 ## Grouped Configs
 
 - `config/experiment/cifar10/`
+- `config/experiment/imagenet64/`
 - `config/experiment/sudoku/`
 - `config/model/backbone/`
 - `config/model/baseline/`
@@ -14,6 +15,8 @@ Use grouped experiment paths directly, for example:
 
 - `experiment=cifar10/md4_cifar10`
 - `experiment=cifar10/sjd_cifar10`
+- `experiment=imagenet64/md4_imagenet64`
+- `experiment=imagenet64/sjd_imagenet64`
 - `experiment=sudoku/sjd_sudoku`
 - `experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin`
 

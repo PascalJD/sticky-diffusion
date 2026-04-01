@@ -28,6 +28,11 @@ Train SJD on Sudoku:
 python -m sticky.cli.train experiment=sudoku/sjd_sudoku eval=sjd_sudoku
 ```
 
+Train MD4 on ImageNet64:
+```bash
+python -m sticky.cli.train experiment=imagenet64/md4_imagenet64 eval=imagenet64
+```
+
 Train the paper-faithful TrainForWorst MDLM Sudoku setup:
 ```bash
 python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin eval=sudoku_mdlm
@@ -97,6 +102,24 @@ python -m sticky.cli.eval_checkpoint \
   eval.fid_enabled=true \
   eval.is_enabled=true \
   wandb.enabled=false
+```
+
+Offline ImageNet64 checkpoint evaluation (FID/IS):
+```bash
+python -m sticky.cli.eval_checkpoint \
+  experiment=imagenet64/md4_imagenet64 \
+  eval=imagenet64_report \
+  offline_eval.run_dir=/absolute/path/to/run \
+  offline_eval.checkpoint_source=best \
+  eval.fid_tfds_data_dir=/absolute/path/to/tfds \
+  eval.fid_cache_dir=/absolute/path/to/fid_stats \
+  wandb.enabled=false
+```
+
+Launch the ImageNet64 offline-report flow on Anvil:
+```bash
+BEST_CHECKPOINT_DIR=/absolute/path/to/checkpoints/best \
+sbatch scripts/anvil_imagenet64_report.sbatch
 ```
 
 Evaluate periodic checkpoint at a specific step:

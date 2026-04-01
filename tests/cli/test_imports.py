@@ -65,7 +65,7 @@ def test_canonical_model_package_imports(monkeypatch):
 
 def test_canonical_sudoku_data_imports():
     download = importlib.import_module("sticky.data.sudoku.download")
-    dataset = importlib.import_module("sticky.data.sudoku.dataset")
+    boards = importlib.import_module("sticky.data.sudoku.boards")
 
     assert callable(download.ensure_sudoku_data_available)
-    assert callable(dataset.make_sudoku_iterator)
+    assert callable(boards.make_sudoku_board_iterator)
