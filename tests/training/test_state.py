@@ -13,8 +13,8 @@ from sticky.training.state import init_state
 
 
 class _DummyDiscreteModel:
-    def init(self, rngs, x, *, cond=None, train=False):
-        del rngs, x, cond, train
+    def init(self, rngs, x, t=None, *, cond=None, train=False):
+        del rngs, x, t, cond, train
         return {"params": {"w": jnp.asarray([1.0], dtype=jnp.float32)}}
 
 

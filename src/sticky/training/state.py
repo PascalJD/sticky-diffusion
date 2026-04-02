@@ -139,12 +139,22 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
             if int(cfg.model.classes) > 0
             else None
         )
-        variables = model.init(
-            {"params": rng_params, "sample": rng_sample},
-            dummy_x,
-            cond=dummy_cond,
-            train=False,
-        )
+        if name == "mdm":
+            dummy_t = jnp.zeros((batch_size,), dtype=jnp.float32)
+            variables = model.init(
+                {"params": rng_params, "sample": rng_sample},
+                dummy_x,
+                dummy_t,
+                cond=dummy_cond,
+                train=False,
+            )
+        else:
+            variables = model.init(
+                {"params": rng_params, "sample": rng_sample},
+                dummy_x,
+                cond=dummy_cond,
+                train=False,
+            )
 
     elif name == "sjd":
         rng, rng_params = jax.random.split(rng, 2)
