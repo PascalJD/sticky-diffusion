@@ -28,7 +28,7 @@ def test_mdm_sudoku_inpaint_train_and_eval_configs_compose():
     assert cfg.experiment.dataset.name == "sudoku_shah_board"
     assert cfg.experiment.dataset.batch_size == 128
     assert cfg.experiment.dataset.eval_batch_size == 128
-    assert cfg.experiment.model.name == "mdm_inpaint"
+    assert cfg.experiment.model.name == "mdm"
     assert cfg.experiment.model.sequence_backbone == "gpt2_like"
     assert cfg.experiment.model.sequence_max_length == 81
     assert cfg.experiment.model.timesteps == 50

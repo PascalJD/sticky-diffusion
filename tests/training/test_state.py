@@ -71,6 +71,7 @@ def _base_cfg(model_name: str):
 def test_init_state_supports_all_model_branches():
     for model_name, model in (
         ("md4", _DummyDiscreteModel()),
+        ("mdm", _DummyDiscreteModel()),
         ("cadd", _DummyDiscreteModel()),
         ("ddpm", _DummyDiscreteModel()),
         ("sjd", _DummySJDModel()),

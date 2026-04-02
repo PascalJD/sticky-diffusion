@@ -652,8 +652,7 @@ def _build_ddpm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 MODEL_BUILDERS: dict[str, Callable[..., Any]] = {
     "md4": _build_md4,
     "mdlm": _build_mdlm,
-    "mdm": _build_mdm,
-    "mdm_inpaint": _build_mdm_inpaint,
+    "mdm": _build_mdm_inpaint,
     "d3pm": _build_d3pm,
     "sjd": _build_sjd,
     "cadd": _build_cadd,

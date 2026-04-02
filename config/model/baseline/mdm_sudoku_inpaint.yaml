@@ -5,7 +5,7 @@ defaults:
 # Minimal Shah-board Sudoku inpainting MDM benchmark.
 # This is monotone-only and intentionally separate from the legacy packed
 # seq2seq / remasking Sudoku MDM path.
-name: mdm_inpaint
+name: mdm
 
 cont_time: false
 timesteps: 50

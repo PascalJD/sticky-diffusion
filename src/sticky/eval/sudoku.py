@@ -290,10 +290,10 @@ def build_sudoku_eval_logger(
 ):
     model_name = str(cfg.model.name).strip().lower()
     task_name = str(getattr(getattr(task, "spec", None), "name", "")).strip().lower()
-    if model_name != "mdm_inpaint" or task_name != "mdm_sudoku_inpaint":
+    if model_name != "mdm" or task_name != "mdm_sudoku_inpaint":
         raise ValueError(
             "Sudoku evaluator only supports the board-level inpaint benchmark: "
-            "task.name='mdm_sudoku_inpaint' and model.name='mdm_inpaint'."
+            "task.name='mdm_sudoku_inpaint' and model.name='mdm'."
         )
     if task is None or model is None:
         raise ValueError("Sudoku evaluator requires `task` and `model`.")

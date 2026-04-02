@@ -162,7 +162,7 @@ def test_board_eval_logger_runs_all_sampler_modes(monkeypatch):
 
     cfg = OmegaConf.create(
         {
-            "model": {"name": "mdm_inpaint", "timesteps": 4},
+            "model": {"name": "mdm", "timesteps": 4},
             "sampler": {
                 "method": "top_prob_margin",
                 "n_steps": 4,
