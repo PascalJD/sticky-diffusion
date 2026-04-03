@@ -13,6 +13,44 @@ SUDOKU_NUM_CELLS = 81
 SUDOKU_TABLE_WIDTH = 325
 
 
+def board_to_string(board: np.ndarray) -> str:
+    arr = np.asarray(board, dtype=np.int32).reshape(-1)
+    if arr.shape[0] != SUDOKU_NUM_CELLS:
+        raise ValueError(
+            f"Sudoku board strings require exactly {SUDOKU_NUM_CELLS} cells, got {arr.shape}."
+        )
+    if arr.min() < 0 or arr.max() > 9:
+        raise ValueError("Sudoku board digits must be in 0..9 when converting to strings.")
+    return "".join(str(int(value)) for value in arr)
+
+
+def boards_to_strings(boards: np.ndarray) -> np.ndarray:
+    arr = np.asarray(boards, dtype=np.int32)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.ndim != 2 or arr.shape[1] != SUDOKU_NUM_CELLS:
+        raise ValueError(
+            "Expected Sudoku boards with shape (batch, 81) or (81,), "
+            f"got {arr.shape}."
+        )
+    return np.asarray(
+        [board_to_string(board) for board in arr],
+        dtype=f"<U{SUDOKU_NUM_CELLS}",
+    )
+
+
+def string_to_board(board_str: str) -> np.ndarray:
+    text = str(board_str).strip()
+    if len(text) != SUDOKU_NUM_CELLS:
+        raise ValueError(
+            f"Sudoku board strings must have length {SUDOKU_NUM_CELLS}, got {len(text)}."
+        )
+    digits = np.fromiter((int(ch) for ch in text), dtype=np.int32, count=SUDOKU_NUM_CELLS)
+    if digits.min() < 0 or digits.max() > 9:
+        raise ValueError("Sudoku board strings must contain only digits in 0..9.")
+    return digits
+
+
 def _load_sudoku_table(file_path: Path, *, mmap: bool) -> np.ndarray:
     mmap_mode = "r" if bool(mmap) else None
     table = np.load(str(file_path), mmap_mode=mmap_mode)
@@ -129,17 +167,25 @@ def build_clue_board(
     return clue_board
 
 
-def build_board_batch(rows: np.ndarray) -> Mapping[str, np.ndarray]:
+def build_board_batch(
+    rows: np.ndarray,
+    *,
+    include_strings: bool = False,
+) -> Mapping[str, np.ndarray]:
     triples, start_index = extract_shah_triples(rows)
     solution_board = build_solution_board(triples)
     clue_board = build_clue_board(triples, start_index=start_index)
     clue_mask = build_clue_mask(triples, start_index=start_index)
-    return {
+    batch = {
         "solution_board": solution_board.astype(np.int32),
         "clue_board": clue_board.astype(np.int32),
         "clue_mask": clue_mask.astype(np.bool_),
         "start_index": start_index.reshape(-1, 1).astype(np.int32),
     }
+    if bool(include_strings):
+        batch["solution_str"] = boards_to_strings(solution_board)
+        batch["puzzle_str"] = boards_to_strings(clue_board)
+    return batch
 
 
 class SudokuBoardBatchIterator:
@@ -160,6 +206,7 @@ class SudokuBoardBatchIterator:
         drop_remainder: bool,
         mmap: bool,
         max_examples: int,
+        include_strings: bool,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}.")
@@ -189,6 +236,7 @@ class SudokuBoardBatchIterator:
         self._repeat = bool(repeat)
         self._drop_remainder = bool(drop_remainder)
         self._shuffle = bool(shuffle)
+        self._include_strings = bool(include_strings)
         self._rng = np.random.default_rng(int(seed))
         self._idx = np.arange(self._n, dtype=np.int64)
         self._cursor = 0
@@ -222,7 +270,7 @@ class SudokuBoardBatchIterator:
     def __next__(self) -> Mapping[str, np.ndarray]:
         batch_idx = self._next_indices()
         rows = np.asarray(self._table[batch_idx], dtype=np.int32)
-        board_batch = build_board_batch(rows)
+        board_batch = build_board_batch(rows, include_strings=self._include_strings)
         solution_board = np.asarray(board_batch["solution_board"], dtype=np.int32)
         return {
             **dict(board_batch),
@@ -243,6 +291,7 @@ def make_sudoku_board_iterator(
     drop_remainder: bool = True,
     mmap: bool = True,
     max_examples: int = -1,
+    include_strings: bool = False,
     auto_download: bool = True,
     download_timeout_sec: int = 120,
     download_retries: int = 8,
@@ -273,6 +322,7 @@ def make_sudoku_board_iterator(
             drop_remainder=bool(drop_remainder),
             mmap=bool(mmap),
             max_examples=int(max_examples),
+            include_strings=bool(include_strings),
         )
     )
 

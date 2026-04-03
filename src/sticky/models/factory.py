@@ -394,6 +394,9 @@ def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
         cond_type=str(cfg.model.get("cond_type", "adaln")),
         model_sharding=bool(cfg.model.get("model_sharding", False)),
         sequence_backbone=str(cfg.model.get("sequence_backbone", "auto")),
+        sequence_mlp_hidden_dim=cfg.model.get("sequence_mlp_hidden_dim", None),
+        sequence_max_length=cfg.model.get("sequence_max_length", None),
+        sequence_causal=bool(cfg.model.get("sequence_causal", False)),
         **_adm_backbone_kwargs(
             cfg.model,
             image_backbone_default="auto",

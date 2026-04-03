@@ -1,0 +1,3 @@
+# Legacy flat alias for the canonical SJD model config.
+defaults:
+  - /model/sjd@_here_: sjd_cifar10

@@ -1,0 +1,27 @@
+defaults:
+  - sudoku_mdlm
+  - _self_
+
+# Discrete Sudoku eval with named multi-sampler comparison for one checkpoint.
+sudoku_run_all_sampler_modes: true
+sudoku_eval_samplers:
+  vanilla:
+    sampler: mdm_sudoku_vanilla
+    method: vanilla
+    decoding_style: monotone_reveal
+    oracle_noise_type: none
+    oracle_noise_scale: 0.0
+  top_probability:
+    sampler: mdm_sudoku_top_probability
+    method: top_probability
+    decoding_style: topk_remask
+    oracle_noise_type: gumbel
+    oracle_noise_scale: 0.5
+  top_prob_margin:
+    sampler: mdm_sudoku_top_prob_margin
+    method: top_prob_margin
+    decoding_style: topk_remask
+    oracle_noise_type: gumbel
+    oracle_noise_scale: 0.5
+sudoku_primary_sampler_label: top_prob_margin
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}

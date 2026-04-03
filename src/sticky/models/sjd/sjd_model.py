@@ -29,6 +29,9 @@ class SJD(nn.Module):
     cond_type: str = "adaln"
     model_sharding: bool = False
     sequence_backbone: str = "auto"
+    sequence_mlp_hidden_dim: int | None = None
+    sequence_max_length: int | None = None
+    sequence_causal: bool = False
     image_backbone: str = "auto"
     adm_num_res_blocks: int = 2
     adm_attention_resolutions: Sequence[int] = (2, 4, 8)
@@ -69,6 +72,9 @@ class SJD(nn.Module):
             cond_type=self.cond_type,
             model_sharding=self.model_sharding,
             sequence_backbone=self.sequence_backbone,
+            sequence_mlp_hidden_dim=self.sequence_mlp_hidden_dim,
+            sequence_max_length=self.sequence_max_length,
+            sequence_causal=self.sequence_causal,
             image_backbone=self.image_backbone,
             adm_num_res_blocks=self.adm_num_res_blocks,
             adm_attention_resolutions=self.adm_attention_resolutions,

@@ -1,0 +1,22 @@
+defaults:
+  - base
+  - _self_
+
+name: sudoku_mdlm_tfw
+
+# Derived at runtime from the actual train set size and batch size.
+num_train_steps: 0
+num_train_epochs: 300
+best_update_on_equal: true
+
+log_every_steps: 500
+timing_warn_seconds: 15
+eval_every_steps: 10000
+checkpoint_every_steps: 10000
+checkpoint_keep: 5
+log_images_every_steps: 0
+
+best_checkpoint_metric: eval/acc_complete_puzzle
+best_checkpoint_mode: max
+
+sample_timesteps: ${..sampler.n_steps}

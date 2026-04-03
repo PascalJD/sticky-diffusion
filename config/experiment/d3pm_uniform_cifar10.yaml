@@ -1,0 +1,3 @@
+# Legacy flat alias for the canonical grouped CIFAR-10 experiment config.
+defaults:
+  - /experiment/cifar10@_here_: d3pm_uniform_cifar10

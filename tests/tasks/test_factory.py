@@ -29,6 +29,11 @@ class _DummySudokuInpaintMDMTask:
         self.kwargs = kwargs
 
 
+class _DummySudokuInpaintSJDTask:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def _fake_instantiate(cfg, **kwargs):
     data = OmegaConf.to_container(cfg, resolve=True)
     if kwargs:
@@ -342,3 +347,61 @@ def test_build_task_accepts_mdm_sudoku_inpaint_name(monkeypatch):
     assert task.kwargs["eval_batch_size"] == 64
     assert task.kwargs["data_shape"] == (81,)
     assert task.kwargs["vocab_size"] == 10
+
+
+def test_build_task_accepts_sjd_sudoku_inpaint_name(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.sudoku_inpaint_sjd",
+        SimpleNamespace(SudokuInpaintSJDTask=_DummySudokuInpaintSJDTask),
+    )
+    monkeypatch.setattr(hydra.utils, "instantiate", _fake_instantiate)
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "sjd_sudoku_inpaint"},
+            "dataset": {
+                "data_dir": "/tmp/sudoku",
+                "train_file": "train.npy",
+                "test_file": "test.npy",
+                "batch_size": 128,
+                "eval_batch_size": 64,
+                "data_shape": [81],
+                "vocab_size": 10,
+                "num_classes": -1,
+                "drop_remainder": True,
+                "shuffle": True,
+                "mmap": True,
+                "max_train_examples": -1,
+                "max_test_examples": -1,
+                "auto_download": True,
+                "download_timeout_sec": 120,
+                "download_retries": 8,
+            },
+            "forward": {
+                "beta": {"name": "vp_linear"},
+                "hazard": {"name": "poly_alpha", "p": 1.0},
+                "jump": {"name": "vp_matched", "eta": 0.97},
+            },
+            "sampler": {
+                "T": 1.0,
+                "log_ratio_clip": 10.0,
+            },
+            "training": {
+                "log_state_dependency": True,
+                "state_dep_log_ratio_clip": 6.0,
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummySudokuInpaintSJDTask)
+    assert task.kwargs["batch_size"] == 128
+    assert task.kwargs["eval_batch_size"] == 64
+    assert task.kwargs["data_shape"] == (81,)
+    assert task.kwargs["vocab_size"] == 10
+    assert task.kwargs["beta"] == {"cfg": {"name": "vp_linear"}}
+    assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 1.0}, "beta": {"cfg": {"name": "vp_linear"}}}
+    assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched", "eta": 0.97}, "beta": {"cfg": {"name": "vp_linear"}}}
+    assert task.kwargs["state_dep_log_ratio_clip"] == 6.0

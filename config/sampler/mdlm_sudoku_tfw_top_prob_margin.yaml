@@ -1,0 +1,11 @@
+defaults:
+  - base
+  - _self_
+
+method: top_prob_margin
+sampling_grid: loglinear
+categorical_sampling_policy: exact
+revealed_token_sample_mode: sample
+cache_predictions: false
+oracle_noise_type: gumbel
+oracle_noise_scale: 0.5

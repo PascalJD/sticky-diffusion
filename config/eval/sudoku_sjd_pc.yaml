@@ -1,0 +1,33 @@
+# Lightweight multi-sampler board-level Sudoku eval for SJD predictor-corrector.
+mode: sudoku
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+
+sudoku_every: ${experiment.training.eval_every_steps}
+sudoku_num_batches: 64
+sudoku_num_batches_force: -1
+sudoku_eval_seed_offset: 1776
+sudoku_sample_seed_offset: 314159
+sudoku_eval_fold_in_step: false
+sudoku_progress_every_batches: 20
+param_source: ema
+
+sudoku_run_all_sampler_modes: true
+sudoku_primary_sampler_label: pc_margin_l1_s0p10
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
+sudoku_log_policy_table: true
+sudoku_prop52_enabled: false
+sudoku_prop52_only: false
+
+sudoku_eval_sjd_samplers:
+  predictor_only:
+    sampler: sjd_sudoku_predictor
+  pc_constant_l1_s0p10:
+    sampler: sjd_sudoku_pc_constant
+  pc_entropy_l1_s0p10:
+    sampler: sjd_sudoku_pc_entropy
+  pc_margin_l1_s0p10:
+    sampler: sjd_sudoku_pc_margin

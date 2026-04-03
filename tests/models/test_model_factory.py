@@ -48,6 +48,11 @@ class _DummyCANDI:
         self.kwargs = kwargs
 
 
+class _DummySJD:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
@@ -191,6 +196,66 @@ def test_build_model_reads_md4_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["sampling_grid"] == "uniform"
     assert model.kwargs["topp"] == 0.91
     assert model.kwargs["categorical_sampling_policy"] == "jax_high"
+
+
+def test_build_model_threads_sequence_knobs_into_sjd(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.sjd.sjd_model",
+        SimpleNamespace(SJD=_DummySJD),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.models.sjd.anchors",
+        SimpleNamespace(
+            anchor_learnable_from_mapping=lambda cfg, default=True: True,
+            anchor_table_config_from_mapping=lambda cfg, vocab_size=None: {"vocab_size": vocab_size, "family": "ordered_normal"},
+        ),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "name": "sjd",
+                "feature_dim": 32,
+                "num_heads": 12,
+                "n_layers": 3,
+                "n_dit_layers": 0,
+                "dit_num_heads": 12,
+                "dit_hidden_size": 384,
+                "ch_mult": [1],
+                "dropout_rate": 0.1,
+                "use_attn_dropout": True,
+                "mlp_type": "gelu",
+                "depth_scaled_init": False,
+                "cond_type": "adaln",
+                "model_sharding": False,
+                "sequence_backbone": "gpt2_like",
+                "sequence_mlp_hidden_dim": 1536,
+                "sequence_max_length": 81,
+                "sequence_causal": False,
+                "image_backbone": "auto",
+                "adm_num_res_blocks": 2,
+                "adm_attention_resolutions": [2, 4],
+                "adm_num_heads": 4,
+                "adm_num_head_channels": -1,
+                "adm_num_heads_upsample": -1,
+                "adm_conv_resample": True,
+                "adm_use_scale_shift_norm": True,
+                "adm_resblock_updown": False,
+                "adm_use_conv_skip": False,
+                "adm_use_new_attention_order": False,
+            }
+        }
+    )
+
+    model = build_model(cfg, data_shape=(81,), vocab_size=9)
+
+    assert isinstance(model, _DummySJD)
+    assert model.kwargs["sequence_backbone"] == "gpt2_like"
+    assert model.kwargs["sequence_mlp_hidden_dim"] == 1536
+    assert model.kwargs["sequence_max_length"] == 81
+    assert model.kwargs["sequence_causal"] is False
 
 
 def test_build_model_reads_mdlm_sampling_knobs_from_sampler_config(monkeypatch):

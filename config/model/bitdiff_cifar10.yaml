@@ -1,0 +1,3 @@
+# Legacy flat alias for the canonical baseline model config.
+defaults:
+  - /model/baseline@_here_: bitdiff_cifar10

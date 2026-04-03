@@ -1,0 +1,3 @@
+# Legacy flat alias for the canonical baseline model config.
+defaults:
+  - /model/baseline@_here_: d3pm_uniform_cifar10

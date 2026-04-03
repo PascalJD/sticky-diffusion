@@ -1,0 +1,23 @@
+# Board-level SJD Sudoku decoding-policy ablation on Shah-board inpainting.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: sjd_sudoku
+  - /training: sudoku_sjd_policy_ablation
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /runtime: default
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97

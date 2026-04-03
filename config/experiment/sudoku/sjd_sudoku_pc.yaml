@@ -1,0 +1,32 @@
+# Board-level SJD Sudoku predictor-corrector ablation on Shah-board inpainting.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: sjd_sudoku
+  - /training: sudoku_sjd_policy_ablation
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /runtime: default
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+sampler:
+  pc_enabled: false
+  corrector_substeps: 0
+  corrector_step_scale: 0.0
+  pc_gate: constant_one
+
+training:
+  best_checkpoint_metric: eval/pc_margin_l1_s0p10/solve_rate
+
+forward:
+  jump:
+    eta: 0.97

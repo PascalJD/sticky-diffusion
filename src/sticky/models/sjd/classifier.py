@@ -33,6 +33,9 @@ class ContinuousClassifier(nn.Module):
     cond_type: str = "adaln"
     model_sharding: bool = False
     sequence_backbone: str = "auto"
+    sequence_mlp_hidden_dim: int | None = None
+    sequence_max_length: int | None = None
+    sequence_causal: bool = False
     image_backbone: str = "auto"
     adm_num_res_blocks: int = 2
     adm_attention_resolutions: Sequence[int] = (2, 4, 8)
@@ -88,6 +91,9 @@ class ContinuousClassifier(nn.Module):
                 depth_scaled_init=self.depth_scaled_init,
                 cond_type=self.cond_type,
                 model_sharding=self.model_sharding,
+                hidden_dim=self.sequence_mlp_hidden_dim,
+                max_seq_len=self.sequence_max_length,
+                causal=self.sequence_causal,
             )
             logits = net(z, cond=time_cond, train=train)
             return logits, {}

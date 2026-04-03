@@ -182,6 +182,18 @@ def build_sampling_fns(
             refresh_logits_after_em_step=bool(
                 cfg.sampler.get("refresh_logits_after_em_step", False)
             ),
+            pc_enabled=bool(cfg.sampler.get("pc_enabled", False)),
+            corrector_substeps=int(cfg.sampler.get("corrector_substeps", 0)),
+            corrector_step_scale=float(cfg.sampler.get("corrector_step_scale", 0.0)),
+            pc_gate=str(cfg.sampler.get("pc_gate", "constant_one")),
+            pc_clamp_known=bool(cfg.sampler.get("pc_clamp_known", True)),
+            pc_refresh_logits_after_langevin=bool(
+                cfg.sampler.get("pc_refresh_logits_after_langevin", False)
+            ),
+            pc_allow_unstick_unknown_only=bool(
+                cfg.sampler.get("pc_allow_unstick_unknown_only", True)
+            ),
+            metrics_count_nfe=bool(cfg.sampler.get("metrics_count_nfe", True)),
         )
 
         def _sample_images_sjd(params, rng, batch_size: int):

@@ -31,6 +31,9 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
             self.sampling_grid = str(kwargs["sampling_grid"])
             recorded["categorical_sampling_policy"] = str(kwargs["categorical_sampling_policy"])
             self.categorical_sampling_policy = str(kwargs["categorical_sampling_policy"])
+            recorded["pc_enabled"] = bool(kwargs["pc_enabled"])
+            recorded["corrector_substeps"] = int(kwargs["corrector_substeps"])
+            recorded["corrector_step_scale"] = float(kwargs["corrector_step_scale"])
 
     class DummyAnchorTable:
         def __init__(self, table_float):
@@ -93,6 +96,9 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
                 "score_scale": 1.0,
                 "logit_temperature": 1.0,
                 "categorical_sampling_policy": "exact",
+                "pc_enabled": True,
+                "corrector_substeps": 2,
+                "corrector_step_scale": 0.1,
             },
         }
     )
@@ -124,6 +130,9 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
     assert recorded["n_steps"] == 37
     assert recorded["sampling_grid"] == "cosine"
     assert recorded["categorical_sampling_policy"] == "exact"
+    assert recorded["pc_enabled"] is True
+    assert recorded["corrector_substeps"] == 2
+    assert recorded["corrector_step_scale"] == 0.1
     assert recorded["calls"] == [
         {"batch_size": 4, "shape": (32, 32, 3), "n_steps": 37},
         {"batch_size": 6, "shape": (32, 32, 3), "n_steps": 37},

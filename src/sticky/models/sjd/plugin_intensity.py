@@ -71,44 +71,20 @@ def _full_intensity_and_probs(
         raise ValueError(f"logit_temperature must be > 0, got {logit_temperature}")
 
     logits = logits.astype(jnp.float32)
-    y = y.astype(jnp.float32)
-
     B = logits.shape[0]
     site_shape = logits.shape[1:-1]
     L = int(logits.shape[-1])
     logp = jax.nn.log_softmax(logits, axis=-1).astype(jnp.float32)
-
-    y_flat = y.reshape((B, -1, y.shape[-1]))
     logp_flat = logp.reshape((B, -1, L))
 
-    a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
-    if int(a.shape[0]) != L:
-        raise ValueError(
-            f"Anchor table has {a.shape[0]} rows, but logits last dim is {L}."
-        )
-    d = int(a.shape[-1])
-
-    dot = jnp.einsum("bnd,ld->bnl", y_flat, a)
-    y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
-    a_norm2 = jnp.sum(a * a, axis=-1)[None, None, :]
-
-    alpha, sigma = alpha_sigma(beta, t_img)
-    alpha = alpha.astype(jnp.float32)[:, None, None]
-    sigma2 = jnp.square(sigma).astype(jnp.float32)[:, None, None]
-
-    eta = float(jump.eta)
-    std_floor = float(jump.std_floor)
-    var_q = jnp.maximum(sigma2, 1e-12)
-    var_r = jnp.maximum(
-        (eta * eta) * sigma2,
-        (std_floor * std_floor) + 1e-12,
-    )
-
-    dist2 = y_norm2 - 2.0 * alpha * dot + (alpha * alpha) * a_norm2
-    inv_r = 1.0 / var_r
-    inv_q = 1.0 / var_q
-    log_ratio = -0.5 * (d * jnp.log(var_r / var_q) + dist2 * (inv_r - inv_q))
-    log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
+    log_ratio = anchor_log_ratio(
+        y=y,
+        t_img=t_img,
+        anchors=anchors,
+        beta=beta,
+        jump=jump,
+        log_ratio_clip=log_ratio_clip,
+    ).reshape((B, -1, L))
 
     lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
     log_lam_base = jnp.log(jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)))
@@ -133,6 +109,77 @@ def _full_intensity_and_probs(
     lam_total = lam_total_flat.reshape((B,) + site_shape)
     choice_probs = choice_probs_flat.reshape((B,) + site_shape + (L,))
     return lam_total, normalize_probs(choice_probs)
+
+
+def anchor_log_ratio(
+    *,
+    y: Array,
+    t_img: Array,
+    anchors: Any,
+    beta: Any,
+    jump: VPMatchedGaussianJump,
+    log_ratio_clip: float | None = 10.0,
+) -> Array:
+    y = jnp.asarray(y, dtype=jnp.float32)
+    B = int(y.shape[0])
+    site_shape = y.shape[1:-1]
+    y_flat = y.reshape((B, -1, y.shape[-1]))
+
+    a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    dot = jnp.einsum("bnd,ld->bnl", y_flat, a)
+    y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
+    a_norm2 = jnp.sum(a * a, axis=-1)[None, None, :]
+
+    alpha, sigma = alpha_sigma(beta, t_img)
+    alpha = alpha.astype(jnp.float32)[:, None, None]
+    sigma2 = jnp.square(sigma).astype(jnp.float32)[:, None, None]
+
+    eta = float(jump.eta)
+    std_floor = float(jump.std_floor)
+    var_q = jnp.maximum(sigma2, 1e-12)
+    var_r = jnp.maximum(
+        (eta * eta) * sigma2,
+        (std_floor * std_floor) + 1e-12,
+    )
+
+    dist2 = y_norm2 - 2.0 * alpha * dot + (alpha * alpha) * a_norm2
+    inv_r = 1.0 / var_r
+    inv_q = 1.0 / var_q
+    log_ratio = -0.5 * (int(a.shape[-1]) * jnp.log(var_r / var_q) + dist2 * (inv_r - inv_q))
+    if log_ratio_clip is not None:
+        log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
+    return log_ratio.reshape((B,) + site_shape + (int(a.shape[0]),))
+
+
+def dhm_target_intensity(
+    *,
+    y: Array,
+    t_img: Array,
+    true_anchor_idx: Array,
+    anchors: Any,
+    beta: Any,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    log_ratio_clip: float = 10.0,
+    eps: float = 1e-20,
+) -> Array:
+    log_ratio = anchor_log_ratio(
+        y=y,
+        t_img=t_img,
+        anchors=anchors,
+        beta=beta,
+        jump=jump,
+        log_ratio_clip=log_ratio_clip,
+    )
+    gathered = jnp.take_along_axis(
+        log_ratio,
+        jnp.asarray(true_anchor_idx, dtype=jnp.int32)[..., None],
+        axis=-1,
+    )[..., 0]
+    lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)
+    while lam_base.ndim < gathered.ndim:
+        lam_base = lam_base[..., None]
+    return jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)) * jnp.exp(gathered)
 
 
 def plugin_intensity_and_probs(

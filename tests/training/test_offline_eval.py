@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from sticky.training.eval import resolve_from_original_cwd
 from sticky.training.offline_eval import (
+    _apply_prop52_only_override,
     _extract_forward_config_metadata,
     _resolve_run_dir_from_offline_cfg,
 )
@@ -69,3 +72,15 @@ def test_offline_eval_resolves_run_dir_against_original_cwd(monkeypatch):
     assert _resolve_run_dir_from_offline_cfg({"run_dir": "runs/demo"}) == Path(
         "/tmp/sticky-original-cwd/runs/demo"
     )
+
+
+def test_apply_prop52_only_override_enables_sudoku_prop52_only():
+    eval_cfg = OmegaConf.create(
+        {"mode": "sudoku", "sudoku_prop52_enabled": False, "sudoku_prop52_only": False}
+    )
+    offline_cfg = OmegaConf.create({"eval_prop52_only": True})
+
+    _apply_prop52_only_override(eval_cfg_local=eval_cfg, offline_cfg=offline_cfg)
+
+    assert eval_cfg.sudoku_prop52_enabled is True
+    assert eval_cfg.sudoku_prop52_only is True

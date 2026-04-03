@@ -1,0 +1,76 @@
+# Multi-policy board-level Sudoku eval for the SJD decoding-policy ablation.
+mode: sudoku
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+
+sudoku_every: ${experiment.training.eval_every_steps}
+sudoku_num_batches: 64
+sudoku_num_batches_force: -1
+sudoku_eval_seed_offset: 1776
+sudoku_sample_seed_offset: 314159
+sudoku_eval_fold_in_step: false
+sudoku_progress_every_batches: 20
+param_source: ema
+
+sudoku_run_all_sampler_modes: true
+sudoku_primary_sampler_label: plugin_hazard_eta_0p97
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
+sudoku_log_policy_table: true
+sudoku_prop52_enabled: true
+sudoku_prop52_only: false
+sudoku_prop52_num_bins: 20
+sudoku_prop52_num_batches: 8
+sudoku_prop52_time_eps: 1.0e-4
+sudoku_prop52_seed_offset: 271828
+sudoku_prop52_fold_in_step: false
+
+sudoku_eval_policies:
+  linear_survival:
+    policy: linear_survival
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00
+  cosine_survival:
+    policy: cosine_survival
+    n_steps: 50
+    sampling_grid: cosine
+    eta: 1.00
+  linear_topk_probability:
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  plugin_hazard_eta_0p50:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.50
+  plugin_hazard_eta_0p75:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.75
+  plugin_hazard_eta_0p80:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.80
+  plugin_hazard_eta_0p90:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.90
+  plugin_hazard_eta_0p97:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
+  plugin_hazard_eta_1p00:
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00

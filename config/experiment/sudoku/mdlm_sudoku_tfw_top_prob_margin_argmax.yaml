@@ -1,0 +1,21 @@
+# Deterministic TrainForWorst-style MDLM Sudoku ablation.
+defaults:
+  - /dataset: sudoku
+  - /model/baseline@model: mdlm_sudoku
+  - /optim: adamw_sudoku_tfw
+  - /sampler: mdlm_sudoku_tfw_top_prob_margin
+  - /training: sudoku_mdlm_tfw
+  - /runtime: default
+  - _self_
+
+task:
+  name: mdlm_sudoku
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+sampler:
+  categorical_sampling_policy: exact
+  revealed_token_sample_mode: argmax
+  cache_predictions: true

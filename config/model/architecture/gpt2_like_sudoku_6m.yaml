@@ -1,0 +1,3 @@
+# Legacy flat alias for the canonical backbone config.
+defaults:
+  - /model/backbone@_here_: gpt2_like_sudoku_6m
