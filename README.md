@@ -18,28 +18,23 @@ conda activate sticky
 
 ## Quick Start 
 
-Train (defaults to the paper-faithful TrainForWorst MDLM Sudoku setup):
+Train (defaults to the current board-level MDM Sudoku benchmark in `config/config.yaml`):
 ```bash
 python -m sticky.cli.train
 ```
 
-Train the board-level SJD Sudoku decoding-policy ablation:
+Train the canonical board-level SJD Sudoku experiment:
 ```bash
 python -m sticky.cli.train \
-  experiment=sudoku/sjd_sudoku_policy_ablation \
-  eval=sudoku_sjd_policy_ablation
+  experiment=sudoku/sjd_sudoku \
+  eval=sudoku_sjd
 ```
 
-Train the board-level SJD Sudoku predictor-corrector ablation:
-```bash
-python -m sticky.cli.train experiment=sudoku/sjd_sudoku_pc eval=sudoku_sjd_pc
-```
-
-Run the offline predictor-corrector sweep/report on one checkpoint family:
+Run the exhaustive board-level SJD Sudoku report on one checkpoint family:
 ```bash
 python -m sticky.cli.eval_checkpoint \
-  experiment=sudoku/sjd_sudoku_pc \
-  eval=sudoku_sjd_pc_report \
+  experiment=sudoku/sjd_sudoku \
+  eval=sudoku_sjd_report \
   offline_eval.run_dir=/absolute/path/to/run \
   offline_eval.checkpoint_source=best \
   offline_eval.use_ema=true
@@ -50,19 +45,19 @@ Train MD4 on ImageNet64:
 python -m sticky.cli.train experiment=imagenet64/md4_imagenet64 eval=imagenet64
 ```
 
-Train the paper-faithful TrainForWorst MDLM Sudoku setup:
+Train the canonical MDLM Sudoku experiment:
 ```bash
-python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku eval=sudoku_mdlm
 ```
 
-Train vanilla MDLM on Sudoku with uniform reveal order:
+MDLM sampler comparison is eval-driven from the same checkpoint family:
 ```bash
-python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_uniform eval=sudoku_mdlm
-```
-
-Train vanilla MDLM on Sudoku with top-probability-margin reveal order:
-```bash
-python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_top_prob_margin eval=sudoku_mdlm
+python -m sticky.cli.eval_checkpoint \
+  experiment=sudoku/mdlm_sudoku \
+  eval=sudoku_mdlm \
+  offline_eval.run_dir=/absolute/path/to/run \
+  offline_eval.checkpoint_source=best \
+  offline_eval.use_ema=true
 ```
 
 Launch the default Sudoku training job on Anvil:
@@ -71,14 +66,14 @@ sbatch scripts/anvil_sudoku_train.sbatch
 ```
 
 The Sudoku Anvil launcher enables Weights & Biases by default and now defaults
-to the paper-faithful `mdlm_sudoku_tfw_top_prob_margin` experiment; override
+to the canonical `mdlm_sudoku` experiment; override
 `EXPERIMENT=...` or `WANDB_ENABLED=false` if needed.
 
 Offline Sudoku checkpoint evaluation:
 ```bash
 python -m sticky.cli.eval_checkpoint \
-  experiment=sudoku/sjd_sudoku_policy_ablation \
-  eval=sudoku_sjd_policy_ablation \
+  experiment=sudoku/sjd_sudoku \
+  eval=sudoku_sjd_report \
   offline_eval.run_dir=/absolute/path/to/run \
   offline_eval.checkpoint_source=best \
   offline_eval.use_ema=true
@@ -88,11 +83,9 @@ Sudoku dataset setup:
 - Training now auto-downloads missing Sudoku files from [Google Drive](https://drive.google.com/drive/folders/1TluiZjYl-zLdbxjVmhfWl-WyX_OvD7UW).
 - If `SCRATCH` is set and `dataset.data_dir` is left at the default `data/sudoku`, files are downloaded to `$SCRATCH/sticky-diffusion/data/sudoku`.
 - You can still override `dataset.data_dir`, `dataset.train_file`, and `dataset.test_file`.
-- Supported sequence ordering is configured via `dataset.seq_order` with values: `dataset`, `fixed`, `random`.
-- `dataset.seq_order=dataset` means “use the token order stored in the `.npy` file”, i.e. the solver-decomposed / dataset order.
-- The canonical board-level SJD Sudoku task is `sjd_sudoku_inpaint`, used by the `sudoku/sjd_sudoku_policy_ablation` and `sudoku/sjd_sudoku_pc` experiments. It uses the Shah-board `81`-cell representation with clue cells clamped throughout sampling.
-- The Sudoku MDLM presets use a non-causal GPT-2-like sequence backbone with `3` layers, `12` heads, model dim `384`, MLP hidden dim `1792`, dropout `0.1`, `time_features=none`, `noise_schedule_type=loglinear`, and `50` reverse diffusion steps.
-- The paper-faithful `mdlm_sudoku_tfw_top_prob_margin` preset matches TrainForWorst Appendix D.2 more closely: `batch_size=128`, `learning_rate=1e-3`, `300` epochs derived from the actual train-set size, `sampler.method=top_prob_margin`, `sampling_grid=loglinear`, and oracle Gumbel noise `0.5`.
+- The canonical board-level SJD Sudoku task is `sjd_sudoku_inpaint`, used by the `sudoku/sjd_sudoku` experiment. It uses the Shah-board `81`-cell representation with clue cells clamped throughout sampling.
+- The canonical MDLM Sudoku route is `experiment=sudoku/mdlm_sudoku` with `eval=sudoku_mdlm`; the canonical SJD route is `experiment=sudoku/sjd_sudoku` with `eval=sudoku_sjd` or `eval=sudoku_sjd_report`.
+- The canonical Sudoku MDLM route uses a non-causal GPT-2-like sequence backbone with `3` layers, `12` heads, model dim `384`, MLP hidden dim `1536`, dropout `0.1`, `time_features=none`, and `50` reverse diffusion steps.
 - Sudoku checkpoint selection now tracks the strict solve-rate metric (`eval/solve_rate`), which requires exact board reconstruction rather than only row/column/box validity. Best-checkpoint updates can refresh on equal metrics so long zero-solve warm-up phases do not pin `best/` to the first evaluation forever.
 - Sudoku evaluation logs reverse-process diagnostics including the mean masked-unknown count per step, mean reveal count per step, mean selected top-probability margin, the final masked-unknown fraction before decode, and which checkpoint source was evaluated.
 - In SJD sampling, `alloc_mode` now defaults to `sample`; `score_scale` controls the reverse score strength, `logit_temperature` only affects jump-time anchor allocation, and the default end cleanup is a forced final plug-in jump on the last positive slice rather than a separate `t=0` classifier projection.
@@ -100,10 +93,10 @@ Sudoku dataset setup:
 ```bash
 scripts/compare_sudoku_mdlm_samplers.sh /absolute/path/to/run best
 ```
-- Tiny overfit bring-up configs:
+- Tiny overfit bring-up via CLI overrides:
 ```bash
-python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_overfit_512 eval=sudoku_mdlm
-python -m sticky.cli.train experiment=sudoku/mdlm_sudoku_overfit_2048 eval=sudoku_mdlm
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku eval=sudoku_mdlm dataset.max_train_examples=512 dataset.max_test_examples=512 dataset.batch_size=64 dataset.eval_batch_size=64 training.num_train_epochs=100 training.eval_every_steps=100 training.checkpoint_every_steps=100 training.log_every_steps=20
+python -m sticky.cli.train experiment=sudoku/mdlm_sudoku eval=sudoku_mdlm dataset.max_train_examples=2048 dataset.max_test_examples=2048 training.num_train_epochs=100 training.eval_every_steps=100 training.checkpoint_every_steps=100 training.log_every_steps=20
 ```
 - Optional manual prefetch:
 ```bash

@@ -138,6 +138,12 @@ def _build_mdm_sudoku_inpaint_task(cfg: DictConfig):
     return SudokuInpaintMDMTask(**_sudoku_board_dataset_kwargs(cfg))
 
 
+def _build_mdlm_sudoku_task(cfg: DictConfig):
+    from sticky.tasks.sudoku_mdlm import SudokuMDLMTask
+
+    return SudokuMDLMTask(**_sudoku_board_dataset_kwargs(cfg))
+
+
 def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     from sticky.tasks.sudoku_inpaint_sjd import SudokuInpaintSJDTask
 
@@ -161,6 +167,7 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "openwebtext_discrete": _build_openwebtext_discrete_task,
     "sjd_cifar10": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_cifar10"),
     "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),
+    "mdlm_sudoku": _build_mdlm_sudoku_task,
     "mdm_sudoku_inpaint": _build_mdm_sudoku_inpaint_task,
     "sjd_sudoku_inpaint": _build_sjd_sudoku_inpaint_task,
 }

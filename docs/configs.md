@@ -17,8 +17,8 @@ Use grouped experiment paths directly, for example:
 - `experiment=cifar10/sjd_cifar10`
 - `experiment=imagenet64/md4_imagenet64`
 - `experiment=imagenet64/sjd_imagenet64`
-- `experiment=sudoku/sjd_sudoku_policy_ablation`
-- `experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin`
+- `experiment=sudoku/mdlm_sudoku`
+- `experiment=sudoku/sjd_sudoku`
 
 Direct model overrides should use grouped paths too, such as
 `model/backbone@...`, `model/anchor@...`, or `model/cadd_latent@...`.

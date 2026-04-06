@@ -29,6 +29,11 @@ class _DummySudokuInpaintMDMTask:
         self.kwargs = kwargs
 
 
+class _DummySudokuMDLMTask:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
 class _DummySudokuInpaintSJDTask:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -159,6 +164,48 @@ def test_build_task_accepts_canonical_sjd_name(monkeypatch):
     assert task.kwargs["hazard"] == {"cfg": {"name": "poly_alpha", "p": 3.0}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["jump"] == {"cfg": {"name": "vp_matched"}, "beta": {"cfg": {"name": "vp_linear"}}}
     assert task.kwargs["state_dep_log_ratio_clip"] == 7.0
+
+
+def test_build_task_accepts_canonical_mdlm_sudoku_name(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "sticky.tasks.sudoku_mdlm",
+        SimpleNamespace(SudokuMDLMTask=_DummySudokuMDLMTask),
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "task": {"name": "mdlm_sudoku"},
+            "dataset": {
+                "data_dir": "/tmp/sudoku",
+                "train_file": "Sudoku-train-data.npy",
+                "test_file": "Sudoku-test-data.npy",
+                "batch_size": 128,
+                "eval_batch_size": 64,
+                "data_shape": [81],
+                "vocab_size": 10,
+                "num_classes": -1,
+                "drop_remainder": True,
+                "shuffle": True,
+                "mmap": True,
+                "max_train_examples": -1,
+                "max_test_examples": -1,
+                "auto_download": False,
+                "download_timeout_sec": 30,
+                "download_retries": 2,
+            },
+        }
+    )
+
+    task = build_task(cfg)
+
+    assert isinstance(task, _DummySudokuMDLMTask)
+    assert task.kwargs["data_dir"] == "/tmp/sudoku"
+    assert task.kwargs["train_file"] == "Sudoku-train-data.npy"
+    assert task.kwargs["batch_size"] == 128
+    assert task.kwargs["eval_batch_size"] == 64
+    assert task.kwargs["data_shape"] == (81,)
+    assert task.kwargs["vocab_size"] == 10
 
 
 def test_build_task_accepts_imagenet64_discrete_name(monkeypatch):

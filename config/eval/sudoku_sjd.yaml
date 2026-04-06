@@ -1,4 +1,4 @@
-# Lightweight multi-sampler board-level Sudoku eval for SJD predictor-corrector.
+# Canonical compact SJD Sudoku eval: policy ordering + predictor/corrector samplers.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -22,12 +22,35 @@ sudoku_log_policy_table: true
 sudoku_prop52_enabled: false
 sudoku_prop52_only: false
 
-sudoku_eval_sjd_samplers:
+sudoku_eval_sjd_runs:
+  linear_survival:
+    kind: policy
+    policy: linear_survival
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00
+  linear_topk_probability:
+    kind: policy
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  plugin_hazard_eta_0p97:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
   predictor_only:
+    kind: sampler
     sampler: sjd_sudoku_predictor
   pc_constant_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_constant
   pc_entropy_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
   pc_margin_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin

@@ -356,10 +356,8 @@ def _extract_sudoku_sampler_summary(
 
     samplers_cfg = eval_cfg.get("sudoku_eval_samplers", None)
     samplers.extend(_collect_from(OmegaConf.to_container(samplers_cfg, resolve=True)))
-    sjd_samplers_cfg = eval_cfg.get("sudoku_eval_sjd_samplers", None)
-    samplers.extend(_collect_from(OmegaConf.to_container(sjd_samplers_cfg, resolve=True)))
-    policies_cfg = eval_cfg.get("sudoku_eval_policies", None)
-    samplers.extend(_collect_from(OmegaConf.to_container(policies_cfg, resolve=True)))
+    sjd_runs_cfg = eval_cfg.get("sudoku_eval_sjd_runs", None)
+    samplers.extend(_collect_from(OmegaConf.to_container(sjd_runs_cfg, resolve=True)))
 
     return {
         "run_all_sampler_modes": True,

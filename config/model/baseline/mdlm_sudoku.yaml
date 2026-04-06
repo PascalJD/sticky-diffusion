@@ -1,5 +1,5 @@
 defaults:
-  - /model/backbone@_here_: gpt2_like_sudoku_6m
+  - /model/backbone@_here_: gpt2_like_sudoku_inpaint_6m
   - _self_
 
 name: mdlm

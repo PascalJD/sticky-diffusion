@@ -1,4 +1,4 @@
-# Sudoku evaluation setup for vanilla MDLM conditional completion.
+# Canonical multi-sampler Sudoku evaluation for MDLM on the 81-cell board task.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -19,8 +19,14 @@ sudoku_progress_every_batches: 20
 # still controls its checkpoint parameter source via offline_eval.use_ema.
 param_source: ema
 
-# Single-sampler fallback defaults.
-sudoku_run_all_sampler_modes: false
-sudoku_eval_samplers: {}
-sudoku_primary_sampler_label: default
+# Same-checkpoint sampler comparison.
+sudoku_run_all_sampler_modes: true
+sudoku_eval_samplers:
+  uniform:
+    sampler: mdlm_sudoku_uniform
+  top_probability:
+    sampler: mdlm_sudoku_top_probability
+  top_prob_margin:
+    sampler: mdlm_sudoku_top_prob_margin
+sudoku_primary_sampler_label: top_prob_margin
 sudoku_num_batches_per_sampler: ${.sudoku_num_batches}

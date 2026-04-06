@@ -1,3 +1,0 @@
-# Legacy flat alias for the canonical grouped Sudoku experiment config.
-defaults:
-  - /experiment/sudoku@_here_: mdlm_sudoku_top_prob_margin

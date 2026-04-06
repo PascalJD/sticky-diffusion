@@ -243,71 +243,28 @@ def _resolve_sudoku_sampler_specs(
     return resolved_specs, primary_label, True
 
 
-def _resolve_sudoku_sjd_policy_specs(
+def _resolve_sudoku_sjd_run_specs(
     *,
     cfg: DictConfig,
     eval_cfg: DictConfig,
     prefix: str,
 ) -> tuple[list[dict[str, Any]], str, bool]:
-    base = {
-        "label": "default",
+    base_policy = {
+        "kind": "policy",
+        "label": "plugin_hazard_eta_0p97",
         "metrics_prefix": str(prefix),
-        "policy": str(eval_cfg.get("sudoku_default_policy", "linear_survival")),
+        "policy": str(eval_cfg.get("sudoku_default_policy", "plugin_hazard")),
         "n_steps": int(cfg.sampler.get("n_steps", 50)),
         "sampling_grid": str(cfg.sampler.get("sampling_grid", "uniform")),
         "stochastic_k": bool(eval_cfg.get("sudoku_stochastic_k", False)),
-        "eta": float(cfg.forward.jump.get("eta", 1.0)),
+        "eta": float(cfg.get("forward", {}).get("jump", {}).get("eta", 0.97)),
         "logit_temperature": float(cfg.sampler.get("logit_temperature", 1.0)),
         "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
         "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
         "init_std": float(cfg.sampler.get("init_std", 1.0)),
     }
-
-    primary_label = str(eval_cfg.get("sudoku_primary_sampler_label", base["label"]))
-    run_all = bool(eval_cfg.get("sudoku_run_all_sampler_modes", False))
-    if not run_all:
-        return [base], primary_label, False
-
-    resolved_specs: list[dict[str, Any]] = []
-    for entry_label, entry in _iter_named_entries(
-        eval_cfg.get("sudoku_eval_policies", None),
-        "sudoku_eval_policies",
-    ):
-        spec = dict(base)
-        sampler_group = entry.get("sampler")
-        if sampler_group:
-            _overlay_sjd_policy_fields(spec, _load_sampler_group_overrides(str(sampler_group)))
-        _overlay_sjd_policy_fields(spec, entry)
-        label = str(
-            entry_label if entry_label is not None else entry.get("label", spec["policy"])
-        ).strip()
-        if not label:
-            raise ValueError("Each sudoku_eval_policies entry requires a non-empty label.")
-        spec["label"] = label
-        spec["metrics_prefix"] = f"{prefix}/{label}"
-        spec["n_steps"] = int(spec["n_steps"])
-        spec["eta"] = float(spec["eta"])
-        spec["logit_temperature"] = float(spec["logit_temperature"])
-        spec["log_ratio_clip"] = float(spec["log_ratio_clip"])
-        spec["init_std"] = float(spec["init_std"])
-        resolved_specs.append(spec)
-
-    if not resolved_specs:
-        return [base], primary_label, False
-
-    labels = {spec["label"] for spec in resolved_specs}
-    if primary_label not in labels:
-        primary_label = resolved_specs[0]["label"]
-    return resolved_specs, primary_label, True
-
-
-def _resolve_sudoku_sjd_sampler_specs(
-    *,
-    cfg: DictConfig,
-    eval_cfg: DictConfig,
-    prefix: str,
-) -> tuple[list[dict[str, Any]], str, bool]:
-    base = {
+    base_sampler = {
+        "kind": "sampler",
         "label": "predictor_only",
         "metrics_prefix": str(prefix),
         "T": float(cfg.sampler.get("T", 1.0)),
@@ -342,28 +299,53 @@ def _resolve_sudoku_sjd_sampler_specs(
         "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
     }
 
-    primary_label = str(eval_cfg.get("sudoku_primary_sampler_label", base["label"]))
+    primary_label = str(
+        eval_cfg.get(
+            "sudoku_primary_sampler_label",
+            base_sampler["label"],
+        )
+    )
     resolved_specs: list[dict[str, Any]] = []
     for entry_label, entry in _iter_named_entries(
-        eval_cfg.get("sudoku_eval_sjd_samplers", None),
-        "sudoku_eval_sjd_samplers",
+        eval_cfg.get("sudoku_eval_sjd_runs", None),
+        "sudoku_eval_sjd_runs",
     ):
-        spec = dict(base)
-        sampler_group = entry.get("sampler")
-        if sampler_group:
-            _overlay_sjd_sampler_fields(spec, _load_sampler_group_overrides(str(sampler_group)))
-        _overlay_sjd_sampler_fields(spec, entry)
+        kind = str(entry.get("kind", "sampler")).strip().lower()
+        if kind == "policy":
+            spec = dict(base_policy)
+            _overlay_sjd_policy_fields(spec, entry)
+            spec["n_steps"] = int(spec["n_steps"])
+            spec["eta"] = float(spec["eta"])
+            spec["logit_temperature"] = float(spec["logit_temperature"])
+            spec["log_ratio_clip"] = float(spec["log_ratio_clip"])
+            spec["init_std"] = float(spec["init_std"])
+        elif kind == "sampler":
+            spec = dict(base_sampler)
+            sampler_group = entry.get("sampler")
+            if sampler_group:
+                _overlay_sjd_sampler_fields(spec, _load_sampler_group_overrides(str(sampler_group)))
+            _overlay_sjd_sampler_fields(spec, entry)
+        else:
+            raise ValueError(
+                "Each sudoku_eval_sjd_runs entry must set kind to 'policy' or 'sampler', "
+                f"got {kind!r}."
+            )
         label = str(
-            entry_label if entry_label is not None else entry.get("label", spec["label"])
+            entry_label
+            if entry_label is not None
+            else entry.get(
+                "label",
+                spec.get("policy", spec["label"]),
+            )
         ).strip()
         if not label:
-            raise ValueError("Each sudoku_eval_sjd_samplers entry requires a non-empty label.")
+            raise ValueError("Each sudoku_eval_sjd_runs entry requires a non-empty label.")
         spec["label"] = label
         spec["metrics_prefix"] = f"{prefix}/{label}"
         resolved_specs.append(spec)
 
     if not resolved_specs:
-        return [base], primary_label, False
+        return [base_sampler], primary_label, False
 
     labels = {spec["label"] for spec in resolved_specs}
     if primary_label not in labels:
@@ -394,6 +376,10 @@ def _accumulate_board_sudoku_diagnostics(
     totals: dict[str, float],
     diag: dict[str, Any],
 ) -> None:
+    if "selected_margin_sum_total" in diag and "selected_top_prob_margin_sum_total" not in diag:
+        totals["selected_top_prob_margin_sum_total"] += float(diag["selected_margin_sum_total"])
+    if "selected_margin_count_total" in diag and "selected_top_prob_margin_count_total" not in diag:
+        totals["selected_top_prob_margin_count_total"] += float(diag["selected_margin_count_total"])
     for key in (
         "example_step_count",
         "masked_unknown_total_across_steps",
@@ -638,11 +624,14 @@ def _make_policy_table(wandb_mod, rows: list[dict[str, Any]]):
     return wandb_mod.Table(columns=columns, data=data)
 
 
-def _make_sampler_profile_table(wandb_mod, rows: list[dict[str, Any]]):
+def _make_sjd_runs_table(wandb_mod, rows: list[dict[str, Any]]):
     if wandb_mod is None or not rows or not hasattr(wandb_mod, "Table"):
         return None
     columns = [
-        "sampler_label",
+        "label",
+        "kind",
+        "policy",
+        "eta",
         "predictor_corrector",
         "gate_type",
         "corrector_substeps",
@@ -659,30 +648,18 @@ def _make_sampler_profile_table(wandb_mod, rows: list[dict[str, Any]]):
     return wandb_mod.Table(columns=columns, data=data)
 
 
-def _sjd_policy_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
-    eta = float(spec.get("eta", 1.0))
-    policy = str(spec["policy"])
-    uses_state = bool(policy in {"linear_topk_probability", "plugin_hazard"})
-    model_implied = bool(policy == "plugin_hazard")
+def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
     prefix = str(spec["metrics_prefix"])
-    return {
-        "policy": spec["label"],
-        "eta": eta,
-        "uses_state": uses_state,
-        "model_implied": model_implied,
-        "masked_cell_acc": metrics.get(f"{prefix}/masked_cell_acc"),
-        "full_cell_acc": metrics.get(f"{prefix}/full_cell_acc"),
-        "board_acc": metrics.get(f"{prefix}/board_acc"),
-        "avg_commits_per_step": metrics.get(f"{prefix}/avg_commits_per_step"),
-        "n_steps": metrics.get(f"{prefix}/n_steps"),
-    }
-
-
-def _sjd_sampler_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
-    prefix = str(spec["metrics_prefix"])
-    return {
-        "sampler_label": spec["label"],
-        "predictor_corrector": bool(spec.get("pc_enabled", False) and int(spec.get("corrector_substeps", 0)) > 0),
+    row = {
+        "label": spec["label"],
+        "kind": spec.get("kind", "sampler"),
+        "policy": spec.get("policy"),
+        "eta": spec.get("eta"),
+        "predictor_corrector": bool(
+            spec.get("kind") == "sampler"
+            and spec.get("pc_enabled", False)
+            and int(spec.get("corrector_substeps", 0)) > 0
+        ),
         "gate_type": str(spec.get("pc_gate", "constant_one")),
         "corrector_substeps": int(spec.get("corrector_substeps", 0)),
         "corrector_strength": float(spec.get("corrector_step_scale", 0.0)),
@@ -694,6 +671,14 @@ def _sjd_sampler_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[st
         "clue_consistency_fraction": metrics.get(f"{prefix}/clue_consistency_fraction"),
         "wallclock_sec_per_board": metrics.get(f"{prefix}/sampling/wallclock_sec_per_board"),
     }
+    if spec.get("kind") == "policy":
+        row["predictor_corrector"] = False
+        row["gate_type"] = None
+        row["corrector_substeps"] = 0
+        row["corrector_strength"] = 0.0
+        row["nfe_total"] = None
+        row["wallclock_sec_per_board"] = None
+    return row
 
 
 def build_sudoku_eval_logger(
@@ -712,12 +697,14 @@ def build_sudoku_eval_logger(
     if task is None or model is None:
         raise ValueError("Sudoku evaluator requires `task` and `model`.")
     if (model_name, task_name) not in {
+        ("mdlm", "mdlm_sudoku"),
         ("mdm", "mdm_sudoku_inpaint"),
         ("sjd", "sjd_sudoku_inpaint"),
     }:
         raise ValueError(
             "Sudoku evaluator only supports board-level Sudoku inpaint tasks: "
-            "('mdm', 'mdm_sudoku_inpaint') or ('sjd', 'sjd_sudoku_inpaint')."
+            "('mdlm', 'mdlm_sudoku'), ('mdm', 'mdm_sudoku_inpaint'), "
+            "or ('sjd', 'sjd_sudoku_inpaint')."
         )
 
     prefix = str(eval_cfg.get("prefix", "eval"))
@@ -736,7 +723,7 @@ def build_sudoku_eval_logger(
 
     use_sjd_sampler_profiles = False
     table_builder = _make_policy_table
-    if model_name == "mdm":
+    if model_name in {"mdm", "mdlm"}:
         sampler_specs, primary_label, run_all_modes = _resolve_sudoku_sampler_specs(
             cfg=cfg,
             eval_cfg=eval_cfg,
@@ -746,7 +733,10 @@ def build_sudoku_eval_logger(
             for spec in sampler_specs:
                 spec["n_steps"] = int(sample_timesteps_override)
 
-        from sticky.models.baselines.mdm.board_sampling import conditional_generate
+        if model_name == "mdm":
+            from sticky.models.baselines.mdm.board_sampling import conditional_generate
+        else:
+            from sticky.models.baselines.mdlm.sudoku_sampling import conditional_generate
 
         sampler_eval_fns = {}
         for sampler_spec in sampler_specs:
@@ -769,122 +759,106 @@ def build_sudoku_eval_logger(
             sampler_eval_fns[sampler_spec["label"]] = _sample_conditional
         policy_row_fn = None
     else:
-        use_sjd_sampler_profiles = eval_cfg.get("sudoku_eval_sjd_samplers", None) is not None
+        from sticky.models.sjd.sampler import SamplerConfig
+        from sticky.models.sjd import board_sampling as sjd_board_sampling
+        from sticky.models.sjd import sampling as sjd_sampling
+
+        sampler_specs, primary_label, run_all_modes = _resolve_sudoku_sjd_run_specs(
+            cfg=cfg,
+            eval_cfg=eval_cfg,
+            prefix=prefix,
+        )
+        use_sjd_sampler_profiles = any(spec["kind"] == "sampler" for spec in sampler_specs)
+        if sample_timesteps_override is not None:
+            for spec in sampler_specs:
+                spec["n_steps"] = int(sample_timesteps_override)
+        policy_row_fn = _sjd_run_row
+        table_builder = _make_sjd_runs_table
         sampler_eval_fns = {}
-        if use_sjd_sampler_profiles:
-            from sticky.models.sjd.sampler import SamplerConfig
-            from sticky.models.sjd import sampling as sjd_sampling
 
-            sampler_specs, primary_label, run_all_modes = _resolve_sudoku_sjd_sampler_specs(
-                cfg=cfg,
-                eval_cfg=eval_cfg,
-                prefix=prefix,
+        def _build_sjd_sampler_eval_fn(sampler_spec: dict[str, Any]):
+            sampler_cfg = SamplerConfig(
+                T=float(sampler_spec["T"]),
+                n_steps=int(sampler_spec["n_steps"]),
+                sampling_grid=str(sampler_spec["sampling_grid"]),
+                score_scale=float(sampler_spec["score_scale"]),
+                logit_temperature=float(sampler_spec["logit_temperature"]),
+                categorical_sampling_policy=str(sampler_spec["categorical_sampling_policy"]),
+                hazard_mode=str(sampler_spec["hazard_mode"]),
+                alloc_mode=str(sampler_spec["alloc_mode"]),
+                intensity_mode=str(sampler_spec["intensity_mode"]),
+                log_ratio_clip=float(sampler_spec["log_ratio_clip"]),
+                intensity_chunk_size=int(sampler_spec["intensity_chunk_size"]),
+                init_std=float(sampler_spec["init_std"]),
+                force_classify_at_end=bool(sampler_spec["force_classify_at_end"]),
+                refresh_logits_after_em_step=bool(sampler_spec["refresh_logits_after_em_step"]),
+                pc_enabled=bool(sampler_spec["pc_enabled"]),
+                corrector_substeps=int(sampler_spec["corrector_substeps"]),
+                corrector_step_scale=float(sampler_spec["corrector_step_scale"]),
+                pc_gate=str(sampler_spec["pc_gate"]),
+                pc_clamp_known=bool(sampler_spec["pc_clamp_known"]),
+                pc_refresh_logits_after_langevin=bool(
+                    sampler_spec["pc_refresh_logits_after_langevin"]
+                ),
+                pc_allow_unstick_unknown_only=bool(
+                    sampler_spec["pc_allow_unstick_unknown_only"]
+                ),
+                metrics_count_nfe=bool(sampler_spec["metrics_count_nfe"]),
             )
-            if sample_timesteps_override is not None:
-                for spec in sampler_specs:
-                    spec["n_steps"] = int(sample_timesteps_override)
-            policy_row_fn = _sjd_sampler_row
-            table_builder = _make_sampler_profile_table
 
-            def _build_sjd_sampler_eval_fn(sampler_spec: dict[str, Any]):
-                sampler_cfg = SamplerConfig(
-                    T=float(sampler_spec["T"]),
-                    n_steps=int(sampler_spec["n_steps"]),
-                    sampling_grid=str(sampler_spec["sampling_grid"]),
-                    score_scale=float(sampler_spec["score_scale"]),
-                    logit_temperature=float(sampler_spec["logit_temperature"]),
-                    categorical_sampling_policy=str(sampler_spec["categorical_sampling_policy"]),
-                    hazard_mode=str(sampler_spec["hazard_mode"]),
-                    alloc_mode=str(sampler_spec["alloc_mode"]),
-                    intensity_mode=str(sampler_spec["intensity_mode"]),
-                    log_ratio_clip=float(sampler_spec["log_ratio_clip"]),
-                    intensity_chunk_size=int(sampler_spec["intensity_chunk_size"]),
-                    init_std=float(sampler_spec["init_std"]),
-                    force_classify_at_end=bool(sampler_spec["force_classify_at_end"]),
-                    refresh_logits_after_em_step=bool(sampler_spec["refresh_logits_after_em_step"]),
-                    pc_enabled=bool(sampler_spec["pc_enabled"]),
-                    corrector_substeps=int(sampler_spec["corrector_substeps"]),
-                    corrector_step_scale=float(sampler_spec["corrector_step_scale"]),
-                    pc_gate=str(sampler_spec["pc_gate"]),
-                    pc_clamp_known=bool(sampler_spec["pc_clamp_known"]),
-                    pc_refresh_logits_after_langevin=bool(
-                        sampler_spec["pc_refresh_logits_after_langevin"]
-                    ),
-                    pc_allow_unstick_unknown_only=bool(
-                        sampler_spec["pc_allow_unstick_unknown_only"]
-                    ),
-                    metrics_count_nfe=bool(sampler_spec["metrics_count_nfe"]),
+            @jax.jit
+            def _sample_conditional(params, rng, known_tokens, known_mask):
+                a_table = model.apply({"params": params}, method=model.anchor_table)
+                anchors = AnchorTable(table_float=a_table)
+                return sjd_sampling.conditional_generate_board(
+                    rng=rng,
+                    params=params,
+                    model=model,
+                    anchors=anchors,
+                    beta=task.beta,
+                    hazard=task.hazard,
+                    jump=task.jump,
+                    known_tokens=known_tokens,
+                    known_token_mask=known_mask,
+                    cfg=sampler_cfg,
                 )
 
-                @jax.jit
-                def _sample_conditional(params, rng, known_tokens, known_mask):
-                    a_table = model.apply({"params": params}, method=model.anchor_table)
-                    anchors = AnchorTable(table_float=a_table)
-                    return sjd_sampling.conditional_generate_board(
-                        rng=rng,
-                        params=params,
-                        model=model,
-                        anchors=anchors,
-                        beta=task.beta,
-                        hazard=task.hazard,
-                        jump=task.jump,
-                        known_tokens=known_tokens,
-                        known_token_mask=known_mask,
-                        cfg=sampler_cfg,
-                    )
+            return _sample_conditional
 
-                return _sample_conditional
-
-            for sampler_spec in sampler_specs:
-                sampler_eval_fns[sampler_spec["label"]] = _build_sjd_sampler_eval_fn(
-                    sampler_spec
+        def _build_sjd_policy_eval_fn(policy_spec: dict[str, Any]):
+            @jax.jit
+            def _sample_conditional(params, rng, known_tokens, known_mask):
+                a_table = model.apply({"params": params}, method=model.anchor_table)
+                anchors = AnchorTable(table_float=a_table)
+                return sjd_board_sampling.conditional_generate(
+                    rng,
+                    params=params,
+                    model=model,
+                    anchors=anchors,
+                    beta=task.beta,
+                    hazard=task.hazard,
+                    jump=task.jump,
+                    known_tokens=known_tokens,
+                    known_token_mask=known_mask,
+                    n_steps=int(policy_spec["n_steps"]),
+                    policy=str(policy_spec["policy"]),
+                    sampling_grid=str(policy_spec["sampling_grid"]),
+                    logit_temperature=float(policy_spec["logit_temperature"]),
+                    intensity_mode=str(policy_spec["intensity_mode"]),
+                    log_ratio_clip=float(policy_spec["log_ratio_clip"]),
+                    init_std=float(policy_spec["init_std"]),
+                    stochastic_k=bool(policy_spec.get("stochastic_k", False)),
+                    eta=float(policy_spec["eta"]),
+                    return_diagnostics=True,
                 )
-        else:
-            policy_specs, primary_label, run_all_modes = _resolve_sudoku_sjd_policy_specs(
-                cfg=cfg,
-                eval_cfg=eval_cfg,
-                prefix=prefix,
-            )
-            if sample_timesteps_override is not None:
-                for spec in policy_specs:
-                    spec["n_steps"] = int(sample_timesteps_override)
 
-            from sticky.models.sjd import board_sampling as sjd_board_sampling
+            return _sample_conditional
 
-            sampler_specs = policy_specs
-            policy_row_fn = _sjd_policy_row
-
-            def _build_sjd_eval_fn(policy_spec: dict[str, Any]):
-                @jax.jit
-                def _sample_conditional(params, rng, known_tokens, known_mask):
-                    a_table = model.apply({"params": params}, method=model.anchor_table)
-                    anchors = AnchorTable(table_float=a_table)
-                    return sjd_board_sampling.conditional_generate(
-                        rng,
-                        params=params,
-                        model=model,
-                        anchors=anchors,
-                        beta=task.beta,
-                        hazard=task.hazard,
-                        jump=task.jump,
-                        known_tokens=known_tokens,
-                        known_token_mask=known_mask,
-                        n_steps=int(policy_spec["n_steps"]),
-                        policy=str(policy_spec["policy"]),
-                        sampling_grid=str(policy_spec["sampling_grid"]),
-                        logit_temperature=float(policy_spec["logit_temperature"]),
-                        intensity_mode=str(policy_spec["intensity_mode"]),
-                        log_ratio_clip=float(policy_spec["log_ratio_clip"]),
-                        init_std=float(policy_spec["init_std"]),
-                        stochastic_k=bool(policy_spec.get("stochastic_k", False)),
-                        eta=float(policy_spec["eta"]),
-                        return_diagnostics=True,
-                    )
-
-                return _sample_conditional
-
-            for policy_spec in sampler_specs:
-                sampler_eval_fns[policy_spec["label"]] = _build_sjd_eval_fn(policy_spec)
+        for spec in sampler_specs:
+            if spec["kind"] == "sampler":
+                sampler_eval_fns[spec["label"]] = _build_sjd_sampler_eval_fn(spec)
+            else:
+                sampler_eval_fns[spec["label"]] = _build_sjd_policy_eval_fn(spec)
 
     def _run_eval(
         step_i: int,
@@ -942,7 +916,7 @@ def build_sudoku_eval_logger(
             diag = jax.device_get(diag)
             _accumulate_board_sudoku_diagnostics(totals, diag)
             batch_examples = int(solution_board.shape[0])
-            if use_sjd_sampler_profiles:
+            if sampler_spec.get("kind") == "sampler":
                 _accumulate_sjd_sampler_diagnostics(
                     totals,
                     diag,
@@ -975,7 +949,7 @@ def build_sudoku_eval_logger(
             metric_prefix=str(sampler_spec["metrics_prefix"]),
             n_steps=int(sampler_spec["n_steps"]),
             checkpoint_source=checkpoint_source,
-            include_sjd_sampler_metrics=bool(use_sjd_sampler_profiles),
+            include_sjd_sampler_metrics=bool(sampler_spec.get("kind") == "sampler"),
         )
         row = policy_row_fn(sampler_spec, metrics) if policy_row_fn is not None else None
         return metrics, row
@@ -1033,23 +1007,25 @@ def build_sudoku_eval_logger(
         payload: dict[str, Any] = {}
         if metrics:
             payload.update(metrics)
-        if model_name == "sjd" and prop52_enabled and not use_sjd_sampler_profiles:
-            prop52_result = run_sudoku_prop52_diagnostics(
-                cfg=cfg,
-                eval_cfg=eval_cfg,
-                task=task,
-                model=model,
-                params=params_for_sampling,
-                step_i=step_i,
-                policy_specs=sampler_specs,
-                wandb_mod=wandb_mod,
-            )
-            metrics.update(prop52_result.metrics)
-            payload.update(prop52_result.metrics)
-            payload.update(prop52_result.wandb_payload)
-            maybe_eval.sudoku_prop52_rows_by_eta = prop52_result.rows_by_eta
-            maybe_eval.sudoku_prop52_summary_rows = prop52_result.eta_summary_rows
-            maybe_eval.sudoku_prop52_collapse_summary = prop52_result.collapse_summary
+        if model_name == "sjd" and prop52_enabled:
+            prop52_policy_specs = [spec for spec in sampler_specs if spec.get("kind") == "policy"]
+            if prop52_policy_specs:
+                prop52_result = run_sudoku_prop52_diagnostics(
+                    cfg=cfg,
+                    eval_cfg=eval_cfg,
+                    task=task,
+                    model=model,
+                    params=params_for_sampling,
+                    step_i=step_i,
+                    policy_specs=prop52_policy_specs,
+                    wandb_mod=wandb_mod,
+                )
+                metrics.update(prop52_result.metrics)
+                payload.update(prop52_result.metrics)
+                payload.update(prop52_result.wandb_payload)
+                maybe_eval.sudoku_prop52_rows_by_eta = prop52_result.rows_by_eta
+                maybe_eval.sudoku_prop52_summary_rows = prop52_result.eta_summary_rows
+                maybe_eval.sudoku_prop52_collapse_summary = prop52_result.collapse_summary
 
         if wandb_mod is not None and payload:
             if log_policy_table and policy_rows:

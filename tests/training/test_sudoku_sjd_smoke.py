@@ -42,8 +42,8 @@ def test_sjd_sudoku_single_train_step_and_eval_smoke(monkeypatch):
     cfg = _compose(
         config_name="config.yaml",
         overrides=[
-            "experiment=sudoku/sjd_sudoku_policy_ablation",
-            "eval=sudoku_sjd_policy_ablation",
+            "experiment=sudoku/sjd_sudoku",
+            "eval=sudoku_sjd",
             "experiment.dataset.batch_size=1",
             "experiment.dataset.eval_batch_size=1",
             "experiment.training.num_train_epochs=1",
@@ -57,14 +57,16 @@ def test_sjd_sudoku_single_train_step_and_eval_smoke(monkeypatch):
             "eval.sudoku_prop52_enabled=false",
         ],
     )
-    cfg.eval.sudoku_eval_policies = {
+    cfg.eval.sudoku_eval_sjd_runs = {
         "linear_survival": {
+            "kind": "policy",
             "policy": "linear_survival",
             "n_steps": 2,
             "sampling_grid": "uniform",
             "eta": 1.0,
         },
         "plugin_hazard_eta_0p97": {
+            "kind": "policy",
             "policy": "plugin_hazard",
             "n_steps": 2,
             "sampling_grid": "uniform",
@@ -129,8 +131,8 @@ def test_sjd_sudoku_pc_single_train_step_and_eval_smoke(monkeypatch):
     cfg = _compose(
         config_name="config.yaml",
         overrides=[
-            "experiment=sudoku/sjd_sudoku_pc",
-            "eval=sudoku_sjd_pc",
+            "experiment=sudoku/sjd_sudoku",
+            "eval=sudoku_sjd",
             "experiment.dataset.batch_size=1",
             "experiment.dataset.eval_batch_size=1",
             "experiment.training.num_train_epochs=1",
@@ -142,6 +144,10 @@ def test_sjd_sudoku_pc_single_train_step_and_eval_smoke(monkeypatch):
             "eval.sudoku_num_batches_per_sampler=1",
         ],
     )
+    cfg.eval.sudoku_eval_sjd_runs = {
+        "predictor_only": {"kind": "sampler", "sampler": "sjd_sudoku_predictor"},
+        "pc_margin_l1_s0p10": {"kind": "sampler", "sampler": "sjd_sudoku_pc_margin"},
+    }
 
     task = build_task(cfg.experiment)
     model = build_model(

@@ -90,6 +90,10 @@ class _FakeBoardModel:
     sampler: str = "top_prob_margin"
     sampling_grid: str = "loglinear"
     categorical_sampling_policy: str = "exact"
+    revealed_token_sample_mode: str = "sample"
+    cache_predictions: bool = False
+    oracle_noise_type: str = "none"
+    oracle_noise_scale: float = 0.0
     timesteps: int = 4
 
 
@@ -105,6 +109,21 @@ def _fake_board_task():
         download_timeout_sec=1,
         download_retries=0,
         spec=SimpleNamespace(name="mdm_sudoku_inpaint", data_shape=(81,)),
+    )
+
+
+def _fake_mdlm_task():
+    return SimpleNamespace(
+        eval_batch_size=1,
+        data_dir=None,
+        train_file=None,
+        test_file=None,
+        mmap=False,
+        max_test_examples=1,
+        auto_download=False,
+        download_timeout_sec=1,
+        download_retries=0,
+        spec=SimpleNamespace(name="mdlm_sudoku", data_shape=(81,)),
     )
 
 
@@ -241,6 +260,115 @@ def test_board_eval_logger_runs_all_sampler_modes(monkeypatch):
         ("top_prob_margin", 4),
     ]
     assert metrics["eval/vanilla/solve_rate"] == 1.0
+    assert metrics["eval/top_probability/board_acc_exact"] == 1.0
+    assert metrics["eval/top_prob_margin/cell_acc_unknown"] == 1.0
+
+
+def test_mdlm_board_eval_logger_runs_all_sampler_modes(monkeypatch):
+    solution = _solution_board()
+    clue_board, clue_mask = _clue_inputs()
+    batch = {
+        "solution_board": solution,
+        "clue_board": clue_board,
+        "clue_mask": clue_mask,
+    }
+
+    monkeypatch.setattr(
+        sudoku_eval_mod,
+        "make_sudoku_board_iterator",
+        lambda **kwargs: iter([batch]),
+    )
+
+    calls = []
+
+    def _fake_conditional_generate(
+        rng,
+        train_state,
+        *,
+        model,
+        known_tokens,
+        known_token_mask,
+        timesteps=None,
+        conditioning=None,
+        use_ema=True,
+        return_diagnostics=False,
+    ):
+        del rng, train_state, known_tokens, known_token_mask, conditioning, use_ema
+        calls.append((model.sampler, timesteps))
+        diag = {
+            "example_step_count": jnp.asarray(1.0, dtype=jnp.float32),
+            "masked_unknown_total_across_steps": jnp.asarray(2.0, dtype=jnp.float32),
+            "selected_count_total_across_steps": jnp.asarray(1.0, dtype=jnp.float32),
+            "selected_margin_sum_total": jnp.asarray(0.4, dtype=jnp.float32),
+            "selected_margin_count_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "unknown_token_total": jnp.asarray(float((~clue_mask).sum()), dtype=jnp.float32),
+            "final_masked_unknown_total": jnp.asarray(0.0, dtype=jnp.float32),
+        }
+        output = jnp.asarray(solution, dtype=jnp.int32)
+        return (output, diag) if return_diagnostics else output
+
+    monkeypatch.setattr(
+        __import__("sticky.models.baselines.mdlm.sudoku_sampling", fromlist=["conditional_generate"]),
+        "conditional_generate",
+        _fake_conditional_generate,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "mdlm", "timesteps": 4},
+            "sampler": {
+                "method": "top_prob_margin",
+                "n_steps": 4,
+                "sampling_grid": "loglinear",
+                "categorical_sampling_policy": "exact",
+                "revealed_token_sample_mode": "sample",
+                "cache_predictions": False,
+                "oracle_noise_type": "none",
+                "oracle_noise_scale": 0.0,
+            },
+            "training": {"seed": 0},
+        }
+    )
+    eval_cfg = OmegaConf.create(
+        {
+            "mode": "sudoku",
+            "prefix": "eval",
+            "verbose": False,
+            "sudoku_every": 1,
+            "sudoku_num_batches": 1,
+            "sudoku_num_batches_force": -1,
+            "sudoku_num_batches_per_sampler": 1,
+            "sudoku_eval_seed_offset": 1776,
+            "sudoku_sample_seed_offset": 314159,
+            "sudoku_eval_fold_in_step": False,
+            "sudoku_progress_every_batches": 20,
+            "sudoku_run_all_sampler_modes": True,
+            "sudoku_primary_sampler_label": "top_prob_margin",
+            "sudoku_eval_samplers": {
+                "uniform": {"sampler": "mdlm_sudoku_uniform"},
+                "top_probability": {"sampler": "mdlm_sudoku_top_probability"},
+                "top_prob_margin": {"sampler": "mdlm_sudoku_top_prob_margin"},
+            },
+        }
+    )
+
+    maybe_eval = build_sudoku_eval_logger(
+        cfg=cfg,
+        eval_cfg=eval_cfg,
+        task=_fake_mdlm_task(),
+        model=_FakeBoardModel(),
+        wandb_mod=None,
+        eval_every=1,
+        log_at_step_zero=False,
+    )
+    metrics = maybe_eval(10, params_for_sampling={})
+
+    assert calls == [
+        ("uniform", 4),
+        ("top_probability", 4),
+        ("top_prob_margin", 4),
+    ]
+    assert metrics["eval/uniform/solve_rate"] == 1.0
     assert metrics["eval/top_probability/board_acc_exact"] == 1.0
     assert metrics["eval/top_prob_margin/cell_acc_unknown"] == 1.0
 
@@ -382,10 +510,10 @@ def test_sjd_board_eval_logger_runs_all_policies_and_logs_table(monkeypatch):
             "sudoku_primary_sampler_label": "plugin_hazard_eta_0p97",
             "sudoku_log_policy_table": True,
             "sudoku_prop52_enabled": True,
-            "sudoku_eval_policies": {
-                "linear_survival": {"policy": "linear_survival", "n_steps": 4, "sampling_grid": "uniform", "eta": 1.0},
-                "plugin_hazard_eta_0p97": {"policy": "plugin_hazard", "n_steps": 4, "eta": 0.97},
-                "plugin_hazard_eta_1p00": {"policy": "plugin_hazard", "n_steps": 4, "eta": 1.0},
+            "sudoku_eval_sjd_runs": {
+                "linear_survival": {"kind": "policy", "policy": "linear_survival", "n_steps": 4, "sampling_grid": "uniform", "eta": 1.0},
+                "plugin_hazard_eta_0p97": {"kind": "policy", "policy": "plugin_hazard", "n_steps": 4, "eta": 0.97},
+                "plugin_hazard_eta_1p00": {"kind": "policy", "policy": "plugin_hazard", "n_steps": 4, "eta": 1.0},
             },
         }
     )
@@ -414,22 +542,27 @@ def test_sjd_board_eval_logger_runs_all_policies_and_logs_table(monkeypatch):
     assert "diag/eta_0p50/delta_mse_vs_t" in logged["payload"]
     table = logged["payload"]["eval/policy_table"]
     assert table.columns == [
+        "label",
+        "kind",
         "policy",
         "eta",
-        "uses_state",
-        "model_implied",
-        "masked_cell_acc",
-        "full_cell_acc",
-        "board_acc",
-        "avg_commits_per_step",
+        "predictor_corrector",
+        "gate_type",
+        "corrector_substeps",
+        "corrector_strength",
         "n_steps",
+        "nfe_total",
+        "solve_rate",
+        "cell_acc_unknown",
+        "board_acc_exact",
+        "clue_consistency_fraction",
+        "wallclock_sec_per_board",
     ]
     assert len(table.data) == 3
-    row_by_policy = {row[0]: row for row in table.data}
-    assert row_by_policy["linear_survival"][2] == False
-    assert row_by_policy["linear_survival"][3] == False
-    assert row_by_policy["plugin_hazard_eta_1p00"][2] == True
-    assert row_by_policy["plugin_hazard_eta_1p00"][3] == True
+    row_by_label = {row[0]: row for row in table.data}
+    assert row_by_label["linear_survival"][1] == "policy"
+    assert row_by_label["linear_survival"][2] == "linear_survival"
+    assert row_by_label["plugin_hazard_eta_1p00"][2] == "plugin_hazard"
     assert maybe_eval.sudoku_prop52_collapse_summary == {"v_state_collapsed": True}
 
 
@@ -544,10 +677,10 @@ def test_sjd_sampler_profile_eval_logger_runs_pc_profiles_and_logs_table(monkeyp
             "sudoku_primary_sampler_label": "pc_margin_l1_s0p10",
             "sudoku_log_policy_table": True,
             "sudoku_prop52_enabled": False,
-            "sudoku_eval_sjd_samplers": {
-                "predictor_only": {"sampler": "sjd_sudoku_predictor"},
-                "pc_constant_l1_s0p10": {"sampler": "sjd_sudoku_pc_constant"},
-                "pc_margin_l1_s0p10": {"sampler": "sjd_sudoku_pc_margin"},
+            "sudoku_eval_sjd_runs": {
+                "predictor_only": {"kind": "sampler", "sampler": "sjd_sudoku_predictor"},
+                "pc_constant_l1_s0p10": {"kind": "sampler", "sampler": "sjd_sudoku_pc_constant"},
+                "pc_margin_l1_s0p10": {"kind": "sampler", "sampler": "sjd_sudoku_pc_margin"},
             },
         }
     )
@@ -574,7 +707,10 @@ def test_sjd_sampler_profile_eval_logger_runs_pc_profiles_and_logs_table(monkeyp
     assert "eval/policy_table" in logged["payload"]
     table = logged["payload"]["eval/policy_table"]
     assert table.columns == [
-        "sampler_label",
+        "label",
+        "kind",
+        "policy",
+        "eta",
         "predictor_corrector",
         "gate_type",
         "corrector_substeps",

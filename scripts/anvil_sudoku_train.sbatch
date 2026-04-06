@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-EXPERIMENT="${EXPERIMENT:-sudoku/mdlm_sudoku_tfw_top_prob_margin}"
+EXPERIMENT="${EXPERIMENT:-sudoku/mdlm_sudoku}"
 EVAL_CONFIG="${EVAL_CONFIG:-sudoku_mdlm}"
 WANDB_ENABLED="${WANDB_ENABLED:-true}"
 REPO_ROOT="${REPO_ROOT:-$SLURM_SUBMIT_DIR}"

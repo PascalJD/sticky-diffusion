@@ -1,4 +1,4 @@
-# Full offline predictor-corrector sweep for board-level SJD Sudoku.
+# Canonical exhaustive SJD Sudoku report: policy ablations + PC sweep.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -19,107 +19,193 @@ sudoku_run_all_sampler_modes: true
 sudoku_primary_sampler_label: pc_margin_l1_s0p10
 sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
 sudoku_log_policy_table: true
-sudoku_prop52_enabled: false
+sudoku_prop52_enabled: true
 sudoku_prop52_only: false
+sudoku_prop52_num_bins: 20
+sudoku_prop52_num_batches: 8
+sudoku_prop52_time_eps: 1.0e-4
+sudoku_prop52_seed_offset: 271828
+sudoku_prop52_fold_in_step: false
 
-sudoku_eval_sjd_samplers:
+sudoku_eval_sjd_runs:
+  linear_survival:
+    kind: policy
+    policy: linear_survival
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00
+  cosine_survival:
+    kind: policy
+    policy: cosine_survival
+    n_steps: 50
+    sampling_grid: cosine
+    eta: 1.00
+  linear_topk_probability:
+    kind: policy
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  plugin_hazard_eta_0p50:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.50
+  plugin_hazard_eta_0p75:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.75
+  plugin_hazard_eta_0p80:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.80
+  plugin_hazard_eta_0p90:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.90
+  plugin_hazard_eta_0p97:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
+  plugin_hazard_eta_1p00:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00
   predictor_only:
+    kind: sampler
     sampler: sjd_sudoku_predictor
   pc_constant_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_constant
   pc_entropy_l1_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 1
     corrector_step_scale: 0.05
   pc_entropy_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 1
     corrector_step_scale: 0.10
   pc_entropy_l1_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 1
     corrector_step_scale: 0.20
   pc_entropy_l1_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 1
     corrector_step_scale: 0.40
   pc_entropy_l2_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 2
     corrector_step_scale: 0.05
   pc_entropy_l2_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 2
     corrector_step_scale: 0.10
   pc_entropy_l2_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 2
     corrector_step_scale: 0.20
   pc_entropy_l2_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 2
     corrector_step_scale: 0.40
   pc_entropy_l4_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 4
     corrector_step_scale: 0.05
   pc_entropy_l4_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 4
     corrector_step_scale: 0.10
   pc_entropy_l4_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 4
     corrector_step_scale: 0.20
   pc_entropy_l4_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_entropy
     corrector_substeps: 4
     corrector_step_scale: 0.40
   pc_margin_l1_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 1
     corrector_step_scale: 0.05
   pc_margin_l1_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 1
     corrector_step_scale: 0.10
   pc_margin_l1_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 1
     corrector_step_scale: 0.20
   pc_margin_l1_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 1
     corrector_step_scale: 0.40
   pc_margin_l2_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 2
     corrector_step_scale: 0.05
   pc_margin_l2_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 2
     corrector_step_scale: 0.10
   pc_margin_l2_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 2
     corrector_step_scale: 0.20
   pc_margin_l2_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 2
     corrector_step_scale: 0.40
   pc_margin_l4_s0p05:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 4
     corrector_step_scale: 0.05
   pc_margin_l4_s0p10:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 4
     corrector_step_scale: 0.10
   pc_margin_l4_s0p20:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 4
     corrector_step_scale: 0.20
   pc_margin_l4_s0p40:
+    kind: sampler
     sampler: sjd_sudoku_pc_margin
     corrector_substeps: 4
     corrector_step_scale: 0.40

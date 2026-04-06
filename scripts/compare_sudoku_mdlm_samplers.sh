@@ -16,7 +16,7 @@ run_eval() {
   local name="$1"
   shift
   python -m sticky.cli.eval_checkpoint \
-    experiment=sudoku/mdlm_sudoku_tfw_top_prob_margin \
+    experiment=sudoku/mdlm_sudoku \
     eval=sudoku_mdlm \
     offline_eval.run_dir="${RUN_DIR}" \
     offline_eval.use_run_config=false \
@@ -35,6 +35,9 @@ run_eval "top_prob_margin" \
   sampler=mdlm_sudoku_top_prob_margin
 
 run_eval "top_prob_margin_gumbel_0p5" \
-  sampler=mdlm_sudoku_tfw_top_prob_margin
+  sampler=mdlm_sudoku_top_prob_margin \
+  experiment.sampler.categorical_sampling_policy=exact \
+  experiment.sampler.oracle_noise_type=gumbel \
+  experiment.sampler.oracle_noise_scale=0.5
 
 echo "Wrote sampler comparison metrics to ${OUT_DIR}" >&2

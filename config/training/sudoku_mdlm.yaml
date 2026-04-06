@@ -4,7 +4,9 @@ defaults:
 
 name: sudoku_mdlm
 
-num_train_steps: 3500000
+# Canonical board-level MDLM Sudoku training defaults.
+num_train_steps: 0
+num_train_epochs: 300
 best_update_on_equal: true
 
 log_every_steps: 500
@@ -14,7 +16,7 @@ checkpoint_every_steps: 10000
 checkpoint_keep: 5
 log_images_every_steps: 0
 
-best_checkpoint_metric: eval/solve_rate
+best_checkpoint_metric: eval/top_prob_margin/solve_rate
 best_checkpoint_mode: max
 
 sample_timesteps: ${..sampler.n_steps}

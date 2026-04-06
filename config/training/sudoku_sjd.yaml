@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-name: sudoku_sjd_policy_ablation
+name: sudoku_sjd
 
 num_train_steps: 0
 num_train_epochs: 300
@@ -15,7 +15,7 @@ checkpoint_every_steps: 10000
 checkpoint_keep: 5
 log_images_every_steps: 0
 
-best_checkpoint_metric: eval/plugin_hazard_eta_0p97/solve_rate
+best_checkpoint_metric: eval/pc_margin_l1_s0p10/solve_rate
 best_checkpoint_mode: max
 
 sample_timesteps: ${..sampler.n_steps}

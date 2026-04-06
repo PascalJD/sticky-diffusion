@@ -1,10 +1,10 @@
-# Board-level SJD Sudoku decoding-policy ablation on Shah-board inpainting.
+# Canonical board-level SJD Sudoku experiment with eval-driven sampler comparisons.
 defaults:
   - /dataset: sudoku_shah_board
   - /model/sjd@model: sjd_sudoku_inpaint
   - /optim: adamw_sudoku_tfw
   - /sampler: sjd_sudoku
-  - /training: sudoku_sjd_policy_ablation
+  - /training: sudoku_sjd
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
   - /forward/jump: vp_matched
