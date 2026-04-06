@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import numpy as np
 import pytest
@@ -725,3 +726,228 @@ def test_sjd_sampler_profile_eval_logger_runs_pc_profiles_and_logs_table(monkeyp
     ]
     assert len(table.data) == 3
     assert metrics["eval/pc_margin_l1_s0p10/sampling/wallclock_sec_per_board"] >= 0.0
+
+
+def test_sjd_eval_logger_writes_deduped_progress_csv(monkeypatch, tmp_path):
+    solution = _solution_board()
+    clue_board, clue_mask = _clue_inputs()
+    batch = {
+        "solution_board": solution,
+        "clue_board": clue_board,
+        "clue_mask": clue_mask,
+        "image": solution,
+    }
+
+    monkeypatch.setattr(
+        sudoku_eval_mod,
+        "make_sudoku_board_iterator",
+        lambda **kwargs: iter([batch]),
+    )
+
+    def _policy_diag():
+        return {
+            "example_step_count": jnp.asarray(1.0, dtype=jnp.float32),
+            "masked_unknown_total_across_steps": jnp.asarray(2.0, dtype=jnp.float32),
+            "selected_count_total_across_steps": jnp.asarray(1.0, dtype=jnp.float32),
+            "selected_top_probability_sum_total": jnp.asarray(0.8, dtype=jnp.float32),
+            "selected_top_probability_count_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "selected_top_prob_margin_sum_total": jnp.asarray(0.4, dtype=jnp.float32),
+            "selected_top_prob_margin_count_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "unknown_token_total": jnp.asarray(float((~clue_mask).sum()), dtype=jnp.float32),
+            "final_masked_unknown_total": jnp.asarray(1.0, dtype=jnp.float32),
+        }
+
+    def _fake_policy_conditional_generate(
+        rng,
+        *,
+        params,
+        model,
+        anchors,
+        beta,
+        hazard,
+        jump,
+        known_tokens,
+        known_token_mask,
+        n_steps,
+        policy,
+        sampling_grid,
+        logit_temperature,
+        intensity_mode,
+        log_ratio_clip,
+        init_std,
+        stochastic_k,
+        eta,
+        return_diagnostics,
+    ):
+        del (
+            rng,
+            params,
+            model,
+            anchors,
+            beta,
+            hazard,
+            jump,
+            known_tokens,
+            known_token_mask,
+            n_steps,
+            policy,
+            sampling_grid,
+            logit_temperature,
+            intensity_mode,
+            log_ratio_clip,
+            init_std,
+            stochastic_k,
+            eta,
+        )
+        pred = jnp.asarray(solution, dtype=jnp.int32)
+        diag = _policy_diag()
+        return (pred, diag) if return_diagnostics else pred
+
+    def _fake_conditional_generate_board(
+        *,
+        rng,
+        params,
+        model,
+        anchors,
+        beta,
+        hazard,
+        jump,
+        known_tokens,
+        known_token_mask,
+        cfg,
+    ):
+        del rng, params, model, anchors, beta, hazard, jump, known_tokens, known_token_mask
+        diag = dict(_policy_diag())
+        diag.update(
+            {
+                "sampling/nfe_total": jnp.asarray(6.0, dtype=jnp.float32),
+                "sampling/continuous_to_anchor_commits_total": jnp.asarray(1.0, dtype=jnp.float32),
+                "sampling/anchor_to_continuous_unstick_attempts_total": jnp.asarray(2.0, dtype=jnp.float32),
+                "sampling/anchor_to_continuous_unstick_accepts_total": jnp.asarray(1.0, dtype=jnp.float32),
+                "sampling/langevin_updates_total": jnp.asarray(3.0, dtype=jnp.float32),
+                "sampling/gate_mean_continuous": jnp.asarray(0.25, dtype=jnp.float32),
+                "sampling/gate_mean_committed": jnp.asarray(0.75, dtype=jnp.float32),
+                "sampling/frac_committed_pre_force": jnp.asarray(0.5, dtype=jnp.float32),
+                "sampling/frac_committed_final": jnp.asarray(1.0, dtype=jnp.float32),
+                "sampling/fill_frac_by_final_jump": jnp.asarray(0.1, dtype=jnp.float32),
+            }
+        )
+        pred = jnp.asarray(solution, dtype=jnp.int32)
+        return pred, diag
+
+    monkeypatch.setattr(
+        __import__("sticky.models.sjd.board_sampling", fromlist=["conditional_generate"]),
+        "conditional_generate",
+        _fake_policy_conditional_generate,
+    )
+    monkeypatch.setattr(
+        __import__("sticky.models.sjd.sampling", fromlist=["conditional_generate_board"]),
+        "conditional_generate_board",
+        _fake_conditional_generate_board,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "sjd"},
+            "sampler": {
+                "T": 1.0,
+                "n_steps": 4,
+                "sampling_grid": "uniform",
+                "score_scale": 1.0,
+                "logit_temperature": 1.0,
+                "categorical_sampling_policy": "exact",
+                "hazard_mode": "plugin",
+                "alloc_mode": "argmax",
+                "intensity_mode": "full",
+                "log_ratio_clip": 10.0,
+                "intensity_chunk_size": 256,
+                "init_std": 1.0,
+                "force_classify_at_end": True,
+                "refresh_logits_after_em_step": False,
+                "pc_enabled": False,
+                "corrector_substeps": 0,
+                "corrector_step_scale": 0.0,
+                "pc_gate": "constant_one",
+                "pc_clamp_known": True,
+                "pc_refresh_logits_after_langevin": False,
+                "pc_allow_unstick_unknown_only": True,
+                "metrics_count_nfe": True,
+            },
+            "training": {"seed": 0, "metrics_dir": "metrics"},
+        }
+    )
+    progress_path = tmp_path / "metrics" / "sudoku_sjd_progress.csv"
+    latest_path = tmp_path / "metrics" / "sudoku_sjd_latest.csv"
+    eval_cfg = OmegaConf.create(
+        {
+            "mode": "sudoku",
+            "prefix": "eval",
+            "verbose": False,
+            "sudoku_every": 1,
+            "sudoku_num_batches": 1,
+            "sudoku_num_batches_force": -1,
+            "sudoku_num_batches_per_sampler": 1,
+            "sudoku_eval_seed_offset": 1776,
+            "sudoku_sample_seed_offset": 314159,
+            "sudoku_eval_fold_in_step": False,
+            "sudoku_progress_every_batches": 20,
+            "sudoku_primary_sampler_label": "pc_margin_l1_s0p10",
+            "sudoku_log_policy_table": False,
+            "sudoku_prop52_enabled": False,
+            "sudoku_write_progress_csv": True,
+            "sudoku_progress_csv_path": str(progress_path),
+            "sudoku_write_latest_csv": True,
+            "sudoku_latest_csv_path": str(latest_path),
+            "sudoku_eval_sjd_runs": {
+                "linear_survival": {
+                    "kind": "policy",
+                    "policy": "linear_survival",
+                    "n_steps": 4,
+                    "sampling_grid": "uniform",
+                    "eta": 1.0,
+                },
+                "pc_margin_l1_s0p10": {
+                    "kind": "sampler",
+                    "sampler": "sjd_sudoku_pc_margin",
+                },
+            },
+        }
+    )
+
+    maybe_eval = build_sudoku_eval_logger(
+        cfg=cfg,
+        eval_cfg=eval_cfg,
+        task=_fake_sjd_task(),
+        model=_FakeSJDModel(),
+        wandb_mod=None,
+        eval_every=1,
+        log_at_step_zero=False,
+    )
+    maybe_eval(10, params_for_sampling={})
+    maybe_eval(10, params_for_sampling={})
+
+    with progress_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 2
+    rows_by_label = {row["label"]: row for row in rows}
+
+    policy_row = rows_by_label["linear_survival"]
+    sampler_row = rows_by_label["pc_margin_l1_s0p10"]
+
+    assert policy_row["step"] == "10"
+    assert sampler_row["step"] == "10"
+    assert policy_row["kind"] == "policy"
+    assert sampler_row["kind"] == "sampler"
+    assert policy_row["sampling_nfe_total"] == ""
+    assert policy_row["sampling_langevin_updates_total"] == ""
+    assert sampler_row["sampling_nfe_total"] == "6.0"
+    assert sampler_row["sampling_langevin_updates_total"] == "3.0"
+    assert sampler_row["sampling_wallclock_sec_per_board"] != ""
+    assert policy_row["full_cell_acc"] == "1.0"
+    assert sampler_row["board_acc_exact"] == "1.0"
+    assert policy_row["final_masked_unknown_fraction"] != ""
+
+    with latest_path.open("r", encoding="utf-8", newline="") as handle:
+        latest_rows = list(csv.DictReader(handle))
+    assert len(latest_rows) == 2
+    assert {row["label"] for row in latest_rows} == {"linear_survival", "pc_margin_l1_s0p10"}

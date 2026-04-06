@@ -1,4 +1,6 @@
-# Canonical exhaustive SJD Sudoku report: policy ablations + PC sweep.
+# Canonical exhaustive/paper-style SJD Sudoku sweep:
+# time-only schedules, heuristic/model-implied state-dependent schedules,
+# and a broader predictor/corrector grid from the same checkpoint family.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -26,6 +28,10 @@ sudoku_prop52_num_batches: 8
 sudoku_prop52_time_eps: 1.0e-4
 sudoku_prop52_seed_offset: 271828
 sudoku_prop52_fold_in_step: false
+sudoku_write_progress_csv: true
+sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
+sudoku_write_latest_csv: true
+sudoku_latest_csv_path: metrics/sudoku_sjd_latest.csv
 
 sudoku_eval_sjd_runs:
   linear_survival:

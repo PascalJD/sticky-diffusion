@@ -83,15 +83,26 @@ def test_sjd_sudoku_train_and_eval_configs_compose():
     assert cfg.experiment.model.name == "sjd"
     assert cfg.experiment.model.sequence_backbone == "gpt2_like"
     assert cfg.experiment.model.sequence_max_length == 81
-    assert cfg.experiment.model.anchor.family == "ordered_normal"
+    assert cfg.experiment.model.anchor.family == "normal"
+    assert cfg.experiment.model.anchor.dim == 16
+    assert cfg.experiment.model.anchor.learnable is True
+    assert cfg.experiment.model.anchor.transform.equalize_row_norms is True
     assert cfg.experiment.training.name == "sudoku_sjd"
     assert cfg.experiment.training.best_checkpoint_metric == "eval/pc_margin_l1_s0p10/solve_rate"
     assert cfg.eval.mode == "sudoku"
     assert cfg.eval.sudoku_primary_sampler_label == "pc_margin_l1_s0p10"
-    assert set(cfg.eval.sudoku_eval_sjd_runs.keys()) >= {
+    assert cfg.eval.sudoku_write_progress_csv is True
+    assert cfg.eval.sudoku_progress_csv_path == "metrics/sudoku_sjd_progress.csv"
+    assert cfg.eval.sudoku_write_latest_csv is True
+    assert cfg.eval.sudoku_latest_csv_path == "metrics/sudoku_sjd_latest.csv"
+    assert set(cfg.eval.sudoku_eval_sjd_runs.keys()) == {
         "linear_survival",
+        "cosine_survival",
+        "linear_topk_probability",
         "plugin_hazard_eta_0p97",
         "predictor_only",
+        "pc_constant_l1_s0p10",
+        "pc_entropy_l1_s0p10",
         "pc_margin_l1_s0p10",
     }
 
@@ -127,7 +138,19 @@ def test_sjd_sudoku_report_config_composes():
     assert cfg.eval.mode == "sudoku"
     assert cfg.eval.sudoku_primary_sampler_label == "pc_margin_l1_s0p10"
     assert cfg.eval.sudoku_prop52_enabled is True
+    assert cfg.eval.sudoku_write_progress_csv is True
+    assert cfg.eval.sudoku_write_latest_csv is True
+    assert "linear_survival" in cfg.eval.sudoku_eval_sjd_runs
+    assert "cosine_survival" in cfg.eval.sudoku_eval_sjd_runs
+    assert "linear_topk_probability" in cfg.eval.sudoku_eval_sjd_runs
+    plugin_labels = sorted(
+        label
+        for label, spec in cfg.eval.sudoku_eval_sjd_runs.items()
+        if spec.get("kind") == "policy" and spec.get("policy") == "plugin_hazard"
+    )
+    assert len(plugin_labels) >= 5
     assert "plugin_hazard_eta_1p00" in cfg.eval.sudoku_eval_sjd_runs
+    assert "pc_constant_l1_s0p10" in cfg.eval.sudoku_eval_sjd_runs
     assert "pc_entropy_l4_s0p40" in cfg.eval.sudoku_eval_sjd_runs
     assert "pc_margin_l4_s0p40" in cfg.eval.sudoku_eval_sjd_runs
 

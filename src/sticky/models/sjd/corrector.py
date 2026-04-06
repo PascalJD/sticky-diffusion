@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from jax import lax
 import jax.numpy as jnp
 
 
@@ -41,9 +42,14 @@ def pc_gate_from_probs(
         denom = jnp.log(jnp.asarray(probs.shape[-1], dtype=jnp.float32))
         return jnp.clip(entropy / jnp.maximum(denom, eps), 0.0, 1.0)
 
-    top2 = jnp.sort(probs, axis=-1)[..., -2:]
-    top1 = top2[..., 1]
-    top2_val = top2[..., 0]
+    if probs.shape[-1] < 2:
+        return jnp.ones(probs.shape[:-1], dtype=jnp.float32)
+
+    # We only need the two largest probabilities for the margin gate, so avoid
+    # a full sort over the class axis on every corrector call.
+    top2_vals, _ = lax.top_k(probs, 2)
+    top1 = top2_vals[..., 0]
+    top2_val = top2_vals[..., 1]
     margin = jnp.clip(top1 - top2_val, 0.0, 1.0)
     return jnp.clip(1.0 - margin, 0.0, 1.0)
 

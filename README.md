@@ -30,6 +30,11 @@ python -m sticky.cli.train \
   eval=sudoku_sjd
 ```
 
+During scheduled SJD Sudoku eval, structured CSV snapshots are written under the
+run metrics directory by default:
+- `metrics/sudoku_sjd_progress.csv`: long-format history, one row per `(step, label)`
+- `metrics/sudoku_sjd_latest.csv`: latest-step snapshot with the same schema
+
 Run the exhaustive board-level SJD Sudoku report on one checkpoint family:
 ```bash
 python -m sticky.cli.eval_checkpoint \

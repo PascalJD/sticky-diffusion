@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 from sticky.models.sjd.anchors import AnchorTable
+from sticky.models.sjd.corrector import pc_gate_from_probs
 from sticky.models.sjd.hazard import make_hazard_poly_alpha
 from sticky.models.sjd.jump import VPMatchedGaussianJump
 from sticky.models.sjd.sampler import SamplerConfig, reverse_sample
@@ -255,3 +256,22 @@ def test_conditional_generate_board_clamps_clues_and_emits_digits():
         assert set(np.unique(board_np)).issubset({1, 2, 3, 4})
         np.testing.assert_array_equal(board_np[known_mask], np.asarray(known_tokens)[known_mask])
         assert float(metrics["sampling/nfe_total"]) >= 3.0
+
+
+def test_margin_pc_gate_matches_top2_margin_without_full_sort_assumptions():
+    probs = jnp.asarray(
+        [
+            [0.05, 0.10, 0.70, 0.15],
+            [0.24, 0.26, 0.25, 0.25],
+        ],
+        dtype=jnp.float32,
+    )
+    gate = np.asarray(pc_gate_from_probs(probs, gate="margin"))
+    expected = np.asarray(
+        [
+            1.0 - (0.70 - 0.15),
+            1.0 - (0.26 - 0.25),
+        ],
+        dtype=np.float32,
+    )
+    np.testing.assert_allclose(gate, expected, atol=1e-6)

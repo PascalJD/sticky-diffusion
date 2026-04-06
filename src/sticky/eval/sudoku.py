@@ -14,6 +14,8 @@ from sticky.data.sudoku import make_sudoku_board_iterator
 from sticky.models.sjd.anchors import AnchorTable
 from sticky.eval.sudoku_prop52 import run_sudoku_prop52_diagnostics
 from sticky.rng import make_rng
+from sticky.training.csv_report import write_sudoku_sjd_progress_artifacts
+from sticky.training.persistence import get_hydra_output_dir
 
 
 def _should_run_eval(*, step_i: int, every: int, log_at_step_zero: bool) -> bool:
@@ -650,6 +652,8 @@ def _make_sjd_runs_table(wandb_mod, rows: list[dict[str, Any]]):
 
 def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
     prefix = str(spec["metrics_prefix"])
+    sampling_nfe_total = metrics.get(f"{prefix}/sampling/nfe_total")
+    sampling_wallclock = metrics.get(f"{prefix}/sampling/wallclock_sec_per_board")
     row = {
         "label": spec["label"],
         "kind": spec.get("kind", "sampler"),
@@ -664,12 +668,52 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         "corrector_substeps": int(spec.get("corrector_substeps", 0)),
         "corrector_strength": float(spec.get("corrector_step_scale", 0.0)),
         "n_steps": metrics.get(f"{prefix}/n_steps"),
-        "nfe_total": metrics.get(f"{prefix}/sampling/nfe_total"),
+        "nfe_total": sampling_nfe_total,
         "solve_rate": metrics.get(f"{prefix}/solve_rate"),
         "cell_acc_unknown": metrics.get(f"{prefix}/cell_acc_unknown"),
+        "row_valid_fraction": metrics.get(f"{prefix}/row_valid_fraction"),
+        "col_valid_fraction": metrics.get(f"{prefix}/col_valid_fraction"),
+        "box_valid_fraction": metrics.get(f"{prefix}/box_valid_fraction"),
         "board_acc_exact": metrics.get(f"{prefix}/board_acc_exact"),
         "clue_consistency_fraction": metrics.get(f"{prefix}/clue_consistency_fraction"),
-        "wallclock_sec_per_board": metrics.get(f"{prefix}/sampling/wallclock_sec_per_board"),
+        "full_cell_acc": metrics.get(f"{prefix}/full_cell_acc"),
+        "avg_commits_per_step": metrics.get(f"{prefix}/avg_commits_per_step"),
+        "mean_masked_unknown_positions_per_step": metrics.get(
+            f"{prefix}/mean_masked_unknown_positions_per_step"
+        ),
+        "mean_selected_top_probability": metrics.get(
+            f"{prefix}/mean_selected_top_probability"
+        ),
+        "mean_selected_top_prob_margin": metrics.get(
+            f"{prefix}/mean_selected_top_prob_margin"
+        ),
+        "final_masked_unknown_fraction": metrics.get(
+            f"{prefix}/final_masked_unknown_fraction"
+        ),
+        "sampling_nfe_total": sampling_nfe_total,
+        "sampling_langevin_updates_total": metrics.get(
+            f"{prefix}/sampling/langevin_updates_total"
+        ),
+        "sampling_langevin_updates_per_step": metrics.get(
+            f"{prefix}/sampling/langevin_updates_per_step"
+        ),
+        "sampling_gate_mean_continuous": metrics.get(
+            f"{prefix}/sampling/gate_mean_continuous"
+        ),
+        "sampling_gate_mean_committed": metrics.get(
+            f"{prefix}/sampling/gate_mean_committed"
+        ),
+        "sampling_frac_committed_pre_force": metrics.get(
+            f"{prefix}/sampling/frac_committed_pre_force"
+        ),
+        "sampling_frac_committed_final": metrics.get(
+            f"{prefix}/sampling/frac_committed_final"
+        ),
+        "sampling_fill_frac_by_final_jump": metrics.get(
+            f"{prefix}/sampling/fill_frac_by_final_jump"
+        ),
+        "sampling_wallclock_sec_per_board": sampling_wallclock,
+        "wallclock_sec_per_board": sampling_wallclock,
     }
     if spec.get("kind") == "policy":
         row["predictor_corrector"] = False
@@ -677,6 +721,15 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         row["corrector_substeps"] = 0
         row["corrector_strength"] = 0.0
         row["nfe_total"] = None
+        row["sampling_nfe_total"] = None
+        row["sampling_langevin_updates_total"] = None
+        row["sampling_langevin_updates_per_step"] = None
+        row["sampling_gate_mean_continuous"] = None
+        row["sampling_gate_mean_committed"] = None
+        row["sampling_frac_committed_pre_force"] = None
+        row["sampling_frac_committed_final"] = None
+        row["sampling_fill_frac_by_final_jump"] = None
+        row["sampling_wallclock_sec_per_board"] = None
         row["wallclock_sec_per_board"] = None
     return row
 
@@ -720,6 +773,10 @@ def build_sudoku_eval_logger(
     log_policy_table = bool(eval_cfg.get("sudoku_log_policy_table", False))
     prop52_enabled = bool(eval_cfg.get("sudoku_prop52_enabled", False))
     prop52_only = bool(eval_cfg.get("sudoku_prop52_only", False))
+    write_progress_csv = bool(eval_cfg.get("sudoku_write_progress_csv", False))
+    progress_csv_path = eval_cfg.get("sudoku_progress_csv_path", None)
+    write_latest_csv = bool(eval_cfg.get("sudoku_write_latest_csv", False))
+    latest_csv_path = eval_cfg.get("sudoku_latest_csv_path", None)
 
     use_sjd_sampler_profiles = False
     table_builder = _make_policy_table
@@ -1033,6 +1090,18 @@ def build_sudoku_eval_logger(
                 if table is not None:
                     payload[f"{prefix}/policy_table"] = table
             wandb_mod.log(payload, step=step_i)
+
+        if model_name == "sjd" and policy_rows:
+            write_sudoku_sjd_progress_artifacts(
+                rows=policy_rows,
+                step_i=step_i,
+                progress_path_like=None if progress_csv_path is None else str(progress_csv_path),
+                latest_path_like=None if latest_csv_path is None else str(latest_csv_path),
+                metrics_dir_rel=str(cfg.training.get("metrics_dir", "metrics")),
+                base_dir=get_hydra_output_dir(),
+                write_progress=write_progress_csv,
+                write_latest=write_latest_csv,
+            )
 
         if metrics and (run_all_modes or verbose) and not prop52_only:
             primary_spec = next(

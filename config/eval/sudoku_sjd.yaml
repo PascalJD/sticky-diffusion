@@ -1,4 +1,6 @@
-# Canonical compact SJD Sudoku eval: policy ordering + predictor/corrector samplers.
+# Canonical compact/default SJD Sudoku comparison:
+# a small but representative mix of time-only, heuristic state-dependent,
+# model-implied state-dependent, and predictor/corrector runs.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -21,6 +23,10 @@ sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
 sudoku_log_policy_table: true
 sudoku_prop52_enabled: false
 sudoku_prop52_only: false
+sudoku_write_progress_csv: true
+sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
+sudoku_write_latest_csv: true
+sudoku_latest_csv_path: metrics/sudoku_sjd_latest.csv
 
 sudoku_eval_sjd_runs:
   linear_survival:
@@ -28,6 +34,12 @@ sudoku_eval_sjd_runs:
     policy: linear_survival
     n_steps: 50
     sampling_grid: uniform
+    eta: 1.00
+  cosine_survival:
+    kind: policy
+    policy: cosine_survival
+    n_steps: 50
+    sampling_grid: cosine
     eta: 1.00
   linear_topk_probability:
     kind: policy

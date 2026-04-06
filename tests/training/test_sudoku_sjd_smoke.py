@@ -55,6 +55,8 @@ def test_sjd_sudoku_single_train_step_and_eval_smoke(monkeypatch):
             "eval.sudoku_num_batches=1",
             "eval.sudoku_num_batches_per_sampler=1",
             "eval.sudoku_prop52_enabled=false",
+            "eval.sudoku_write_progress_csv=false",
+            "eval.sudoku_write_latest_csv=false",
         ],
     )
     cfg.eval.sudoku_eval_sjd_runs = {
@@ -142,6 +144,8 @@ def test_sjd_sudoku_pc_single_train_step_and_eval_smoke(monkeypatch):
             "experiment.training.log_every_steps=1",
             "eval.sudoku_num_batches=1",
             "eval.sudoku_num_batches_per_sampler=1",
+            "eval.sudoku_write_progress_csv=false",
+            "eval.sudoku_write_latest_csv=false",
         ],
     )
     cfg.eval.sudoku_eval_sjd_runs = {

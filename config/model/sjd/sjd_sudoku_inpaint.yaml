@@ -1,6 +1,6 @@
 defaults:
   - /model/backbone@_here_: gpt2_like_sudoku_inpaint_6m
-  - /model/anchor@anchor: ordered_normal
+  - /model/anchor@anchor: normal
   - _self_
 
 # Board-level SJD model for the Shah-board Sudoku policy ablation.
@@ -15,10 +15,10 @@ time_features: t
 model_sharding: false
 
 anchor:
-  family: ordered_normal
-  dim: 64
+  family: normal
+  dim: 16
   learnable: true
   seed: 0
   init_std: 1.0
-  order_weight: 1.0
-  residual_weight: 1.0
+  transform:
+    equalize_row_norms: true
