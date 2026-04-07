@@ -83,9 +83,9 @@ def test_sjd_sudoku_train_and_eval_configs_compose():
     assert cfg.experiment.model.name == "sjd"
     assert cfg.experiment.model.sequence_backbone == "gpt2_like"
     assert cfg.experiment.model.sequence_max_length == 81
-    assert cfg.experiment.model.anchor.family == "normal"
-    assert cfg.experiment.model.anchor.dim == 16
-    assert cfg.experiment.model.anchor.learnable is True
+    assert cfg.experiment.model.anchor.family == "thermometer"
+    assert cfg.experiment.model.anchor.dim == 64
+    assert cfg.experiment.model.anchor.learnable is False
     assert cfg.experiment.model.anchor.transform.equalize_row_norms is True
     assert cfg.experiment.training.name == "sudoku_sjd"
     assert cfg.experiment.training.best_checkpoint_metric == "eval/pc_margin_l1_s0p10/solve_rate"
