@@ -89,4 +89,20 @@ sticky_resolve_python_env() {
   export PYTHON_BIN="${python_bin}"
   export ENV_PREFIX="${env_prefix}"
   export PATH="${env_prefix}/bin:${PATH}"
+
+  local check_output check_status
+  set +e
+  check_output="$("${PYTHON_BIN}" -c 'import encodings, sys; print(sys.executable)' 2>&1)"
+  check_status=$?
+  set -e
+  if (( check_status != 0 )); then
+    echo "Python environment failed startup sanity check." >&2
+    echo "  ENV_PREFIX=${ENV_PREFIX}" >&2
+    echo "  PYTHON_BIN=${PYTHON_BIN}" >&2
+    echo "This usually means the environment was copied or moved and can no longer" >&2
+    echo "find its standard library (for example the encodings module)." >&2
+    echo "Recreate the environment in-place and retry; do not set PYTHONHOME." >&2
+    echo "${check_output}" >&2
+    exit "${check_status}"
+  fi
 }
