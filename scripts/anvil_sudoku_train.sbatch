@@ -25,36 +25,8 @@ RUN_DIR="${RUN_DIR:-${RUNS_BASE_DIR}/${RUN_TAG}}"
 mkdir -p "${RUN_DIR}"
 cd "${REPO_ROOT}"
 
-if [[ -d "${ENV_PREFIX}" ]]; then
-  export PATH="${ENV_PREFIX}/bin:${PATH}"
-  if [[ -f "${ENV_PREFIX}/bin/activate" ]]; then
-    # shellcheck disable=SC1090
-    source "${ENV_PREFIX}/bin/activate"
-  fi
-  PYTHON_BIN="${PYTHON_BIN:-${ENV_PREFIX}/bin/python}"
-elif command -v conda >/dev/null 2>&1; then
-  eval "$(conda shell.bash hook)"
-  conda activate "${CONDA_ENV_NAME}"
-  PYTHON_BIN="${PYTHON_BIN:-$(command -v python || true)}"
-fi
-
-if [[ -z "${PYTHON_BIN}" ]]; then
-  PYTHON_BIN="$(command -v python || true)"
-fi
-
-if [[ -z "${PYTHON_BIN}" ]]; then
-  echo "Could not find python. Set ENV_PREFIX or PYTHON_BIN explicitly." >&2
-  exit 1
-fi
-
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  RESOLVED_PYTHON="$(command -v "${PYTHON_BIN}" || true)"
-  if [[ -z "${RESOLVED_PYTHON}" ]]; then
-    echo "Python executable is not available: ${PYTHON_BIN}" >&2
-    exit 1
-  fi
-  PYTHON_BIN="${RESOLVED_PYTHON}"
-fi
+source "${REPO_ROOT}/scripts/anvil_python_env.sh"
+sticky_resolve_python_env
 
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export TF_CPP_MIN_LOG_LEVEL="${TF_CPP_MIN_LOG_LEVEL:-3}"
