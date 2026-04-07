@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -92,3 +93,61 @@ def test_loss_uses_clean_digit_indices_and_excludes_clues(monkeypatch):
     assert float(metrics["clean_index_min"]) == 0.0
     assert float(metrics["clean_index_max"]) == 8.0
     assert float(metrics["given_fraction"]) > 0.0
+
+
+def test_loss_fn_traces_under_jit(monkeypatch):
+    def _fake_ce_allocation_loss(**kwargs):
+        del kwargs
+        return (
+            jnp.asarray(0.25, dtype=jnp.float32),
+            {"CE/acc_top1_event": jnp.asarray(1.0, dtype=jnp.float32)},
+        )
+
+    monkeypatch.setattr(task_mod, "ce_allocation_loss", _fake_ce_allocation_loss)
+
+    task = SudokuInpaintSJDTask(
+        data_dir=None,
+        train_file="train.npy",
+        test_file="test.npy",
+        batch_size=2,
+        eval_batch_size=2,
+        data_shape=(81,),
+        vocab_size=9,
+        num_classes=-1,
+        beta=_beta,
+        hazard=object(),
+        jump=object(),
+        T=1.0,
+        log_state_dependency=False,
+    )
+
+    batch = {
+        key: jnp.asarray(value)
+        for key, value in _batch().items()
+    }
+
+    @jax.jit
+    def _run(rng, solution_board, clue_board, clue_mask):
+        loss, metrics = task.loss_fn(
+            rng=rng,
+            model=_DummySJDModel(),
+            params={},
+            batch={
+                "solution_board": solution_board,
+                "clue_board": clue_board,
+                "clue_mask": clue_mask,
+            },
+            train=True,
+        )
+        return loss, metrics["clean_index_min"], metrics["clean_index_max"]
+
+    loss, clean_min, clean_max = _run(
+        jax.random.PRNGKey(0),
+        batch["solution_board"],
+        batch["clue_board"],
+        batch["clue_mask"],
+    )
+
+    assert float(loss) == 0.25
+    assert float(clean_min) == 0.0
+    assert float(clean_max) == 8.0

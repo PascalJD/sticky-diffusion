@@ -5,6 +5,7 @@ from typing import Any, Callable, Iterable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+from jax import core as jax_core
 
 from sticky.data.sudoku import get_sudoku_board_num_examples, make_sudoku_board_iterator
 from sticky.models.sjd.losses import ce_allocation_loss
@@ -129,8 +130,13 @@ class SudokuInpaintSJDTask(Task):
         solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
         clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
         x0_idx = solution_board - 1
-        if jnp.any(x0_idx < 0) or jnp.any(x0_idx > 8):
-            raise ValueError("Sudoku SJD clean targets must map digits 1..9 to indices 0..8.")
+        # Keep a helpful eager-mode validation without triggering Python truth-value
+        # conversion on tracers inside the jitted training step.
+        if not isinstance(x0_idx, jax_core.Tracer):
+            if bool(jnp.any(x0_idx < 0)) or bool(jnp.any(x0_idx > 8)):
+                raise ValueError(
+                    "Sudoku SJD clean targets must map digits 1..9 to indices 0..8."
+                )
 
         key_loss, key_dropout = jax.random.split(rng)
         x0_anchor = model.apply({"params": params}, x0_idx, method=model.embed)
