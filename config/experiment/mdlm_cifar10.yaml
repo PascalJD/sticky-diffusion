@@ -1,3 +1,0 @@
-# Legacy flat alias for the canonical grouped CIFAR-10 experiment config.
-defaults:
-  - /experiment/cifar10@_here_: mdlm_cifar10
