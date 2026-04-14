@@ -1,0 +1,7 @@
+# AdamW settings for ImageNet64 defaults.
+name: adamw
+learning_rate: 1.0e-4
+warmup_steps: 10000
+lr_schedule: warmup_constant
+weight_decay: 0.0
+b2: 0.999

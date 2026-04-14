@@ -1,30 +1,3 @@
-# MD4-style masked-discrete backbone.
-feature_dim: 128
-n_layers: 32
-n_dit_layers: 0
-dit_num_heads: 12
-dit_hidden_size: 768
-ch_mult: [1]
-
-sequence_backbone: auto
-image_backbone: unet5d
-
-adm_num_res_blocks: 2
-adm_attention_resolutions: [2, 4, 8]
-adm_num_heads: 4
-adm_num_head_channels: -1
-adm_num_heads_upsample: -1
-adm_conv_resample: true
-adm_use_scale_shift_norm: true
-adm_resblock_updown: false
-adm_use_conv_skip: false
-adm_use_new_attention_order: false
-
-dropout_rate: 0.1
-use_attn_dropout: true
-num_heads: 12
-mlp_type: swiglu
-depth_scaled_init: true
-cond_type: adaln_zero
-outside_embed: false
-model_sharding: false
+# Legacy flat alias for the canonical backbone config.
+defaults:
+  - /model/backbone@_here_: md4_unet

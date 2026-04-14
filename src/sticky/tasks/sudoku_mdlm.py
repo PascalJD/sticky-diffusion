@@ -6,18 +6,18 @@ from typing import Iterable, Optional, Tuple
 import jax
 import jax.numpy as jnp
 
-from sticky.data.sudoku import get_sudoku_num_examples, make_sudoku_iterator
+from sticky.data.sudoku import get_sudoku_board_num_examples, make_sudoku_board_iterator
 from sticky.rng import PRNGKey
 from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
 
 
 @dataclass
 class SudokuMDLMTask(Task):
-    """Conditional Sudoku sequence task for vanilla MDLM.
+    """Board-level Sudoku MDLM task with clue-clamped conditional completion.
 
-    The first `3 * start_index` tokens are fixed clue-prefix conditioning.
-    The remaining suffix tokens are the unknown solution tokens and are the
-    only positions that contribute to the loss.
+    The canonical Sudoku benchmark in this repo now uses row-major 81-cell board
+    examples. MDLM conditions on the clue mask and predicts only the unknown
+    cells while reusing the shared masked-discrete training objective.
     """
 
     data_dir: Optional[str]
@@ -30,7 +30,6 @@ class SudokuMDLMTask(Task):
     num_classes: int
     drop_remainder: bool = True
     shuffle: bool = True
-    seq_order: str = "dataset"
     mmap: bool = True
     max_train_examples: int = -1
     max_test_examples: int = -1
@@ -39,6 +38,8 @@ class SudokuMDLMTask(Task):
     download_retries: int = 8
 
     def __post_init__(self):
+        self.data_shape = (81,)
+        self.vocab_size = 10
         self.spec = TaskSpec(
             name="mdlm_sudoku",
             task_type="text",
@@ -47,44 +48,69 @@ class SudokuMDLMTask(Task):
             num_classes=int(self.num_classes),
         )
 
-    def make_dataloaders(
-        self, *, seed: int
-    ) -> Tuple[Iterable[Batch], Optional[Iterable[Batch]]]:
-        train_it = make_sudoku_iterator(
-            split="train",
-            batch_size=int(self.batch_size),
+    def _make_board_iterator(
+        self,
+        *,
+        split: str,
+        batch_size: int,
+        seed: int,
+        shuffle: bool,
+        repeat: bool,
+        drop_remainder: bool,
+        max_examples: int,
+    ):
+        return make_sudoku_board_iterator(
+            split=str(split),
+            batch_size=int(batch_size),
             seed=int(seed),
             data_dir=self.data_dir,
             train_file=self.train_file,
             test_file=self.test_file,
+            shuffle=bool(shuffle),
+            repeat=bool(repeat),
+            drop_remainder=bool(drop_remainder),
+            mmap=bool(self.mmap),
+            max_examples=int(max_examples),
+            auto_download=bool(self.auto_download),
+            download_timeout_sec=int(self.download_timeout_sec),
+            download_retries=int(self.download_retries),
+        )
+
+    def make_dataloaders(
+        self, *, seed: int
+    ) -> Tuple[Iterable[Batch], Optional[Iterable[Batch]]]:
+        train_it = self._make_board_iterator(
+            split="train",
+            batch_size=int(self.batch_size),
+            seed=int(seed),
             shuffle=bool(self.shuffle),
             repeat=True,
             drop_remainder=bool(self.drop_remainder),
-            seq_order=str(self.seq_order),
+            max_examples=int(self.max_train_examples),
+        )
+        eval_it = self._make_board_iterator(
+            split="test",
+            batch_size=int(self.eval_batch_size),
+            seed=int(seed) + 1,
+            shuffle=False,
+            repeat=False,
+            drop_remainder=False,
+            max_examples=int(self.max_test_examples),
+        )
+        return train_it, eval_it
+
+    def train_num_examples(self) -> int | None:
+        return get_sudoku_board_num_examples(
+            split="train",
+            data_dir=self.data_dir,
+            train_file=self.train_file,
+            test_file=self.test_file,
             mmap=bool(self.mmap),
             max_examples=int(self.max_train_examples),
             auto_download=bool(self.auto_download),
             download_timeout_sec=int(self.download_timeout_sec),
             download_retries=int(self.download_retries),
         )
-        eval_it = make_sudoku_iterator(
-            split="test",
-            batch_size=int(self.eval_batch_size),
-            seed=int(seed) + 1,
-            data_dir=self.data_dir,
-            train_file=self.train_file,
-            test_file=self.test_file,
-            shuffle=False,
-            repeat=False,
-            drop_remainder=False,
-            seq_order=str(self.seq_order),
-            mmap=bool(self.mmap),
-            max_examples=int(self.max_test_examples),
-            auto_download=bool(self.auto_download),
-            download_timeout_sec=int(self.download_timeout_sec),
-            download_retries=int(self.download_retries),
-        )
-        return train_it, eval_it
 
     def loss_fn(
         self,
@@ -96,13 +122,10 @@ class SudokuMDLMTask(Task):
         train: bool,
     ) -> tuple[jnp.ndarray, Metrics]:
         key_sample, key_dropout = jax.random.split(rng)
-        x = batch["image"].astype(jnp.int32)
-        start_index = batch["start_index"].astype(jnp.int32)
+        solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
+        clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
 
-        token_pos = jnp.arange(x.shape[-1], dtype=jnp.int32)[None, :]
-        # Original Sudoku task semantics: the clue prefix is fixed conditioning
-        # and only the suffix contributes to the MDLM objective.
-        known_token_mask = token_pos < (3 * start_index)
+        known_token_mask = clue_mask
         loss_mask = ~known_token_mask
 
         rngs = {"sample": key_sample}
@@ -111,7 +134,7 @@ class SudokuMDLMTask(Task):
 
         stats = model.apply(
             {"params": params},
-            x,
+            solution_board,
             train=train,
             known_token_mask=known_token_mask,
             loss_mask=loss_mask,
@@ -121,16 +144,3 @@ class SudokuMDLMTask(Task):
 
     def decode(self, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.asarray(x, dtype=jnp.int32)
-
-    def train_num_examples(self) -> int | None:
-        return get_sudoku_num_examples(
-            split="train",
-            data_dir=self.data_dir,
-            train_file=self.train_file,
-            test_file=self.test_file,
-            mmap=bool(self.mmap),
-            max_examples=int(self.max_train_examples),
-            auto_download=bool(self.auto_download),
-            download_timeout_sec=int(self.download_timeout_sec),
-            download_retries=int(self.download_retries),
-        )

@@ -1,0 +1,29 @@
+defaults:
+  - base
+  - _self_
+
+name: sudoku_sjd
+
+num_train_steps: 0
+num_train_epochs: 300
+best_update_on_equal: true
+
+log_every_steps: 500
+timing_warn_seconds: 15
+eval_every_steps: 10000
+checkpoint_every_steps: 10000
+checkpoint_keep: 5
+log_images_every_steps: 0
+
+best_checkpoint_metric: eval/pc_margin_l1_s0p10/solve_rate
+best_checkpoint_mode: max
+
+sample_timesteps: ${..sampler.n_steps}
+
+log_state_dependency: true
+state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
+
+# Time sampling: "uniform" (default) or "antithetic"
+time_sampling: uniform
+# Loss weighting: "uniform" (default) or "alpha_deriv" (MDM importance weight)
+loss_weighting: uniform

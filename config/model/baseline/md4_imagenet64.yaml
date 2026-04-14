@@ -1,0 +1,16 @@
+# MD4 model config for ImageNet64.
+defaults:
+  - /model/backbone@_here_: adm_unet_imagenet64
+  - _self_
+
+name: md4
+
+# Core diffusion setup.
+cont_time: true
+timesteps: 512
+noise_schedule_type: linear
+time_features: t
+
+# Conditioning.
+classes: -1
+antithetic_time_sampling: true

@@ -8,6 +8,7 @@ import jax
 from flax.training import checkpoints
 from omegaconf import DictConfig, OmegaConf
 
+from sticky.core.paths import is_nullish, resolve_optional_path
 from sticky.models.factory import build_model
 from sticky.rng import ensure_prng_key, legacy_prng_key_data, make_rng
 from sticky.tasks.factory import build_task
@@ -20,18 +21,12 @@ from sticky.training.persistence import (
 from sticky.training.sampling import build_sampling_fns
 from sticky.training.state import init_state
 
-
-def _is_nullish(value: Any) -> bool:
-    return value in (None, "", "null")
-
-
 def _resolve_path_from_original_cwd(path_like: Optional[str]) -> Optional[Path]:
-    if _is_nullish(path_like):
-        return None
-    resolved = resolve_from_original_cwd(path_like)
-    if resolved is None:
-        return None
-    return Path(resolved)
+    return resolve_optional_path(
+        path_like,
+        nullish=(None, "", "null"),
+        fallback_to_resolve=False,
+    )
 
 
 def _clone_cfg(cfg: DictConfig) -> DictConfig:
@@ -40,7 +35,7 @@ def _clone_cfg(cfg: DictConfig) -> DictConfig:
 
 def _resolve_run_dir_from_offline_cfg(offline_cfg: DictConfig) -> Optional[Path]:
     run_dir_cfg = offline_cfg.get("run_dir", None)
-    if _is_nullish(run_dir_cfg):
+    if is_nullish(run_dir_cfg, nullish=(None, "", "null")):
         return None
     run_dir = _resolve_path_from_original_cwd(str(run_dir_cfg))
     if run_dir is None:
@@ -78,7 +73,7 @@ def _apply_environment_overrides(
     dataset_cfg = fallback_cfg.get("dataset", None)
     if dataset_cfg is not None:
         data_dir = dataset_cfg.get("data_dir", None)
-        if not _is_nullish(data_dir):
+        if not is_nullish(data_dir, nullish=(None, "", "null")):
             effective_cfg.dataset.data_dir = data_dir
 
     runtime_cfg = fallback_cfg.get("runtime", None)
@@ -97,7 +92,7 @@ def _apply_explicit_eval_overrides(
         effective_cfg.sampler.n_steps = int(sample_timesteps)
 
     jump_eta_cfg = offline_cfg.get("jump_eta", None)
-    if not _is_nullish(jump_eta_cfg):
+    if not is_nullish(jump_eta_cfg, nullish=(None, "", "null")):
         if effective_cfg.get("forward", None) is None:
             raise ValueError("offline_eval.jump_eta requires experiment.forward to be configured.")
         if effective_cfg.forward.get("jump", None) is None:
@@ -107,7 +102,7 @@ def _apply_explicit_eval_overrides(
         effective_cfg.forward.jump.eta = float(jump_eta_cfg)
 
     tau_cfg = offline_cfg.get("logit_temperature", None)
-    if not _is_nullish(tau_cfg):
+    if not is_nullish(tau_cfg, nullish=(None, "", "null")):
         effective_cfg.sampler.logit_temperature = float(tau_cfg)
 
 
@@ -188,7 +183,7 @@ def _checkpoint_root_from_run_dir(run_dir: Path, cfg: DictConfig) -> Path:
 
 def _resolve_checkpoint_root(cfg: DictConfig, offline_cfg: DictConfig) -> Path:
     ckpt_dir_cfg = offline_cfg.get("checkpoint_dir", None)
-    if not _is_nullish(ckpt_dir_cfg):
+    if not is_nullish(ckpt_dir_cfg, nullish=(None, "", "null")):
         out = _resolve_path_from_original_cwd(str(ckpt_dir_cfg))
         if out is None:
             raise ValueError("offline_eval.checkpoint_dir was set but could not be resolved.")
@@ -272,6 +267,10 @@ def _clone_eval_cfg(eval_cfg: DictConfig) -> DictConfig:
     return OmegaConf.create(OmegaConf.to_container(eval_cfg, resolve=True))
 
 
+def _is_nullish(value: Any) -> bool:
+    return is_nullish(value, nullish=(None, "", "null"))
+
+
 def _to_float_metrics(metrics: Dict[str, Any]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for k, v in metrics.items():
@@ -287,6 +286,163 @@ def _to_float_scalar(value: Any) -> Optional[float]:
         return float(jax.device_get(value))
     except Exception:
         return None
+
+
+def _extract_sudoku_sampler_summary(
+    *,
+    metrics: Dict[str, float],
+    eval_cfg: DictConfig,
+) -> Optional[Dict[str, Any]]:
+    if str(eval_cfg.get("mode", "fid_is")).lower() != "sudoku":
+        return None
+
+    prefix = str(eval_cfg.get("prefix", "eval"))
+    run_all = bool(eval_cfg.get("sudoku_run_all_sampler_modes", False))
+    primary_label = str(eval_cfg.get("sudoku_primary_sampler_label", "default"))
+
+    def _summary_for(prefix_key: str, label: str) -> Dict[str, Any]:
+        return {
+            "label": label,
+            "metrics_prefix": prefix_key,
+            "solve_rate": metrics.get(f"{prefix_key}/solve_rate"),
+            "board_acc_exact": metrics.get(f"{prefix_key}/board_acc_exact"),
+            "board_acc": metrics.get(f"{prefix_key}/board_acc"),
+            "cell_acc_unknown": metrics.get(f"{prefix_key}/cell_acc_unknown"),
+            "masked_cell_acc": metrics.get(f"{prefix_key}/masked_cell_acc"),
+            "full_cell_acc": metrics.get(f"{prefix_key}/full_cell_acc"),
+            "acc_complete_puzzle": metrics.get(f"{prefix_key}/acc_complete_puzzle"),
+            "acc_solve_strict": metrics.get(f"{prefix_key}/acc_solve_strict"),
+            "avg_commits_per_step": metrics.get(f"{prefix_key}/avg_commits_per_step"),
+            "mean_selected_top_probability": metrics.get(
+                f"{prefix_key}/mean_selected_top_probability"
+            ),
+            "mean_selected_top_prob_margin": metrics.get(
+                f"{prefix_key}/mean_selected_top_prob_margin"
+            ),
+            "final_masked_unknown_fraction": metrics.get(
+                f"{prefix_key}/final_masked_unknown_fraction"
+            ),
+            "sampling_nfe_total": metrics.get(f"{prefix_key}/sampling/nfe_total"),
+            "sampling_wallclock_sec_per_board": metrics.get(
+                f"{prefix_key}/sampling/wallclock_sec_per_board"
+            ),
+            "sampler_steps": metrics.get(f"{prefix_key}/sampler_steps"),
+            "n_steps": metrics.get(f"{prefix_key}/n_steps"),
+        }
+
+    if not run_all:
+        return {
+            "run_all_sampler_modes": False,
+            "primary_sampler_label": primary_label,
+            "samplers": [_summary_for(prefix, primary_label)],
+        }
+
+    samplers = []
+
+    def _collect_from(container):
+        out = []
+        if isinstance(container, dict):
+            for label in container:
+                out.append(_summary_for(f"{prefix}/{label}", str(label)))
+        elif isinstance(container, list):
+            for entry in container:
+                if not isinstance(entry, dict):
+                    continue
+                label = str(entry.get("label", "")).strip()
+                if not label:
+                    continue
+                out.append(_summary_for(f"{prefix}/{label}", label))
+        return out
+
+    samplers_cfg = eval_cfg.get("sudoku_eval_samplers", None)
+    samplers.extend(_collect_from(OmegaConf.to_container(samplers_cfg, resolve=True)))
+    sjd_runs_cfg = eval_cfg.get("sudoku_eval_sjd_runs", None)
+    samplers.extend(_collect_from(OmegaConf.to_container(sjd_runs_cfg, resolve=True)))
+
+    return {
+        "run_all_sampler_modes": True,
+        "primary_sampler_label": primary_label,
+        "samplers": samplers,
+    }
+
+
+def _apply_prop52_only_override(
+    *,
+    eval_cfg_local: DictConfig,
+    offline_cfg: DictConfig,
+) -> None:
+    if not bool(offline_cfg.get("eval_prop52_only", False)):
+        return
+    if str(eval_cfg_local.get("mode", "fid_is")).lower() != "sudoku":
+        raise ValueError("offline_eval.eval_prop52_only is supported only with eval.mode=sudoku.")
+    eval_cfg_local.sudoku_prop52_enabled = True
+    eval_cfg_local.sudoku_prop52_only = True
+
+
+def _best_sampler_by_board_accuracy(
+    sudoku_sampler_summary: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not sudoku_sampler_summary:
+        return None
+    best = None
+    best_score = None
+    for sampler_info in sudoku_sampler_summary.get("samplers", []):
+        score = sampler_info.get("board_acc", None)
+        if score is None:
+            score = sampler_info.get("board_acc_exact", None)
+        score = _maybe_float(score)
+        if score is None:
+            continue
+        if best_score is None or score > best_score:
+            best_score = score
+            best = dict(sampler_info)
+    return best
+
+
+def _best_plugin_eta_by_board_accuracy(
+    sudoku_sampler_summary: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not sudoku_sampler_summary:
+        return None
+    best = None
+    best_score = None
+    for sampler_info in sudoku_sampler_summary.get("samplers", []):
+        label = str(sampler_info.get("label", ""))
+        if not label.startswith("plugin_hazard_eta_"):
+            continue
+        score = sampler_info.get("board_acc", None)
+        if score is None:
+            score = sampler_info.get("board_acc_exact", None)
+        score = _maybe_float(score)
+        if score is None:
+            continue
+        if best_score is None or score > best_score:
+            best_score = score
+            best = dict(sampler_info)
+    return best
+
+
+def _best_pc_sampler_by_board_accuracy(
+    sudoku_sampler_summary: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not sudoku_sampler_summary:
+        return None
+    best = None
+    best_score = None
+    for sampler_info in sudoku_sampler_summary.get("samplers", []):
+        label = str(sampler_info.get("label", ""))
+        if not label.startswith("pc_"):
+            continue
+        score = sampler_info.get("board_acc", None)
+        if score is None:
+            score = sampler_info.get("board_acc_exact", None)
+        score = _maybe_float(score)
+        if score is None:
+            continue
+        if best_score is None or score > best_score:
+            best_score = score
+            best = dict(sampler_info)
+    return best
 
 
 def _collect_sjd_sampler_probe_metrics(
@@ -403,6 +559,7 @@ def run_offline_checkpoint_eval(
     eval_cfg_local.run_at_end = True
     eval_cfg_local.checkpoint_source = checkpoint_source
     eval_cfg_local.param_source = param_source
+    _apply_prop52_only_override(eval_cfg_local=eval_cfg_local, offline_cfg=offline_cfg)
     eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
 
     fid_every = int(eval_cfg_local.get("fid_every", 0)) if eval_mode != "sudoku" else 0
@@ -478,6 +635,18 @@ def run_offline_checkpoint_eval(
             "Offline evaluation returned no metrics. "
             "Check eval settings and force flags."
         )
+    sudoku_sampler_summary = _extract_sudoku_sampler_summary(
+        metrics=metrics,
+        eval_cfg=eval_cfg_local,
+    )
+    sudoku_policy_table = getattr(maybe_log_eval, "sudoku_policy_table_rows", None)
+    sudoku_prop52_rows_by_eta = getattr(maybe_log_eval, "sudoku_prop52_rows_by_eta", None)
+    sudoku_prop52_summary_rows = getattr(maybe_log_eval, "sudoku_prop52_summary_rows", None)
+    sudoku_prop52_collapse_summary = getattr(
+        maybe_log_eval,
+        "sudoku_prop52_collapse_summary",
+        None,
+    )
 
     probe_batches_cfg = offline_cfg.get("sampler_probe_batches", 0)
     probe_batches = 0 if _is_nullish(probe_batches_cfg) else int(probe_batches_cfg)
@@ -571,6 +740,7 @@ def run_offline_checkpoint_eval(
             "sample_timesteps": int(sample_timesteps),
             "force_fid": bool(force_fid),
             "force_is": bool(force_is),
+            "eval_prop52_only": bool(offline_cfg.get("eval_prop52_only", False)),
             "fid_enabled": bool(eval_cfg_local.get("fid_enabled", True)) if eval_mode != "sudoku" else False,
             "is_enabled": bool(eval_cfg_local.get("is_enabled", True)) if eval_mode != "sudoku" else False,
             "fid_num_samples": int(fid_num_samples),
@@ -581,6 +751,12 @@ def run_offline_checkpoint_eval(
             "sudoku_every": int(sudoku_every),
             "sudoku_num_batches": int(eval_cfg_local.get("sudoku_num_batches", 64)),
             "sudoku_num_batches_force": int(eval_cfg_local.get("sudoku_num_batches_force", -1)),
+            "sudoku_run_all_sampler_modes": bool(
+                eval_cfg_local.get("sudoku_run_all_sampler_modes", False)
+            ),
+            "sudoku_primary_sampler_label": str(
+                eval_cfg_local.get("sudoku_primary_sampler_label", "default")
+            ),
             "requested_jump_eta_override": _maybe_float(offline_cfg.get("jump_eta", None)),
             "requested_logit_temperature_override": _maybe_float(
                 offline_cfg.get("logit_temperature", None)
@@ -597,6 +773,16 @@ def run_offline_checkpoint_eval(
         }
     if sampling_probe_payload is not None:
         payload["sampling_probe"] = sampling_probe_payload
+    if sudoku_sampler_summary is not None:
+        payload["sudoku_sampler_summary"] = sudoku_sampler_summary
+    if sudoku_policy_table:
+        payload["sudoku_policy_table"] = sudoku_policy_table
+    if sudoku_prop52_rows_by_eta:
+        payload["sudoku_prop52_rows_by_eta"] = sudoku_prop52_rows_by_eta
+    if sudoku_prop52_summary_rows:
+        payload["sudoku_prop52_summary_rows"] = sudoku_prop52_summary_rows
+    if sudoku_prop52_collapse_summary:
+        payload["sudoku_prop52_collapse_summary"] = sudoku_prop52_collapse_summary
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -617,6 +803,99 @@ def run_offline_checkpoint_eval(
         f"logit_temperature={effective_logit_temperature}",
         flush=True,
     )
+    if sudoku_sampler_summary is not None:
+        print(
+            "[offline-eval] "
+            f"sudoku_primary_sampler={sudoku_sampler_summary['primary_sampler_label']} "
+            f"run_all_sampler_modes={sudoku_sampler_summary['run_all_sampler_modes']}",
+            flush=True,
+        )
+        for sampler_info in sudoku_sampler_summary["samplers"]:
+            primary_score = (
+                sampler_info["solve_rate"]
+                if sampler_info["solve_rate"] is not None
+                else sampler_info["acc_solve_strict"]
+            )
+            secondary_score = (
+                sampler_info["board_acc"]
+                if sampler_info["board_acc"] is not None
+                else sampler_info["board_acc_exact"]
+                if sampler_info["board_acc_exact"] is not None
+                else sampler_info["acc_complete_puzzle"]
+            )
+            print(
+                "[offline-eval] "
+                f"{sampler_info['label']}: "
+                f"primary_score={primary_score} "
+                f"secondary_score={secondary_score} "
+                f"avg_commits_per_step={sampler_info['avg_commits_per_step']}",
+                flush=True,
+            )
+    best_sampler = _best_sampler_by_board_accuracy(sudoku_sampler_summary)
+    best_plugin_eta = _best_plugin_eta_by_board_accuracy(sudoku_sampler_summary)
+    best_pc_sampler = _best_pc_sampler_by_board_accuracy(sudoku_sampler_summary)
+    if (
+        best_sampler is not None
+        or best_plugin_eta is not None
+        or best_pc_sampler is not None
+        or sudoku_prop52_collapse_summary
+        or sudoku_prop52_summary_rows
+    ):
+        print("[offline-eval] Summary:", flush=True)
+        if best_sampler is not None:
+            best_sampler_score = best_sampler.get("board_acc", None)
+            if best_sampler_score is None:
+                best_sampler_score = best_sampler.get("board_acc_exact", None)
+            print(
+                f"- best Sudoku board accuracy by policy: {best_sampler.get('label')} "
+                f"({best_sampler_score})",
+                flush=True,
+            )
+        else:
+            print("- best Sudoku board accuracy by policy: not run", flush=True)
+
+        if best_plugin_eta is not None:
+            best_plugin_score = best_plugin_eta.get("board_acc", None)
+            if best_plugin_score is None:
+                best_plugin_score = best_plugin_eta.get("board_acc_exact", None)
+            print(
+                f"- best eta under plug-in hazard: {best_plugin_eta.get('label')} "
+                f"({best_plugin_score})",
+                flush=True,
+            )
+        else:
+            print("- best eta under plug-in hazard: not available", flush=True)
+
+        if best_pc_sampler is not None:
+            best_pc_score = best_pc_sampler.get("board_acc", None)
+            if best_pc_score is None:
+                best_pc_score = best_pc_sampler.get("board_acc_exact", None)
+            print(
+                f"- best predictor-corrector sampler: {best_pc_sampler.get('label')} "
+                f"({best_pc_score})",
+                flush=True,
+            )
+        else:
+            print("- best predictor-corrector sampler: not available", flush=True)
+
+        if sudoku_prop52_collapse_summary:
+            print(
+                "- whether V_state collapsed as eta approached 1: "
+                f"{bool(sudoku_prop52_collapse_summary.get('v_state_collapsed', False))} "
+                f"(ratio={sudoku_prop52_collapse_summary.get('eta_one_vs_max_lower_v_state_ratio')})",
+                flush=True,
+            )
+        else:
+            print("- whether V_state collapsed as eta approached 1: not evaluated", flush=True)
+
+        caveats = []
+        if bool(offline_cfg.get("eval_prop52_only", False)):
+            caveats.append("board-accuracy policy sweep was skipped because eval_prop52_only=true")
+        if sudoku_prop52_summary_rows:
+            caveats.append("Prop 5.2 summaries are estimated on a fixed held-out subset and time bins")
+        if not caveats:
+            caveats.append("none")
+        print(f"- caveats: {'; '.join(caveats)}", flush=True)
     print(
         f"[offline-eval] Wrote metrics report to {output_path}",
         flush=True,

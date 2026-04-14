@@ -13,8 +13,8 @@ from sticky.training.state import init_state
 
 
 class _DummyDiscreteModel:
-    def init(self, rngs, x, *, cond=None, train=False):
-        del rngs, x, cond, train
+    def init(self, rngs, x, t=None, *, cond=None, train=False):
+        del rngs, x, t, cond, train
         return {"params": {"w": jnp.asarray([1.0], dtype=jnp.float32)}}
 
 
@@ -71,6 +71,7 @@ def _base_cfg(model_name: str):
 def test_init_state_supports_all_model_branches():
     for model_name, model in (
         ("md4", _DummyDiscreteModel()),
+        ("mdm", _DummyDiscreteModel()),
         ("cadd", _DummyDiscreteModel()),
         ("ddpm", _DummyDiscreteModel()),
         ("sjd", _DummySJDModel()),

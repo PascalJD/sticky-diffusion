@@ -5,24 +5,7 @@ from typing import Iterator, Mapping, Optional
 
 import numpy as np
 
-
-def _resolve_against_original_cwd(path_like: str) -> Path:
-    path = Path(str(path_like))
-    if path.is_absolute():
-        return path
-
-    try:
-        import hydra
-
-        return Path(hydra.utils.get_original_cwd()) / path
-    except Exception:
-        return path.resolve()
-
-
-def _resolve_tokens_path(path_like: Optional[str]) -> Optional[Path]:
-    if path_like in (None, "", "null", "None"):
-        return None
-    return _resolve_against_original_cwd(str(path_like))
+from sticky.core.paths import resolve_against_original_cwd, resolve_optional_path
 
 
 def _load_np_tokens(path: Path, *, mmap: bool) -> np.ndarray:
@@ -61,7 +44,7 @@ def load_token_sequences(
     mmap: bool = True,
     max_examples: int = -1,
 ) -> np.ndarray:
-    path = _resolve_against_original_cwd(path_like)
+    path = resolve_against_original_cwd(path_like)
     if not path.exists():
         raise FileNotFoundError(f"Token file not found: {path}")
 
@@ -102,9 +85,15 @@ def make_openwebtext_iterator(
 
     split_key = str(split).lower()
     if split_key == "train":
-        path = _resolve_tokens_path(train_tokens_path)
+        path = resolve_optional_path(
+            train_tokens_path,
+            nullish=(None, "", "null", "None"),
+        )
     elif split_key in {"eval", "validation", "val", "test"}:
-        path = _resolve_tokens_path(eval_tokens_path)
+        path = resolve_optional_path(
+            eval_tokens_path,
+            nullish=(None, "", "null", "None"),
+        )
     else:
         raise ValueError(f"Unsupported split={split!r}.")
 

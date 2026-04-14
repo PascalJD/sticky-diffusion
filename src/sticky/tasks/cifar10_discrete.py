@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 
-from sticky.data.cifar10_discrete import make_cifar10_iterator
 from sticky.rng import PRNGKey
-from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
+from sticky.tasks.base import Batch, Metrics
+from sticky.tasks.tfds_discrete_image import TFDSDiscreteImageTaskBase
 
 
 @dataclass
-class CIFAR10DiscreteTask(Task):
+class CIFAR10DiscreteTask(TFDSDiscreteImageTaskBase):
     """Shared CIFAR-10 discrete-token image task for MD4/CADD-like models.
 
     Assumes model API:
@@ -35,45 +35,15 @@ class CIFAR10DiscreteTask(Task):
     augment_hflip: bool = True
     augment_eval: bool = False
 
-    def __post_init__(self):
-        self.spec = TaskSpec(
-            name=str(self.task_name),
-            task_type="image",
-            data_shape=(32, 32, 3),
-            vocab_size=int(self.vocab_size),
-            num_classes=int(self.num_classes),
-        )
+    dataset_name: str = "cifar10"
+    train_split: str = "train"
+    eval_split: str = "test"
+    include_label: bool | str = "auto"
+    dummy_label_value: int = -1
+    data_shape: Tuple[int, ...] = (32, 32, 3)
 
-    def make_dataloaders(
-        self, *, seed: int
-    ) -> Tuple[Iterable[Batch], Optional[Iterable[Batch]]]:
-        train_iter = make_cifar10_iterator(
-            split="train",
-            batch_size=int(self.batch_size),
-            seed=int(seed),
-            data_dir=self.data_dir,
-            shuffle=True,
-            repeat=True,
-            drop_remainder=bool(self.drop_remainder),
-            augment=bool(self.augment_enabled),
-            augment_prob=float(self.augment_prob),
-            augment_rotate=bool(self.augment_rotate),
-            augment_hflip=bool(self.augment_hflip),
-        )
-        eval_iter = make_cifar10_iterator(
-            split="test",
-            batch_size=int(self.eval_batch_size),
-            seed=int(seed) + 1,
-            data_dir=self.data_dir,
-            shuffle=False,
-            repeat=False,
-            drop_remainder=False,
-            augment=bool(self.augment_eval),
-            augment_prob=float(self.augment_prob),
-            augment_rotate=bool(self.augment_rotate),
-            augment_hflip=bool(self.augment_hflip),
-        )
-        return train_iter, eval_iter
+    def __post_init__(self):
+        self.spec = self._build_image_task_spec(name=str(self.task_name))
 
     def loss_fn(
         self,
@@ -103,7 +73,3 @@ class CIFAR10DiscreteTask(Task):
             rngs=rngs,
         )
         return stats["loss"], stats
-
-    def decode(self, x: jnp.ndarray) -> jnp.ndarray:
-        # x is int32 tokens in [0..255]. Convert to uint8 for saving/visualization.
-        return jnp.clip(x, 0, self.vocab_size - 1).astype(jnp.uint8)

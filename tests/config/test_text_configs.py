@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from hydra import compose, initialize_config_dir
+from sticky.core.config_paths import config_root
 
 
-CONFIG_DIR = str(Path(__file__).resolve().parents[2] / "config")
+CONFIG_DIR = str(config_root())
 
 
 def _compose(overrides: list[str]):
@@ -16,7 +15,7 @@ def _compose(overrides: list[str]):
 def test_openwebtext_dataset_training_and_eval_configs_compose():
     cfg = _compose(
         [
-            "experiment=md4_cifar10",
+            "experiment=cifar10/md4_cifar10",
             "dataset@experiment.dataset=openwebtext_gpt2_1024",
             "training@experiment.training=owt",
             "eval=text_basic",

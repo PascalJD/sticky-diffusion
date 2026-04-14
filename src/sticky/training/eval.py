@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-from pathlib import Path
 import time
 from typing import Any, Dict, Optional
 
-import hydra
 import jax
 import numpy as np
 from omegaconf import DictConfig
 
 from sticky.rng import make_rng
+from sticky.core.paths import resolve_optional_path_str
 from sticky.training.logging import numpy_available, to_numpy
 from sticky.training.persistence import get_hydra_output_dir
 
 
 def resolve_from_original_cwd(path_like: Optional[str]) -> Optional[str]:
-    if path_like is None:
-        return None
-    path = Path(str(path_like))
-    if path.is_absolute():
-        return str(path)
-    return str(Path(hydra.utils.get_original_cwd()) / path)
+    return resolve_optional_path_str(
+        path_like,
+        nullish=(None,),
+        fallback_to_resolve=False,
+    )
 
 
 def sample_for_logging(

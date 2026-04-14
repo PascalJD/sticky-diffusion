@@ -43,5 +43,10 @@ sampler_probe_batches: 0
 sampler_probe_batch_size: null
 sampler_probe_seed_offset: 777777
 
+# Sudoku Proposition 5.2 diagnostics only. When true, offline checkpoint eval
+# skips the board-accuracy policy sweep and runs only the held-out hazard
+# diagnostics on the saved checkpoint.
+eval_prop52_only: false
+
 # Where to write the JSON report (relative to Hydra output dir unless absolute).
 output_path: offline_eval_metrics.json

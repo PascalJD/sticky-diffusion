@@ -1,0 +1,38 @@
+# Ordered-normal anchors: ordinal structure + high-dimensional embedding.
+# Ablation variant of sjd_sudoku.yaml. Combines the ordering prior of
+# ordered_scalar with the VP-noise identifiability of dim=64 anchors.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: sjd_sudoku
+  - /training: sudoku_sjd
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /runtime: default
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint_ordered_normal
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97
+
+model:
+  anchor:
+    family: ordered_normal
+    dim: 64
+    learnable: false
+    seed: 0
+    init_std: 1.0
+    transform:
+      scale: 1.0
+      whiten: false
+      center_columns: false
+      equalize_row_norms: true

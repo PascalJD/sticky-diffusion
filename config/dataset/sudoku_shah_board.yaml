@@ -1,0 +1,25 @@
+# Shah Sudoku dataset reconstructed into simple row-major 81-cell boards.
+# This benchmark intentionally ignores the stored suffix ordering after board
+# reconstruction.
+name: sudoku_shah_board
+data_dir: data/sudoku
+train_file: Sudoku-train-data.npy
+test_file: Sudoku-test-data.npy
+
+batch_size: 256
+eval_batch_size: 256
+per_device_batch_size: -1
+
+data_shape: [81]
+vocab_size: 10
+num_classes: -1
+
+drop_remainder: true
+shuffle: true
+mmap: true
+auto_download: true
+download_timeout_sec: 120
+download_retries: 8
+
+max_train_examples: -1
+max_test_examples: -1

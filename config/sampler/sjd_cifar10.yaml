@@ -26,3 +26,12 @@ rng_fold: 4
 
 # Force terminal plug-in jump at t=dt
 force_classify_at_end: true
+
+pc_enabled: false
+corrector_substeps: 0
+corrector_step_scale: 0.0
+pc_gate: constant_one
+pc_clamp_known: true
+pc_refresh_logits_after_langevin: false
+pc_allow_unstick_unknown_only: true
+metrics_count_nfe: true

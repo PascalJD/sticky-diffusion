@@ -730,3 +730,21 @@ class AnchorTable:
     @property
     def d(self) -> int:
         return int(self.table_float.shape[1])
+
+
+def clamp_known_state(
+    *,
+    y: Array,
+    committed: Array,
+    k_idx: Array,
+    known_mask: Array | None,
+    known_idx: Array | None,
+    a_table: Array,
+) -> tuple[Array, Array, Array]:
+    if known_mask is None or known_idx is None:
+        return y, committed, k_idx
+    known_vec = a_table[jnp.asarray(known_idx, dtype=jnp.int32)]
+    y = jnp.where(known_mask[..., None], known_vec, y)
+    committed = jnp.where(known_mask, True, committed)
+    k_idx = jnp.where(known_mask, known_idx, k_idx)
+    return y, committed, k_idx

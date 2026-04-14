@@ -1,0 +1,24 @@
+defaults:
+  - /model/backbone@_here_: adm_unet
+  - _self_
+
+name: d3pm
+transition_type: gaussian
+transition_beta_schedule: linear
+timesteps: 256
+beta_start: 1.0e-4
+beta_end: 2.0e-2
+auxiliary_loss_weight: 1.0e-3
+
+time_features: t
+antithetic_time_sampling: true
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false
+
+image_backbone: adm_unet5d
+classes: -1

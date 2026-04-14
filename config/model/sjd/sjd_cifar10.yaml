@@ -1,0 +1,15 @@
+defaults:
+  - /model/backbone@_here_: adm_unet
+  - /model/anchor@anchor: thermometer
+  - _self_
+
+# Canonical SJD model for CIFAR-10.
+name: sjd
+
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+time_features: t
+model_sharding: false

@@ -1,0 +1,68 @@
+# Canonical compact/default SJD Sudoku comparison:
+# a small but representative mix of time-only, heuristic state-dependent,
+# model-implied state-dependent, and predictor/corrector runs.
+mode: sudoku
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+
+sudoku_every: ${experiment.training.eval_every_steps}
+sudoku_num_batches: 64
+sudoku_num_batches_force: -1
+sudoku_eval_seed_offset: 1776
+sudoku_sample_seed_offset: 314159
+sudoku_eval_fold_in_step: false
+sudoku_progress_every_batches: 20
+param_source: ema
+
+sudoku_run_all_sampler_modes: true
+sudoku_primary_sampler_label: pc_margin_l1_s0p10
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
+sudoku_log_policy_table: true
+sudoku_prop52_enabled: false
+sudoku_prop52_only: false
+sudoku_write_progress_csv: true
+sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
+sudoku_write_latest_csv: true
+sudoku_latest_csv_path: metrics/sudoku_sjd_latest.csv
+
+sudoku_eval_sjd_runs:
+  linear_survival:
+    kind: policy
+    policy: linear_survival
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 1.00
+  cosine_survival:
+    kind: policy
+    policy: cosine_survival
+    n_steps: 50
+    sampling_grid: cosine
+    eta: 1.00
+  linear_topk_probability:
+    kind: policy
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  plugin_hazard_eta_0p97:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
+  predictor_only:
+    kind: sampler
+    sampler: sjd_sudoku_predictor
+  pc_constant_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_constant
+  pc_entropy_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_entropy
+  pc_margin_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_margin

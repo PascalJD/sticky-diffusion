@@ -1,0 +1,17 @@
+defaults:
+  - base
+  - _self_
+
+name: imagenet64
+
+num_train_steps: 1000000
+checkpoint_every_steps: 20000
+log_images_every_steps: 20000
+checkpoint_keep: 5
+
+# Prefer generation-quality checkpoint selection for the first ImageNet64 path.
+best_checkpoint_metric: eval/fid
+best_checkpoint_mode: min
+
+likelihood_eval_every_steps: 20000
+likelihood_eval_max_batches: 8

@@ -1,0 +1,32 @@
+# Approximate 64x64 masked-discrete UNet for this codebase.
+# These settings are codebase-adapted approximations of ImageNet64-scale
+# literature presets, not claims of exact architectural reproduction.
+feature_dim: 192
+n_layers: 32
+n_dit_layers: 8
+dit_num_heads: 12
+dit_hidden_size: 768
+ch_mult: [1, 2, 3, 4]
+
+sequence_backbone: auto
+image_backbone: unet5d
+
+adm_num_res_blocks: 3
+adm_attention_resolutions: [2, 4, 8]
+adm_num_heads: 4
+adm_num_head_channels: 64
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+adm_use_new_attention_order: false
+
+dropout_rate: 0.1
+use_attn_dropout: true
+num_heads: 12
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false

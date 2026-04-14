@@ -1,22 +1,3 @@
+# Legacy flat alias for the canonical baseline model config.
 defaults:
-  - architecture@_here_: adm_unet
-  - _self_
-
-name: d3pm
-transition_type: uniform
-transition_beta_schedule: cosine
-timesteps: 256
-auxiliary_loss_weight: 1.0e-3
-
-time_features: t
-antithetic_time_sampling: true
-num_heads: 12
-use_attn_dropout: true
-mlp_type: swiglu
-depth_scaled_init: true
-cond_type: adaln_zero
-outside_embed: false
-model_sharding: false
-
-image_backbone: adm_unet5d
-classes: -1
+  - /model/baseline@_here_: d3pm_uniform_cifar10

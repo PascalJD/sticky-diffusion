@@ -1,13 +1,13 @@
-# Sampler profile for Sudoku SJD.
+# Base sampler defaults for Sudoku SJD runs.
 T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 50
 sampling_grid: uniform
 
-alloc_mode: sample
+alloc_mode: argmax
 score_from_classifier: true
 score_scale: 1.0
-logit_temperature: 0.8
-categorical_sampling_policy: legacy_low
+logit_temperature: 1.0
+categorical_sampling_policy: exact
 
 hazard_mode: plugin
 intensity_mode: full
@@ -20,3 +20,12 @@ rng_fold: 4
 
 force_classify_at_end: true
 refresh_logits_after_em_step: false
+
+pc_enabled: false
+corrector_substeps: 0
+corrector_step_scale: 0.0
+pc_gate: constant_one
+pc_clamp_known: true
+pc_refresh_logits_after_langevin: false
+pc_allow_unstick_unknown_only: true
+metrics_count_nfe: true

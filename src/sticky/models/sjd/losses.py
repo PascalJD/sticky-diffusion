@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from sticky.rng import PRNGKey
 
-from .sdes import vp_perturb
+from .sdes import _expand_like, alpha_sigma, vp_perturb
 from .state_dependency import state_dependency_metrics
 
 Array = jnp.ndarray
@@ -27,6 +27,8 @@ def ce_allocation_loss(
     anchor_table: Optional[Array] = None,
     state_dep_log_ratio_clip: float = 10.0,
     given_mask: Optional[Array] = None,
+    time_sampling: str = "uniform",
+    loss_weighting: str = "uniform",
 ) -> Tuple[Array, Metrics]:
     x0_idx = x0_idx.astype(jnp.int32)
     if given_mask is None:
@@ -42,8 +44,17 @@ def ce_allocation_loss(
     B = int(x0_anchor.shape[0])
     key_t, key_vp, key_mask = jax.random.split(key, 3)
 
-    # One global time per example.
-    t_img = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=float(T))
+    # One global time per example. For odd B, ceil(B/2) base samples and
+    # their complements give >=B elements; truncate to exactly B.
+    if time_sampling == "antithetic" and B >= 2:
+        half_B = (B + 1) // 2
+        t_half = jax.random.uniform(
+            key_t, shape=(half_B,), minval=0.0, maxval=float(T)
+        )
+        t_complement = float(T) - t_half
+        t_img = jnp.concatenate([t_half, t_complement], axis=0)[:B]
+    else:
+        t_img = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=float(T))
 
     # VP corruption with broadcasting over spatial/token dimensions.
     # x0_anchor: (B, ..., d)
@@ -57,8 +68,7 @@ def ce_allocation_loss(
         )
     else:
         p_committed = jnp.zeros_like(t_img, dtype=jnp.float32)
-    while p_committed.ndim < x0_idx.ndim:
-        p_committed = p_committed[..., None]
+    p_committed = _expand_like(p_committed, x0_idx)
     committed = jax.random.bernoulli(key_mask, p=p_committed, shape=x0_idx.shape)
 
     # Conditional sequence tasks (for example Sudoku) reserve some tokens as
@@ -75,6 +85,14 @@ def ce_allocation_loss(
     suffix_mask = ~given_mask
     effective_loss_mask = suffix_mask & (~committed)
     effective_loss_weight = effective_loss_mask.astype(jnp.float32)
+    w_t = None
+    if loss_weighting == "alpha_deriv":
+        alpha_t, _ = alpha_sigma(beta, t_img)
+        beta_t = beta(t_img)
+        w_t = 0.5 * beta_t * alpha_t / jnp.maximum(1.0 - alpha_t, 1e-8)
+        w_t = w_t / jnp.maximum(jnp.mean(w_t), 1e-8)
+        w_t = _expand_like(w_t, effective_loss_weight)
+        effective_loss_weight = effective_loss_weight * w_t
     effective_loss_count = jnp.sum(effective_loss_weight)
     denom = jnp.maximum(effective_loss_count, 1.0)
     loss = jnp.sum(nll * effective_loss_weight) / denom
@@ -102,7 +120,12 @@ def ce_allocation_loss(
         "CE/frac_event": frac_uncommitted,
         "CE/frac_uncommitted": frac_uncommitted,
         "CE/frac_committed": frac_committed,
+        "CE/time_mean": jnp.mean(t_img),
+        "CE/time_std": jnp.std(t_img),
     }
+    if w_t is not None:
+        metrics["CE/loss_weight_mean"] = jnp.mean(w_t)
+        metrics["CE/loss_weight_std"] = jnp.std(w_t)
 
     if (jump is not None) and (anchor_table is not None):
         metrics.update(

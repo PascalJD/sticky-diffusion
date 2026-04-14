@@ -1,0 +1,17 @@
+# Shah-board, monotone-only, TFW-inspired Sudoku inpainting sanity benchmark.
+# This is intentionally simpler than the legacy packed seq2seq Ye-style path.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/baseline@model: mdm_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: mdm_sudoku_inpaint_top_prob_margin
+  - /training: sudoku_mdm_inpaint_tfw
+  - /runtime: default
+  - _self_
+
+task:
+  name: mdm_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128

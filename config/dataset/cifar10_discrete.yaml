@@ -1,6 +1,10 @@
 # CIFAR-10 discrete-token dataset settings.
 name: cifar10_discrete
 data_dir: data/cifar10
+tfds_name: cifar10
+train_split: train
+eval_split: test
+include_label: auto
 
 # Global batch sizes (for single-device and pmap paths).
 batch_size: 512

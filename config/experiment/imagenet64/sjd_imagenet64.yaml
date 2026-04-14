@@ -1,0 +1,19 @@
+# Canonical SJD experiment bundle for downsampled ImageNet 64x64.
+defaults:
+  - /dataset: imagenet64_discrete
+  - /model/sjd@model: sjd_imagenet64
+  - /optim: adamw_imagenet64
+  - /training: imagenet64
+  - /runtime: default
+  - /sampler: sjd_cifar10
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - _self_
+
+task:
+  name: sjd_imagenet64
+
+training:
+  log_state_dependency: true
+  state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}

@@ -8,6 +8,8 @@ data/
 !src/sticky/data/
 !src/sticky/data/__init__.py
 !src/sticky/data/cifar10_discrete.py
+.DS_Store
+__MACOSX/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

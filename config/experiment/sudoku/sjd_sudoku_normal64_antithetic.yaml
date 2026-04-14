@@ -1,0 +1,46 @@
+# Random Gaussian anchors + antithetic sampling + alpha_deriv weighting.
+# Drops the ordinal inductive bias of thermometer for the permutation-symmetric
+# digit alphabet, and enables MDM-style variance reduction in the loss.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: sjd_sudoku
+  - /training: sudoku_sjd
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /runtime: default
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+wandb:
+  run_name: sjd_sudoku_normal64_antithetic
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97
+
+model:
+  anchor:
+    family: normal
+    dim: 64
+    learnable: false
+    seed: 0
+    init_std: 1.0
+    transform:
+      scale: 1.0
+      whiten: false
+      center_columns: false
+      equalize_row_norms: false
+
+training:
+  time_sampling: antithetic
+  loss_weighting: alpha_deriv
+  best_checkpoint_metric: eval/pc_margin_argmax/solve_rate

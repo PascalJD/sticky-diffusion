@@ -1,0 +1,29 @@
+# Training-time evaluation setup for ImageNet64.
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+fid_verbose: ${.verbose}
+fid_progress_every_batches: 20
+
+fid_enabled: true
+fid_every: 20000
+fid_num_samples: 5000
+fid_batch_size: 128
+
+fid_dataset_name: ${experiment.dataset.tfds_name}
+fid_split: validation
+fid_tfds_data_dir: null
+fid_cache_dir: data/fid_stats
+
+fid_inception_batch_size: 128
+fid_inception_device: null
+
+is_enabled: true
+is_every: 0
+is_num_samples: ${.fid_num_samples}
+is_batch_size: ${.fid_batch_size}
+is_splits: 10
+is_inception_batch_size: ${.fid_inception_batch_size}
+is_inception_device: ${.fid_inception_device}

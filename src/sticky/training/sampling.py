@@ -6,6 +6,42 @@ import hydra
 import jax
 from omegaconf import DictConfig
 
+
+def _build_non_sjd_sampling_fns(
+    simple_generate,
+    *,
+    model: Any,
+    sample_timesteps: int,
+    num_log_images: int,
+    fid_every: int,
+    fid_batch_size: int,
+    validate=None,
+) -> Tuple[Optional[Any], Optional[Any]]:
+    if validate is not None:
+        validate(model=model, timesteps=sample_timesteps)
+
+    def _sample_images(params, rng, batch_size: int):
+        sample_state = {"params": params, "ema_params": None}
+        return simple_generate(
+            rng,
+            sample_state,
+            model=model,
+            batch_size=batch_size,
+            timesteps=sample_timesteps,
+            conditioning=None,
+            use_ema=False,
+        )
+
+    sample_images_jit = jax.jit(lambda p, r: _sample_images(p, r, num_log_images))
+    sample_images_fid_jit = None
+    if fid_every > 0:
+        if fid_batch_size == num_log_images:
+            sample_images_fid_jit = sample_images_jit
+        else:
+            sample_images_fid_jit = jax.jit(lambda p, r: _sample_images(p, r, fid_batch_size))
+    return sample_images_jit, sample_images_fid_jit
+
+
 def build_sampling_fns(
     *,
     cfg: DictConfig,
@@ -20,188 +56,96 @@ def build_sampling_fns(
     sample_images_fid_jit = None
 
     if str(cfg.model.name) == "md4":
-        from sticky.models.md4 import sampling as md4_sampling
+        from sticky.models.baselines.md4 import sampling as md4_sampling
 
-        def _sample_images_md4(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return md4_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_md4(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_md4(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            md4_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+        )
 
     elif str(cfg.model.name) == "mdlm":
-        from sticky.models.mdlm import sampling as mdlm_sampling
+        from sticky.models.baselines.mdlm import sampling as mdlm_sampling
 
-        def _sample_images_mdlm(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return mdlm_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_mdlm(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_mdlm(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            mdlm_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+        )
 
     elif str(cfg.model.name) == "d3pm":
-        from sticky.models.d3pm import sampling as d3pm_sampling
+        from sticky.models.baselines.d3pm import sampling as d3pm_sampling
 
-        d3pm_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
-        d3pm_sampling.validate_sampling_grid(model=model)
+        def _validate_d3pm(*, model: Any, timesteps: int) -> None:
+            d3pm_sampling.validate_timesteps(model=model, timesteps=timesteps)
+            d3pm_sampling.validate_sampling_grid(model=model)
 
-        def _sample_images_d3pm(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return d3pm_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_d3pm(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_d3pm(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            d3pm_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+            validate=_validate_d3pm,
+        )
 
     elif str(cfg.model.name) == "cadd":
-        from sticky.models.cadd import sampling as cadd_sampling
+        from sticky.models.baselines.cadd import sampling as cadd_sampling
 
-        def _sample_images_cadd(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return cadd_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_cadd(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_cadd(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            cadd_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+        )
 
     elif str(cfg.model.name) == "candi":
-        from sticky.models.candi import sampling as candi_sampling
+        from sticky.models.baselines.candi import sampling as candi_sampling
 
-        candi_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
-
-        def _sample_images_candi(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return candi_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_candi(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_candi(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            candi_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+            validate=candi_sampling.validate_timesteps,
+        )
 
     elif str(cfg.model.name) == "ddpm":
-        from sticky.models.ddpm import sampling as ddpm_sampling
+        from sticky.models.baselines.ddpm import sampling as ddpm_sampling
 
-        ddpm_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
-
-        def _sample_images_ddpm(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return ddpm_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_ddpm(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_ddpm(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            ddpm_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+            validate=ddpm_sampling.validate_timesteps,
+        )
 
     elif str(cfg.model.name) == "bitdiff":
-        from sticky.models.bitdiff import sampling as bitdiff_sampling
+        from sticky.models.baselines.bitdiff import sampling as bitdiff_sampling
 
-        bitdiff_sampling.validate_timesteps(model=model, timesteps=sample_timesteps)
-
-        def _sample_images_bitdiff(params, rng, batch_size: int):
-            sample_state = {"params": params, "ema_params": None}
-            return bitdiff_sampling.simple_generate(
-                rng,
-                sample_state,
-                model=model,
-                batch_size=batch_size,
-                timesteps=sample_timesteps,
-                conditioning=None,
-                use_ema=False,
-            )
-
-        sample_images_jit = jax.jit(lambda p, r: _sample_images_bitdiff(p, r, num_log_images))
-
-        if fid_every > 0:
-            if fid_batch_size == num_log_images:
-                sample_images_fid_jit = sample_images_jit
-            else:
-                sample_images_fid_jit = jax.jit(
-                    lambda p, r: _sample_images_bitdiff(p, r, fid_batch_size)
-                )
+        sample_images_jit, sample_images_fid_jit = _build_non_sjd_sampling_fns(
+            bitdiff_sampling.simple_generate,
+            model=model,
+            sample_timesteps=sample_timesteps,
+            num_log_images=num_log_images,
+            fid_every=fid_every,
+            fid_batch_size=fid_batch_size,
+            validate=bitdiff_sampling.validate_timesteps,
+        )
 
     elif str(cfg.model.name) == "sjd":
         from sticky.models.sjd import sampling as sjd_sampling
@@ -238,6 +182,18 @@ def build_sampling_fns(
             refresh_logits_after_em_step=bool(
                 cfg.sampler.get("refresh_logits_after_em_step", False)
             ),
+            pc_enabled=bool(cfg.sampler.get("pc_enabled", False)),
+            corrector_substeps=int(cfg.sampler.get("corrector_substeps", 0)),
+            corrector_step_scale=float(cfg.sampler.get("corrector_step_scale", 0.0)),
+            pc_gate=str(cfg.sampler.get("pc_gate", "constant_one")),
+            pc_clamp_known=bool(cfg.sampler.get("pc_clamp_known", True)),
+            pc_refresh_logits_after_langevin=bool(
+                cfg.sampler.get("pc_refresh_logits_after_langevin", False)
+            ),
+            pc_allow_unstick_unknown_only=bool(
+                cfg.sampler.get("pc_allow_unstick_unknown_only", True)
+            ),
+            metrics_count_nfe=bool(cfg.sampler.get("metrics_count_nfe", True)),
         )
 
         def _sample_images_sjd(params, rng, batch_size: int):

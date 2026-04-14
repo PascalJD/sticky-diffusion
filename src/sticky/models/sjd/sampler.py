@@ -26,16 +26,19 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from sticky.models.discrete_mixture import (
+from sticky.models.common.discrete_mixture import (
+    categorical_sample_from_probs,
     categorical_sample_from_logits,
     sample_mixture_categorical,
 )
 from sticky.rng import PRNGKey
 
+from .anchors import clamp_known_state
+from .corrector import corrector_step_size, masked_sum, normalize_pc_gate_name, pc_gate_from_probs
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
 from .plugin_intensity import plugin_intensity_and_choice, plugin_intensity_and_probs
-from .sdes import alpha_sigma
+from .sdes import _expand_like, alpha_sigma
 
 
 Array = jnp.ndarray
@@ -60,6 +63,14 @@ class SamplerConfig:
     eps_denom: float = 1e-12
     force_classify_at_end: bool = True  # legacy name: force final plug-in jump at t=dt
     refresh_logits_after_em_step: bool = False
+    pc_enabled: bool = False
+    corrector_substeps: int = 0
+    corrector_step_scale: float = 0.0
+    pc_gate: str = "constant_one"
+    pc_clamp_known: bool = True
+    pc_refresh_logits_after_langevin: bool = False
+    pc_allow_unstick_unknown_only: bool = True
+    metrics_count_nfe: bool = True
 
 
 @struct.dataclass
@@ -75,13 +86,6 @@ class ReverseSampleResult:
 def _broadcast_time_to_batch(t_scalar: Array, batch_size: int) -> Array:
     """Convert a scalar time to a (B,) vector."""
     return jnp.full((batch_size,), jnp.asarray(t_scalar, dtype=jnp.float32), dtype=jnp.float32)
-
-
-def _expand_like(v: Array, like: Array) -> Array:
-    """Broadcast (B,) vector to match `like` by adding trailing singleton dims."""
-    while v.ndim < like.ndim:
-        v = v[..., None]
-    return v
 
 
 def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Array:
@@ -105,6 +109,10 @@ def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Ar
     scaled = scaled.at[0].set(1.0)
     scaled = scaled.at[-1].set(0.0)
     return jnp.asarray(float(T), dtype=jnp.float32) * jnp.clip(scaled, 0.0, 1.0)
+
+
+def _site_mask_count(mask: Array) -> Array:
+    return jnp.sum(jnp.asarray(mask, dtype=jnp.float32))
 
 
 def reverse_sample(
@@ -142,18 +150,22 @@ def reverse_sample(
     L = int(a_table.shape[0])
     d = int(a_table.shape[1])
     if float(cfg.logit_temperature) <= 0.0:
-        raise ValueError(
-            f"logit_temperature must be > 0, got {cfg.logit_temperature}"
-        )
+        raise ValueError(f"logit_temperature must be > 0, got {cfg.logit_temperature}")
     logit_temperature = jnp.asarray(float(cfg.logit_temperature), dtype=jnp.float32)
     time_grid = make_sampling_time_grid(
         T=float(cfg.T),
         n_steps=int(cfg.n_steps),
         sampling_grid=cfg.sampling_grid,
     )
+    pc_gate = normalize_pc_gate_name(cfg.pc_gate)
+    pc_active = bool(cfg.pc_enabled) and int(cfg.corrector_substeps) > 0 and float(cfg.corrector_step_scale) > 0.0
 
     k0, k_loop = jax.random.split(key, 2)
-    y = cfg.init_std * jax.random.normal(k0, shape=(batch_size,) + tuple(shape) + (d,), dtype=jnp.float32)
+    y = cfg.init_std * jax.random.normal(
+        k0,
+        shape=(batch_size,) + tuple(shape) + (d,),
+        dtype=jnp.float32,
+    )
 
     committed = jnp.zeros((batch_size,) + tuple(shape), dtype=bool)
     k_idx = -jnp.ones((batch_size,) + tuple(shape), dtype=jnp.int32)
@@ -169,18 +181,52 @@ def reverse_sample(
                 "known_idx/known_mask must match sampled token shape "
                 f"{committed.shape}; got {known_idx.shape} and {known_mask.shape}."
             )
-        known_idx_clipped = jnp.clip(known_idx, 0, L - 1)
-        known_vec = a_table[known_idx_clipped]
-        y = jnp.where(known_mask[..., None], known_vec, y)
-        committed = known_mask
-        k_idx = jnp.where(known_mask, known_idx_clipped, k_idx)
+        known_idx = jnp.clip(known_idx, 0, L - 1)
+        y, committed, k_idx = clamp_known_state(
+            y=y,
+            committed=committed,
+            k_idx=k_idx,
+            known_mask=known_mask,
+            known_idx=known_idx,
+            a_table=a_table,
+        )
         known_frac = jnp.mean(known_mask.astype(jnp.float32))
+
+    def _predictive_stats(logits: Array, y_state: Array, t_img_state: Array) -> tuple[Array, Array, Array]:
+        probs = jax.nn.softmax(logits, axis=-1)
+        mu = (probs.reshape((-1, L)).astype(jnp.float32) @ a_table).reshape(y_state.shape)
+        alpha, sigma = alpha_sigma(beta, t_img_state)
+        alpha = _expand_like(alpha, y_state)
+        sigma = _expand_like(sigma, y_state)
+        sigma2 = sigma * sigma
+        denom = jnp.maximum(sigma2, cfg.eps_denom)
+        score = (-(y_state - alpha * mu) / denom) * float(cfg.score_scale)
+        bt = _expand_like(beta(t_img_state), y_state)
+        return probs, score, bt
+
+    def _sample_commit_indices(key_choice: Array, *, choice_probs: Array) -> Array:
+        if cfg.alloc_mode == "sample":
+            return categorical_sample_from_probs(
+                key_choice,
+                choice_probs,
+                policy=cfg.categorical_sampling_policy,
+            )
+        return jnp.argmax(choice_probs, axis=-1).astype(jnp.int32)
 
     jump_count = jnp.asarray(0.0, jnp.float32)
     lam_sum_active = jnp.asarray(0.0, jnp.float32)
     p_jump_sum_active = jnp.asarray(0.0, jnp.float32)
     active_count_total = jnp.asarray(0.0, jnp.float32)
     frac_committed_pre_force = jnp.asarray(0.0, dtype=jnp.float32)
+    nfe_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_commit_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_unstick_attempts_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_unstick_accepts_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_langevin_updates_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_gate_cont_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_gate_cont_count = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_gate_committed_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_gate_committed_count = jnp.asarray(0.0, dtype=jnp.float32)
 
     def step_fn(i: int, carry):
         (
@@ -193,6 +239,15 @@ def reverse_sample(
             p_jump_sum_active,
             active_count_total,
             frac_committed_pre_force,
+            nfe_total,
+            pc_commit_total,
+            pc_unstick_attempts_total,
+            pc_unstick_accepts_total,
+            pc_langevin_updates_total,
+            pc_gate_cont_sum,
+            pc_gate_cont_count,
+            pc_gate_committed_sum,
+            pc_gate_committed_count,
         ) = carry
 
         t_scalar = time_grid[i]
@@ -201,7 +256,6 @@ def reverse_sample(
         t_img = _broadcast_time_to_batch(t_scalar, batch_size)
         is_last_step = i == int(cfg.n_steps) - 1
 
-        # Diffusion step (Euler-Maruyama)
         if not cfg.score_from_classifier:
             raise NotImplementedError("Only classifier-induced score is implemented.")
 
@@ -211,27 +265,11 @@ def reverse_sample(
         else:
             key, k_eps, k_u, k_a = jax.random.split(key, 4)
         logits_score, _ = apply_model(params, y_for_model, t_img)
-        probs = jax.nn.softmax(logits_score, axis=-1)
-
-        probs2 = probs.reshape((-1, L)).astype(jnp.float32)
-        mu2 = probs2 @ a_table
-        mu = mu2.reshape(y.shape)
-
-        alpha, sigma = alpha_sigma(beta, t_img)
-        alpha = _expand_like(alpha, y)
-        sigma = _expand_like(sigma, y)
-        sigma2 = sigma * sigma
-        denom = jnp.maximum(sigma2, cfg.eps_denom)
-
-        score = -(y - alpha * mu) / denom
-        score = score * float(cfg.score_scale)
-
-        bt = beta(t_img)
-        bt = _expand_like(bt, y)
-
+        if cfg.metrics_count_nfe:
+            nfe_total = nfe_total + 1.0
+        probs, score, bt = _predictive_stats(logits_score, y_for_model, t_img)
         drift = (+0.5 * bt) * y + bt * score
 
-        # Update only uncommitted sites.
         m = (~committed)[..., None].astype(jnp.float32)
         noise = jax.random.normal(k_eps, shape=y.shape, dtype=jnp.float32)
         y = y + m * (drift * dt + jnp.sqrt(bt * dt) * noise)
@@ -243,6 +281,8 @@ def reverse_sample(
             refreshed_t_img = _broadcast_time_to_batch(next_t_scalar, batch_size)
             refreshed_y = y
             refreshed_logits, _ = apply_model(params, refreshed_y, refreshed_t_img)
+            if cfg.metrics_count_nfe:
+                nfe_total = nfe_total + 1.0
             jump_t_img = refreshed_t_img
             jump_y = refreshed_y
             jump_logits = refreshed_logits
@@ -251,7 +291,6 @@ def reverse_sample(
                 jump_y = jnp.where(is_last_step, y_for_model, jump_y)
                 jump_logits = jnp.where(is_last_step, logits_score, jump_logits)
 
-        # Jump step (plugin hazard). Temperature only changes allocation.
         if cfg.alloc_mode == "sample":
             lam_total, choice_probs = plugin_intensity_and_probs(
                 logits=jump_logits,
@@ -284,10 +323,8 @@ def reverse_sample(
                 chunk_size=int(cfg.intensity_chunk_size),
             )
 
-        # No jumps once committed.
         active = (~committed).astype(jnp.float32)
         lam_total = jnp.where(committed, 0.0, lam_total)
-
         p_jump = 1.0 - jnp.exp(-lam_total * dt)
         lam_sum_active = lam_sum_active + jnp.sum(lam_total * active)
         p_jump_sum_active = p_jump_sum_active + jnp.sum(p_jump * active)
@@ -306,9 +343,6 @@ def reverse_sample(
                 active,
                 p_jump,
             )
-            # Intentionally draw once from the joint {stay} U {anchors} mixture.
-            # In JAX we do not factor this into jump/no-jump plus anchor choice,
-            # so we preserve the categorical behavior that motivated the SJD fix.
             a_idx, stay_mask = sample_mixture_categorical(
                 k_mix,
                 destination_probs=choice_probs,
@@ -323,13 +357,177 @@ def reverse_sample(
             if cfg.force_classify_at_end:
                 jump_mask = jnp.where(is_last_step, ~committed, jump_mask)
 
-        # Commit: set discrete index + snap y to the chosen anchor vector.
         k_idx = jnp.where(jump_mask, a_idx, k_idx)
-        a_vec = a_table[a_idx]  # (..., d)
+        a_vec = a_table[a_idx]
         y = jnp.where(jump_mask[..., None], a_vec, y)
         committed = committed | jump_mask
-
         jump_count = jump_count + jnp.sum(jump_mask.astype(jnp.float32))
+
+        if pc_active:
+            corr_t_img = _broadcast_time_to_batch(next_t_scalar, batch_size)
+            eps_corr = corrector_step_size(dt=dt, step_scale=float(cfg.corrector_step_scale))
+            alpha_u = _expand_like(hazard.lam(corr_t_img), committed)
+            p_unstick_base = 1.0 - jnp.exp(-alpha_u * eps_corr)
+
+            for _ in range(int(cfg.corrector_substeps)):
+                # Sudoku experiments should only ever allow corrector unsticking on
+                # committed unknown/non-clue sites. When the flag is disabled we
+                # treat the anchor->continuous move as fully disabled rather than
+                # letting it reach clue cells or introducing ambiguous semantics.
+                if bool(cfg.pc_allow_unstick_unknown_only):
+                    committed_unknown = committed if known_mask is None else (
+                        committed & (~known_mask)
+                    )
+                else:
+                    committed_unknown = jnp.zeros_like(committed, dtype=jnp.bool_)
+
+                k_anchor = jnp.clip(k_idx, 0, L - 1)
+                anchor_vec = a_table[k_anchor]
+                key, k_prop, k_accept = jax.random.split(key, 3)
+                proposed_y = jump.sample(k_prop, anchor_vec, corr_t_img)
+                if bool(cfg.pc_clamp_known):
+                    proposed_y, _, _ = clamp_known_state(
+                        y=proposed_y,
+                        committed=committed,
+                        k_idx=k_idx,
+                        known_mask=known_mask,
+                        known_idx=known_idx,
+                        a_table=a_table,
+                    )
+
+                proposal_gate = jnp.ones(committed.shape, dtype=jnp.float32)
+                if pc_gate != "constant_one":
+                    proposal_logits, _ = apply_model(params, proposed_y, corr_t_img)
+                    if cfg.metrics_count_nfe:
+                        nfe_total = nfe_total + 1.0
+                    proposal_gate = pc_gate_from_probs(
+                        jax.nn.softmax(proposal_logits, axis=-1),
+                        gate=pc_gate,
+                    )
+
+                p_unstick = jnp.where(
+                    committed_unknown,
+                    jnp.clip(proposal_gate * p_unstick_base, 0.0, 1.0),
+                    0.0,
+                )
+                accept_unstick = committed_unknown & (
+                    jax.random.uniform(
+                        k_accept,
+                        shape=committed.shape,
+                        minval=0.0,
+                        maxval=1.0,
+                    )
+                    < p_unstick
+                )
+                pc_unstick_attempts_total = pc_unstick_attempts_total + _site_mask_count(committed_unknown)
+                pc_unstick_accepts_total = pc_unstick_accepts_total + _site_mask_count(accept_unstick)
+                pc_gate_committed_sum = pc_gate_committed_sum + masked_sum(proposal_gate, committed_unknown)
+                pc_gate_committed_count = pc_gate_committed_count + _site_mask_count(committed_unknown)
+
+                y = jnp.where(accept_unstick[..., None], proposed_y, y)
+                committed = committed & (~accept_unstick)
+                k_idx = jnp.where(accept_unstick, -1, k_idx)
+                if bool(cfg.pc_clamp_known):
+                    y, committed, k_idx = clamp_known_state(
+                        y=y,
+                        committed=committed,
+                        k_idx=k_idx,
+                        known_mask=known_mask,
+                        known_idx=known_idx,
+                        a_table=a_table,
+                    )
+
+                logits_corr, _ = apply_model(params, y, corr_t_img)
+                if cfg.metrics_count_nfe:
+                    nfe_total = nfe_total + 1.0
+                probs_corr, score_corr, _ = _predictive_stats(logits_corr, y, corr_t_img)
+                continuous_mask = ~committed
+
+                if bool(cfg.pc_refresh_logits_after_langevin):
+                    key, k_langevin = jax.random.split(key)
+                    langevin_noise = jax.random.normal(k_langevin, shape=y.shape, dtype=jnp.float32)
+                    langevin_mask = continuous_mask[..., None].astype(jnp.float32)
+                    y = y + langevin_mask * (
+                        eps_corr * score_corr + jnp.sqrt(2.0 * eps_corr) * langevin_noise
+                    )
+                    pc_langevin_updates_total = pc_langevin_updates_total + _site_mask_count(continuous_mask)
+                    if bool(cfg.pc_clamp_known):
+                        y, committed, k_idx = clamp_known_state(
+                            y=y,
+                            committed=committed,
+                            k_idx=k_idx,
+                            known_mask=known_mask,
+                            known_idx=known_idx,
+                            a_table=a_table,
+                        )
+
+                    logits_commit, _ = apply_model(params, y, corr_t_img)
+                    if cfg.metrics_count_nfe:
+                        nfe_total = nfe_total + 1.0
+                    probs_commit = jax.nn.softmax(logits_commit, axis=-1)
+                    commit_y = y
+                    continuous_mask = ~committed
+                else:
+                    logits_commit = logits_corr
+                    probs_commit = probs_corr
+                    commit_y = y
+
+                lam_pc, choice_probs_pc = plugin_intensity_and_probs(
+                    logits=logits_commit,
+                    y=commit_y,
+                    t_img=corr_t_img,
+                    anchors=anchors,
+                    beta=beta,
+                    hazard=hazard,
+                    jump=jump,
+                    logit_temperature=float(cfg.logit_temperature),
+                    intensity_mode=cfg.intensity_mode,
+                    log_ratio_clip=float(cfg.log_ratio_clip),
+                    chunk_size=int(cfg.intensity_chunk_size),
+                )
+                gate_cont = pc_gate_from_probs(probs_commit, gate=pc_gate)
+                p_commit = jnp.where(
+                    continuous_mask,
+                    jnp.clip(gate_cont * (1.0 - jnp.exp(-lam_pc * eps_corr)), 0.0, 1.0),
+                    0.0,
+                )
+                pc_gate_cont_sum = pc_gate_cont_sum + masked_sum(gate_cont, continuous_mask)
+                pc_gate_cont_count = pc_gate_cont_count + _site_mask_count(continuous_mask)
+
+                key, k_commit, k_commit_select, k_langevin = jax.random.split(key, 4)
+                commit_idx = _sample_commit_indices(k_commit_select, choice_probs=choice_probs_pc)
+                commit_mask = continuous_mask & (
+                    jax.random.uniform(
+                        k_commit,
+                        shape=continuous_mask.shape,
+                        minval=0.0,
+                        maxval=1.0,
+                    )
+                    < p_commit
+                )
+                pc_commit_total = pc_commit_total + _site_mask_count(commit_mask)
+                committed = committed | commit_mask
+                k_idx = jnp.where(commit_mask, commit_idx, k_idx)
+                y = jnp.where(commit_mask[..., None], a_table[commit_idx], commit_y)
+
+                if not bool(cfg.pc_refresh_logits_after_langevin):
+                    continuous_post = ~committed
+                    langevin_noise = jax.random.normal(k_langevin, shape=y.shape, dtype=jnp.float32)
+                    y = y + continuous_post[..., None].astype(jnp.float32) * (
+                        eps_corr * score_corr + jnp.sqrt(2.0 * eps_corr) * langevin_noise
+                    )
+                    pc_langevin_updates_total = pc_langevin_updates_total + _site_mask_count(continuous_post)
+
+                if bool(cfg.pc_clamp_known):
+                    y, committed, k_idx = clamp_known_state(
+                        y=y,
+                        committed=committed,
+                        k_idx=k_idx,
+                        known_mask=known_mask,
+                        known_idx=known_idx,
+                        a_table=a_table,
+                    )
+
         return (
             key,
             y,
@@ -340,6 +538,15 @@ def reverse_sample(
             p_jump_sum_active,
             active_count_total,
             frac_committed_pre_force,
+            nfe_total,
+            pc_commit_total,
+            pc_unstick_attempts_total,
+            pc_unstick_accepts_total,
+            pc_langevin_updates_total,
+            pc_gate_cont_sum,
+            pc_gate_cont_count,
+            pc_gate_committed_sum,
+            pc_gate_committed_count,
         )
 
     carry = (
@@ -352,6 +559,15 @@ def reverse_sample(
         p_jump_sum_active,
         active_count_total,
         frac_committed_pre_force,
+        nfe_total,
+        pc_commit_total,
+        pc_unstick_attempts_total,
+        pc_unstick_accepts_total,
+        pc_langevin_updates_total,
+        pc_gate_cont_sum,
+        pc_gate_cont_count,
+        pc_gate_committed_sum,
+        pc_gate_committed_count,
     )
     carry = jax.lax.fori_loop(0, int(cfg.n_steps), step_fn, carry)
     (
@@ -364,24 +580,31 @@ def reverse_sample(
         p_jump_sum_active,
         active_count_total,
         frac_committed_pre_force,
+        nfe_total,
+        pc_commit_total,
+        pc_unstick_attempts_total,
+        pc_unstick_accepts_total,
+        pc_langevin_updates_total,
+        pc_gate_cont_sum,
+        pc_gate_cont_count,
+        pc_gate_committed_sum,
+        pc_gate_committed_count,
     ) = carry
 
-    # Fraction of sites that jumped at least once.
     n_sites = jnp.asarray(committed.size, dtype=jnp.float32)
     jump_frac = jump_count / jnp.maximum(n_sites, 1.0)
     denom_active = jnp.maximum(active_count_total, 1.0)
     lam_mean_active = lam_sum_active / denom_active
     p_jump_mean_active = p_jump_sum_active / denom_active
-
     final_committed_frac = jnp.mean(committed.astype(jnp.float32))
 
-    # Fill any remaining sites only as a convenience when the terminal forced
-    # jump is disabled.
     if cfg.force_classify_at_end:
         k_filled = k_idx
     else:
         t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
         logits_end, _ = apply_model(params, y, t0)
+        if cfg.metrics_count_nfe:
+            nfe_total = nfe_total + 1.0
         key, k_end = jax.random.split(key)
         if cfg.alloc_mode == "sample":
             k_fill = categorical_sample_from_logits(
@@ -393,6 +616,13 @@ def reverse_sample(
             k_fill = jnp.argmax(logits_end, axis=-1).astype(jnp.int32)
         k_filled = jnp.where(committed, k_idx, k_fill)
         frac_committed_pre_force = final_committed_frac
+
+    batch_den = jnp.maximum(jnp.asarray(float(batch_size), dtype=jnp.float32), 1.0)
+    n_steps_den = jnp.maximum(jnp.asarray(float(cfg.n_steps), dtype=jnp.float32), 1.0)
+    unstick_attempts_per_board = pc_unstick_attempts_total / batch_den
+    unstick_accepts_per_board = pc_unstick_accepts_total / batch_den
+    pc_commit_per_board = pc_commit_total / batch_den
+    langevin_updates_per_board = pc_langevin_updates_total / batch_den
 
     metrics = {
         "sampling/frac_committed_pre_force": frac_committed_pre_force,
@@ -409,6 +639,24 @@ def reverse_sample(
         "sampling/p_jump_mean_active": p_jump_mean_active,
         "sampling/score_scale": jnp.asarray(float(cfg.score_scale), dtype=jnp.float32),
         "sampling/logit_temperature": logit_temperature,
+        "sampling/nfe_total": nfe_total,
+        "sampling/continuous_to_anchor_commits_total": pc_commit_per_board,
+        "sampling/continuous_to_anchor_commits_per_step": pc_commit_per_board / n_steps_den,
+        "sampling/anchor_to_continuous_unstick_attempts_total": unstick_attempts_per_board,
+        "sampling/anchor_to_continuous_unstick_accepts_total": unstick_accepts_per_board,
+        "sampling/anchor_to_continuous_accept_rate": unstick_accepts_per_board
+        / jnp.maximum(unstick_attempts_per_board, 1.0),
+        "sampling/langevin_updates_total": langevin_updates_per_board,
+        "sampling/langevin_updates_per_step": langevin_updates_per_board / n_steps_den,
+        "sampling/gate_mean_continuous": pc_gate_cont_sum
+        / jnp.maximum(pc_gate_cont_count, 1.0),
+        "sampling/gate_mean_committed": pc_gate_committed_sum
+        / jnp.maximum(pc_gate_committed_count, 1.0),
     }
 
-    return ReverseSampleResult(k=k_idx, k_filled=k_filled, committed=committed, metrics=metrics)
+    return ReverseSampleResult(
+        k=k_idx,
+        k_filled=k_filled,
+        committed=committed,
+        metrics=metrics,
+    )
