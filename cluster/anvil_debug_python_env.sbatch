@@ -18,4 +18,4 @@ cd "${REPO_ROOT}"
 LOG_PATH="${OUTPUT_DIR}/python_env_debug_${SLURM_JOB_ID:-manual}.log"
 echo "Writing diagnostics to ${LOG_PATH}"
 
-bash "${REPO_ROOT}/scripts/debug_python_env.sh" | tee "${LOG_PATH}"
+bash "${REPO_ROOT}/cluster/debug_python_env.sh" | tee "${LOG_PATH}"

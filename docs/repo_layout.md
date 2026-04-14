@@ -13,7 +13,7 @@ single canonical source/config tree.
     and `experiment/sudoku/`.
   - Models are grouped under `model/backbone/`, `model/baseline/`, and `model/sjd/`.
 - `docs/`: repository, config, dataset, and baseline-extension notes.
-- `scripts/`
+- `cluster/`
   - Shell, launcher, and cluster scripts.
   - `.sbatch` launchers stay here.
 - `tools/`: one-off Python utilities, reporting helpers, and data-prep scripts.

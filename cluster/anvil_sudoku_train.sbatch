@@ -25,7 +25,7 @@ RUN_DIR="${RUN_DIR:-${RUNS_BASE_DIR}/${RUN_TAG}}"
 mkdir -p "${RUN_DIR}"
 cd "${REPO_ROOT}"
 
-source "${REPO_ROOT}/scripts/anvil_python_env.sh"
+source "${REPO_ROOT}/cluster/anvil_python_env.sh"
 sticky_resolve_python_env
 
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"

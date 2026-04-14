@@ -2,10 +2,10 @@
 # Submit a SLURM job to the anvil cluster.
 #
 # Usage:
-#   scripts/submit_anvil.sh <sbatch_path> [KEY=VAL ...] [-- <extra sbatch args>]
+#   cluster/submit_anvil.sh <sbatch_path> [KEY=VAL ...] [-- <extra sbatch args>]
 #
 # Example:
-#   scripts/submit_anvil.sh scripts/anvil_sudoku_train.sbatch \
+#   cluster/submit_anvil.sh cluster/anvil_sudoku_train.sbatch \
 #       EXPERIMENT=sudoku/mdlm_sudoku WANDB_ENABLED=false -- training.max_steps=100
 #
 # Env vars:
