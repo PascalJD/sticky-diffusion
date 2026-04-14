@@ -167,6 +167,36 @@ def build_clue_board(
     return clue_board
 
 
+def build_solver_rank(
+    triples: np.ndarray,
+    *,
+    start_index: np.ndarray,
+) -> np.ndarray:
+    """Normalized solver-order rank per cell for Shah Sudoku puzzles.
+
+    Returns a (B, 81) float32 array. Clue cells get rank 0 (ignored by the
+    loss). Unknown cells get rank = pos_in_solver_suffix / (n_unknown - 1) in
+    [0, 1]: 0 = solver filled first (easiest), 1 = filled last (hardest).
+    Puzzles with a single unknown cell get rank 0 for that cell.
+    """
+    triples = _normalize_triples(triples)
+    start = _normalize_start_index(start_index, batch_size=triples.shape[0])
+    batch_size = int(triples.shape[0])
+    cell_ids = _cell_ids_from_triples(triples)
+    rank = np.zeros((batch_size, SUDOKU_NUM_CELLS), dtype=np.float32)
+    batch_idx = np.arange(batch_size, dtype=np.int64)[:, None]
+    # Position within the solver-filled suffix: positions [start..80] correspond
+    # to solver steps [0..n_unknown-1]. Clip denom to avoid /0 for single-unknown.
+    pos = np.arange(SUDOKU_NUM_CELLS, dtype=np.float32)[None, :] - start[:, None].astype(np.float32)
+    n_unknown = (SUDOKU_NUM_CELLS - start).astype(np.float32)
+    denom = np.maximum(n_unknown - 1.0, 1.0)
+    suffix_rank = pos / denom[:, None]
+    is_suffix = pos >= 0.0
+    suffix_rank = np.where(is_suffix, suffix_rank, 0.0).astype(np.float32)
+    rank[batch_idx, cell_ids] = suffix_rank
+    return rank
+
+
 def build_board_batch(
     rows: np.ndarray,
     *,
@@ -176,11 +206,13 @@ def build_board_batch(
     solution_board = build_solution_board(triples)
     clue_board = build_clue_board(triples, start_index=start_index)
     clue_mask = build_clue_mask(triples, start_index=start_index)
+    solver_rank = build_solver_rank(triples, start_index=start_index)
     batch = {
         "solution_board": solution_board.astype(np.int32),
         "clue_board": clue_board.astype(np.int32),
         "clue_mask": clue_mask.astype(np.bool_),
         "start_index": start_index.reshape(-1, 1).astype(np.int32),
+        "solver_rank": solver_rank.astype(np.float32),
     }
     if bool(include_strings):
         batch["solution_str"] = boards_to_strings(solution_board)

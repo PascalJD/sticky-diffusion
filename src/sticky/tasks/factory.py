@@ -146,12 +146,21 @@ def _build_mdlm_sudoku_task(cfg: DictConfig):
     return SudokuMDLMTask(**_sudoku_board_dataset_kwargs(cfg))
 
 
+def _sjd_sudoku_order_conditioning_kwargs(cfg: DictConfig) -> dict[str, Any]:
+    return {
+        "order_conditioning": str(cfg.training.get("order_conditioning", "none")),
+        "order_w_min": float(cfg.training.get("order_w_min", 0.5)),
+        "order_w_max": float(cfg.training.get("order_w_max", 2.0)),
+    }
+
+
 def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     from sticky.tasks.sudoku_inpaint_sjd import SudokuInpaintSJDTask
 
     return SudokuInpaintSJDTask(
         **_sudoku_board_dataset_kwargs(cfg),
         **_sjd_schedule_kwargs(cfg),
+        **_sjd_sudoku_order_conditioning_kwargs(cfg),
     )
 
 

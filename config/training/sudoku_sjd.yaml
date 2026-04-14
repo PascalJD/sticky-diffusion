@@ -27,3 +27,10 @@ state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
 time_sampling: uniform
 # Loss weighting: "uniform" (default) or "alpha_deriv" (MDM importance weight)
 loss_weighting: uniform
+
+# Solver-order conditioning: "none" (default, baseline) or "solver"
+# When "solver", per-cell forward survival becomes S(t)^{w_i} with
+# w_i linearly interpolated in [order_w_min, order_w_max] by solver rank.
+order_conditioning: none
+order_w_min: 0.5
+order_w_max: 2.0

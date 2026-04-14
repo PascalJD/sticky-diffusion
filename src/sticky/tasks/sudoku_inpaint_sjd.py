@@ -36,6 +36,9 @@ class SudokuInpaintSJDTask(Task):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
+    order_conditioning: str = "none"
+    order_w_min: float = 0.5
+    order_w_max: float = 2.0
     drop_remainder: bool = True
     shuffle: bool = True
     mmap: bool = True
@@ -131,6 +134,9 @@ class SudokuInpaintSJDTask(Task):
     ) -> tuple[jnp.ndarray, Metrics]:
         solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
         clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
+        solver_rank = batch.get("solver_rank", None)
+        if solver_rank is not None:
+            solver_rank = jnp.asarray(solver_rank, dtype=jnp.float32)
         x0_idx = solution_board - 1
         # Keep a helpful eager-mode validation without triggering Python truth-value
         # conversion on tracers inside the jitted training step.
@@ -175,6 +181,10 @@ class SudokuInpaintSJDTask(Task):
             given_mask=clue_mask,
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
+            solver_rank=solver_rank,
+            order_conditioning=str(self.order_conditioning),
+            order_w_min=float(self.order_w_min),
+            order_w_max=float(self.order_w_max),
         )
 
         metrics = dict(metrics)

@@ -29,6 +29,10 @@ def ce_allocation_loss(
     given_mask: Optional[Array] = None,
     time_sampling: str = "uniform",
     loss_weighting: str = "uniform",
+    solver_rank: Optional[Array] = None,
+    order_conditioning: str = "none",
+    order_w_min: float = 0.5,
+    order_w_max: float = 2.0,
 ) -> Tuple[Array, Metrics]:
     x0_idx = x0_idx.astype(jnp.int32)
     if given_mask is None:
@@ -68,7 +72,19 @@ def ce_allocation_loss(
         )
     else:
         p_committed = jnp.zeros_like(t_img, dtype=jnp.float32)
-    p_committed = _expand_like(p_committed, x0_idx)
+
+    order_active = (order_conditioning == "solver") and (solver_rank is not None)
+    if order_active:
+        rank = jnp.asarray(solver_rank, dtype=jnp.float32)
+        w_i = jnp.asarray(order_w_min, dtype=jnp.float32) + (
+            jnp.asarray(order_w_max - order_w_min, dtype=jnp.float32) * rank
+        )
+        p_base = _expand_like(p_committed, w_i)
+        p_committed = jnp.clip(
+            jnp.power(jnp.maximum(p_base, 1e-12), w_i), 0.0, 1.0
+        )
+    else:
+        p_committed = _expand_like(p_committed, x0_idx)
     committed = jax.random.bernoulli(key_mask, p=p_committed, shape=x0_idx.shape)
 
     # Conditional sequence tasks (for example Sudoku) reserve some tokens as
@@ -126,6 +142,16 @@ def ce_allocation_loss(
     if w_t is not None:
         metrics["CE/loss_weight_mean"] = jnp.mean(w_t)
         metrics["CE/loss_weight_std"] = jnp.std(w_t)
+
+    if order_active:
+        committed_f = committed.astype(jnp.float32)
+        easy_mask = ((rank < 0.25) & suffix_mask).astype(jnp.float32)
+        hard_mask = ((rank > 0.75) & suffix_mask).astype(jnp.float32)
+        easy_denom = jnp.maximum(jnp.sum(easy_mask), 1.0)
+        hard_denom = jnp.maximum(jnp.sum(hard_mask), 1.0)
+        metrics["CE/order_w_mean"] = jnp.mean(w_i)
+        metrics["CE/order_committed_easy"] = jnp.sum(committed_f * easy_mask) / easy_denom
+        metrics["CE/order_committed_hard"] = jnp.sum(committed_f * hard_mask) / hard_denom
 
     if (jump is not None) and (anchor_table is not None):
         metrics.update(

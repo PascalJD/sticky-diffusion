@@ -120,3 +120,87 @@ def test_uniform_has_no_loss_weight_metric():
     assert "CE/loss_weight_std" not in metrics
     assert "CE/time_mean" in metrics
     assert "CE/time_std" in metrics
+
+
+class _ConstantHazard:
+    """Forward hazard whose survival is a fixed scalar regardless of t."""
+
+    def __init__(self, surv_value: float):
+        self._surv = float(surv_value)
+
+    def surv(self, t):
+        return jnp.full_like(jnp.asarray(t, dtype=jnp.float32), self._surv)
+
+
+def _order_fixture(B=4, seq_len=6, vocab_size=4, d=3):
+    kwargs = _fixture(vocab_size=vocab_size, seq_len=seq_len, B=B, d=d)
+    kwargs["hazard"] = _ConstantHazard(0.5)
+    return kwargs
+
+
+def test_order_conditioning_none_with_rank_matches_baseline():
+    kwargs = _order_fixture()
+    B, seq_len = kwargs["x0_idx"].shape
+    rng = np.random.default_rng(0)
+    rank = jnp.asarray(rng.uniform(size=(B, seq_len)).astype(np.float32))
+    key = jax.random.PRNGKey(17)
+    loss_base, metrics_base = ce_allocation_loss(key=key, **kwargs)
+    loss_order_none, metrics_order_none = ce_allocation_loss(
+        key=key,
+        solver_rank=rank,
+        order_conditioning="none",
+        **kwargs,
+    )
+    np.testing.assert_array_equal(np.asarray(loss_base), np.asarray(loss_order_none))
+    assert set(metrics_base.keys()) == set(metrics_order_none.keys())
+    for k in metrics_base:
+        np.testing.assert_array_equal(
+            np.asarray(metrics_base[k]), np.asarray(metrics_order_none[k])
+        )
+
+
+def test_order_conditioning_uniform_weight_matches_baseline():
+    kwargs = _order_fixture()
+    B, seq_len = kwargs["x0_idx"].shape
+    rng = np.random.default_rng(1)
+    rank = jnp.asarray(rng.uniform(size=(B, seq_len)).astype(np.float32))
+    key = jax.random.PRNGKey(29)
+    loss_base, _ = ce_allocation_loss(key=key, **kwargs)
+    loss_order, metrics_order = ce_allocation_loss(
+        key=key,
+        solver_rank=rank,
+        order_conditioning="solver",
+        order_w_min=1.0,
+        order_w_max=1.0,
+        **kwargs,
+    )
+    # w_i == 1 everywhere -> S^1 == S -> identical draws and loss.
+    np.testing.assert_allclose(
+        float(loss_base), float(loss_order), rtol=0.0, atol=1e-6
+    )
+    assert "CE/order_w_mean" in metrics_order
+    assert abs(float(metrics_order["CE/order_w_mean"]) - 1.0) < 1e-6
+
+
+def test_order_conditioning_commits_easier_cells_more_often():
+    # All-zero rank cells should see p_committed = S^{w_min}, which is
+    # larger than p_committed = S^{w_max} at all-one rank cells when S < 1.
+    kwargs = _order_fixture(B=256, seq_len=2)
+    B, seq_len = kwargs["x0_idx"].shape
+    rank = jnp.zeros((B, seq_len), dtype=jnp.float32)
+    rank = rank.at[:, 0].set(0.0)  # easy
+    rank = rank.at[:, 1].set(1.0)  # hard
+    key = jax.random.PRNGKey(31)
+    _, metrics = ce_allocation_loss(
+        key=key,
+        solver_rank=rank,
+        order_conditioning="solver",
+        order_w_min=0.2,
+        order_w_max=5.0,
+        **kwargs,
+    )
+    # With survival ~ 0.5 and big w_max=5, hard cells almost never commit;
+    # with w_min=0.2, easy cells commit far more often.
+    easy = float(metrics["CE/order_committed_easy"])
+    hard = float(metrics["CE/order_committed_hard"])
+    assert easy > hard + 0.3  # large gap expected by construction
