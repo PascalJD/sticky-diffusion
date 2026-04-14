@@ -14,7 +14,10 @@ defaults:
   - _self_
 
 task:
-  name: sjd_sudoku_normal64_antithetic
+  name: sjd_sudoku_inpaint
+
+wandb:
+  run_name: sjd_sudoku_normal64_antithetic
 
 dataset:
   batch_size: 128
