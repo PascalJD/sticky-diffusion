@@ -33,11 +33,12 @@ from sticky.models.common.discrete_mixture import (
 )
 from sticky.rng import PRNGKey
 
+from .anchors import clamp_known_state
 from .corrector import corrector_step_size, masked_sum, normalize_pc_gate_name, pc_gate_from_probs
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
 from .plugin_intensity import plugin_intensity_and_choice, plugin_intensity_and_probs
-from .sdes import alpha_sigma
+from .sdes import _expand_like, alpha_sigma
 
 
 Array = jnp.ndarray
@@ -87,13 +88,6 @@ def _broadcast_time_to_batch(t_scalar: Array, batch_size: int) -> Array:
     return jnp.full((batch_size,), jnp.asarray(t_scalar, dtype=jnp.float32), dtype=jnp.float32)
 
 
-def _expand_like(v: Array, like: Array) -> Array:
-    """Broadcast (B,) vector to match `like` by adding trailing singleton dims."""
-    while v.ndim < like.ndim:
-        v = v[..., None]
-    return v
-
-
 def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Array:
     """Return reverse-time step boundaries from T down to 0."""
     if int(n_steps) <= 0:
@@ -115,24 +109,6 @@ def make_sampling_time_grid(*, T: float, n_steps: int, sampling_grid: str) -> Ar
     scaled = scaled.at[0].set(1.0)
     scaled = scaled.at[-1].set(0.0)
     return jnp.asarray(float(T), dtype=jnp.float32) * jnp.clip(scaled, 0.0, 1.0)
-
-
-def _clamp_known_state(
-    *,
-    y: Array,
-    committed: Array,
-    k_idx: Array,
-    known_mask: Array | None,
-    known_idx: Array | None,
-    a_table: Array,
-) -> tuple[Array, Array, Array]:
-    if known_mask is None or known_idx is None:
-        return y, committed, k_idx
-    known_vec = a_table[jnp.asarray(known_idx, dtype=jnp.int32)]
-    y = jnp.where(known_mask[..., None], known_vec, y)
-    committed = jnp.where(known_mask, True, committed)
-    k_idx = jnp.where(known_mask, known_idx, k_idx)
-    return y, committed, k_idx
 
 
 def _site_mask_count(mask: Array) -> Array:
@@ -206,7 +182,7 @@ def reverse_sample(
                 f"{committed.shape}; got {known_idx.shape} and {known_mask.shape}."
             )
         known_idx = jnp.clip(known_idx, 0, L - 1)
-        y, committed, k_idx = _clamp_known_state(
+        y, committed, k_idx = clamp_known_state(
             y=y,
             committed=committed,
             k_idx=k_idx,
@@ -410,7 +386,7 @@ def reverse_sample(
                 key, k_prop, k_accept = jax.random.split(key, 3)
                 proposed_y = jump.sample(k_prop, anchor_vec, corr_t_img)
                 if bool(cfg.pc_clamp_known):
-                    proposed_y, _, _ = _clamp_known_state(
+                    proposed_y, _, _ = clamp_known_state(
                         y=proposed_y,
                         committed=committed,
                         k_idx=k_idx,
@@ -452,7 +428,7 @@ def reverse_sample(
                 committed = committed & (~accept_unstick)
                 k_idx = jnp.where(accept_unstick, -1, k_idx)
                 if bool(cfg.pc_clamp_known):
-                    y, committed, k_idx = _clamp_known_state(
+                    y, committed, k_idx = clamp_known_state(
                         y=y,
                         committed=committed,
                         k_idx=k_idx,
@@ -476,7 +452,7 @@ def reverse_sample(
                     )
                     pc_langevin_updates_total = pc_langevin_updates_total + _site_mask_count(continuous_mask)
                     if bool(cfg.pc_clamp_known):
-                        y, committed, k_idx = _clamp_known_state(
+                        y, committed, k_idx = clamp_known_state(
                             y=y,
                             committed=committed,
                             k_idx=k_idx,
@@ -543,7 +519,7 @@ def reverse_sample(
                     pc_langevin_updates_total = pc_langevin_updates_total + _site_mask_count(continuous_post)
 
                 if bool(cfg.pc_clamp_known):
-                    y, committed, k_idx = _clamp_known_state(
+                    y, committed, k_idx = clamp_known_state(
                         y=y,
                         committed=committed,
                         k_idx=k_idx,

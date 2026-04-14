@@ -8,10 +8,10 @@ import jax.numpy as jnp
 
 from sticky.models.common.discrete_mixture import normalize_probs
 
-from .anchors import AnchorTable
+from .anchors import AnchorTable, clamp_known_state
 from .plugin_intensity import plugin_intensity_and_probs
 from .sampler import make_sampling_time_grid
-from .sdes import alpha_sigma
+from .sdes import _expand_like, alpha_sigma
 
 
 Array = jnp.ndarray
@@ -70,12 +70,8 @@ def expected_reveal_counts(
 
     alpha_t = jnp.asarray(alpha_t, dtype=jnp.float32)
     alpha_s = jnp.asarray(alpha_s, dtype=jnp.float32)
-    while alpha_t.ndim < masked_count.ndim:
-        alpha_t = alpha_t[..., None]
-    while alpha_s.ndim < masked_count.ndim:
-        alpha_s = alpha_s[..., None]
-    alpha_t = jnp.broadcast_to(alpha_t, masked_count.shape)
-    alpha_s = jnp.broadcast_to(alpha_s, masked_count.shape)
+    alpha_t = jnp.broadcast_to(_expand_like(alpha_t, masked_count), masked_count.shape)
+    alpha_s = jnp.broadcast_to(_expand_like(alpha_s, masked_count), masked_count.shape)
 
     delta = jnp.clip(alpha_s - alpha_t, 0.0, 1.0)
     denom = jnp.maximum(1.0 - alpha_t, 1.0e-6)
@@ -139,22 +135,6 @@ def _selection_mask_from_scores(
     flat_scores = jnp.asarray(scores, dtype=jnp.float32).reshape(flat_mask.shape)
     selected = _topk_mask(flat_scores, valid_mask=flat_mask, k=jnp.asarray(reveal_count, dtype=jnp.int32))
     return selected.reshape(masked_unknown_mask.shape)
-
-
-def _clamp_known_state(
-    *,
-    y: Array,
-    committed_mask: Array,
-    committed_idx: Array,
-    anchor_table: AnchorTable,
-    known_mask: Array,
-    known_idx: Array,
-) -> tuple[Array, Array, Array]:
-    known_vec = anchor_table.table_float[known_idx]
-    y = jnp.where(known_mask[..., None], known_vec, y)
-    committed_mask = jnp.where(known_mask, True, committed_mask)
-    committed_idx = jnp.where(known_mask, known_idx, committed_idx)
-    return y, committed_mask, committed_idx
 
 
 def _predict_logits(
@@ -233,13 +213,13 @@ def conditional_generate(
     )
     committed_mask = jnp.asarray(known_token_mask, dtype=jnp.bool_)
     committed_idx = jnp.where(committed_mask, known_idx, -jnp.ones_like(known_idx))
-    y, committed_mask, committed_idx = _clamp_known_state(
+    y, committed_mask, committed_idx = clamp_known_state(
         y=y,
-        committed_mask=committed_mask,
-        committed_idx=committed_idx,
-        anchor_table=anchors,
+        committed=committed_mask,
+        k_idx=committed_idx,
         known_mask=known_token_mask,
         known_idx=known_idx,
+        a_table=anchors.table_float,
     )
 
     diag = {
@@ -275,13 +255,13 @@ def conditional_generate(
         noise = jax.random.normal(noise_key, shape=y.shape, dtype=jnp.float32)
         uncommitted = (~committed_mask)[..., None].astype(jnp.float32)
         y = y + uncommitted * (drift * dt + jnp.sqrt(jnp.maximum(beta_t * dt, 0.0)) * noise)
-        y, committed_mask, committed_idx = _clamp_known_state(
+        y, committed_mask, committed_idx = clamp_known_state(
             y=y,
-            committed_mask=committed_mask,
-            committed_idx=committed_idx,
-            anchor_table=anchors,
+            committed=committed_mask,
+            k_idx=committed_idx,
             known_mask=known_token_mask,
             known_idx=known_idx,
+            a_table=anchors.table_float,
         )
 
         s_img = jnp.full((batch_size,), s_scalar, dtype=jnp.float32)
@@ -349,13 +329,13 @@ def conditional_generate(
         committed_idx = jnp.where(selected, proposal_idx, committed_idx)
         committed_mask = committed_mask | selected
         y = jnp.where(selected[..., None], proposal_vec, y)
-        y, committed_mask, committed_idx = _clamp_known_state(
+        y, committed_mask, committed_idx = clamp_known_state(
             y=y,
-            committed_mask=committed_mask,
-            committed_idx=committed_idx,
-            anchor_table=anchors,
+            committed=committed_mask,
+            k_idx=committed_idx,
             known_mask=known_token_mask,
             known_idx=known_idx,
+            a_table=anchors.table_float,
         )
 
         diag["example_step_count"] = diag["example_step_count"] + jnp.asarray(batch_size, dtype=jnp.float32)

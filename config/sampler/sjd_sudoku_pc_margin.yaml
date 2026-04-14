@@ -1,8 +1,5 @@
 defaults:
-  - /sampler: sjd_sudoku
+  - sjd_sudoku_pc_base
   - _self_
 
-pc_enabled: true
-corrector_substeps: 1
-corrector_step_scale: 0.1
 pc_gate: margin

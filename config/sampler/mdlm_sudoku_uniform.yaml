@@ -1,10 +1,5 @@
 defaults:
-  - base
+  - mdlm_sudoku_base
   - _self_
 
 method: uniform
-sampling_grid: loglinear
-revealed_token_sample_mode: sample
-cache_predictions: false
-oracle_noise_type: none
-oracle_noise_scale: 0.0

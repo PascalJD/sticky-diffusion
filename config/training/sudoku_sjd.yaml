@@ -22,3 +22,8 @@ sample_timesteps: ${..sampler.n_steps}
 
 log_state_dependency: true
 state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
+
+# Time sampling: "uniform" (default) or "antithetic"
+time_sampling: uniform
+# Loss weighting: "uniform" (default) or "alpha_deriv" (MDM importance weight)
+loss_weighting: uniform

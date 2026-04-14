@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 from .hazard import HazardSchedule, lam_off_star
 from .jump import VPMatchedGaussianJump
-from .sdes import vp_logpdf
+from .sdes import _expand_like, vp_logpdf
 
 Array = jnp.ndarray
 
@@ -66,9 +66,7 @@ def state_dependency_metrics(
     }
 
     if hazard is not None:
-        lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)
-        while lam_base.ndim < ratio.ndim:
-            lam_base = lam_base[..., None]
+        lam_base = _expand_like(lam_off_star(hazard, t_img).astype(jnp.float32), ratio)
         lam_mod = lam_base * ratio
         metrics["state_dep/lam_base_mean"] = _masked_mean(lam_base, mask)
         metrics["state_dep/lam_mod_mean"] = _masked_mean(lam_mod, mask)

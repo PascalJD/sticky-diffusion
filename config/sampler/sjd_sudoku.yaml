@@ -3,7 +3,7 @@ T: ${oc.select:forward.beta.T, 1.0}
 n_steps: 50
 sampling_grid: uniform
 
-alloc_mode: sample
+alloc_mode: argmax
 score_from_classifier: true
 score_scale: 1.0
 logit_temperature: 1.0

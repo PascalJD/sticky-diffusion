@@ -11,7 +11,7 @@ from sticky.rng import PRNGKey
 
 from .hazard import HazardSchedule, lam_off_star
 from .jump import VPMatchedGaussianJump
-from .sdes import alpha_sigma
+from .sdes import _expand_like, alpha_sigma
 
 
 Array = jnp.ndarray
@@ -176,9 +176,7 @@ def dhm_target_intensity(
         jnp.asarray(true_anchor_idx, dtype=jnp.int32)[..., None],
         axis=-1,
     )[..., 0]
-    lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)
-    while lam_base.ndim < gathered.ndim:
-        lam_base = lam_base[..., None]
+    lam_base = _expand_like(lam_off_star(hazard, t_img).astype(jnp.float32), gathered)
     return jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)) * jnp.exp(gathered)
 
 

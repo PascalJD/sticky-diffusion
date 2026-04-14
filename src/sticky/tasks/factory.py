@@ -89,6 +89,8 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
                 cfg.sampler.get("log_ratio_clip", 10.0),
             )
         ),
+        "time_sampling": str(cfg.training.get("time_sampling", "uniform")),
+        "loss_weighting": str(cfg.training.get("loss_weighting", "uniform")),
     }
 
 
