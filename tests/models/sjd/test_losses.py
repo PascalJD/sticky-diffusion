@@ -74,6 +74,16 @@ def test_antithetic_pairs_times():
     )
 
 
+def test_antithetic_handles_odd_batch():
+    kwargs = _fixture(B=31)
+    loss, metrics = ce_allocation_loss(
+        key=jax.random.PRNGKey(13), time_sampling="antithetic", **kwargs
+    )
+    assert loss.shape == ()
+    assert bool(jnp.isfinite(loss))
+    assert bool(jnp.isfinite(metrics["CE/time_mean"]))
+
+
 def test_alpha_deriv_weights_positive_finite():
     kwargs = _fixture(B=16)
     loss, metrics = ce_allocation_loss(

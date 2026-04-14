@@ -44,9 +44,10 @@ def ce_allocation_loss(
     B = int(x0_anchor.shape[0])
     key_t, key_vp, key_mask = jax.random.split(key, 3)
 
-    # One global time per example.
+    # One global time per example. For odd B, ceil(B/2) base samples and
+    # their complements give >=B elements; truncate to exactly B.
     if time_sampling == "antithetic" and B >= 2:
-        half_B = B // 2
+        half_B = (B + 1) // 2
         t_half = jax.random.uniform(
             key_t, shape=(half_B,), minval=0.0, maxval=float(T)
         )
