@@ -288,7 +288,7 @@ def conditional_generate(
 
         alpha_progress_t = _step_progress(t=t_scalar, T=float(getattr(beta, "T", 1.0)))
         alpha_progress_s = _step_progress(t=s_scalar, T=float(getattr(beta, "T", 1.0)))
-        if policy in {"linear_survival", "cosine_survival", "linear_topk_probability"}:
+        if policy in {"linear_survival", "cosine_survival", "linear_topk_probability", "linear_topk_margin"}:
             reveal_count = expected_reveal_counts(
                 masked_unknown,
                 alpha_t=jnp.asarray(alpha_progress_t, dtype=jnp.float32),
