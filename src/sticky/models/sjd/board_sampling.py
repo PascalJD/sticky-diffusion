@@ -27,6 +27,7 @@ _VALID_POLICIES = frozenset(
         "linear_survival",
         "cosine_survival",
         "linear_topk_probability",
+        "linear_topk_margin",
         "plugin_hazard",
     }
 )
@@ -121,6 +122,9 @@ def _selection_scores_from_policy(
         return jax.random.uniform(rng, masked_unknown_mask.shape, dtype=jnp.float32)
     if policy == "linear_topk_probability":
         return jnp.max(choice_probs, axis=-1)
+    if policy == "linear_topk_margin":
+        top2 = jax.lax.top_k(choice_probs, k=2)[0]
+        return top2[..., 0] - top2[..., 1]
     if policy == "plugin_hazard":
         if p_commit is None:
             raise ValueError("plugin_hazard requires p_commit scores.")

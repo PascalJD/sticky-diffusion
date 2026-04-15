@@ -77,6 +77,7 @@ def test_expected_reveal_counts_matches_linear_formula():
         {"policy": "linear_survival", "sampling_grid": "uniform"},
         {"policy": "cosine_survival", "sampling_grid": "cosine"},
         {"policy": "linear_topk_probability", "sampling_grid": "uniform"},
+        {"policy": "linear_topk_margin", "sampling_grid": "uniform"},
         {"policy": "plugin_hazard", "sampling_grid": "uniform", "eta": 1.0},
     ],
 )

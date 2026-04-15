@@ -1,0 +1,83 @@
+# Slim eval set for SJD Sudoku uniform-forward baseline.
+# Drops linear_survival / cosine_survival; adds new linear_topk_margin policy.
+# All sampler-kind entries explicitly pin alloc_mode=argmax.
+mode: sudoku
+enabled: true
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+verbose: false
+
+sudoku_every: ${experiment.training.eval_every_steps}
+sudoku_num_batches: 64
+sudoku_num_batches_force: -1
+sudoku_eval_seed_offset: 1776
+sudoku_sample_seed_offset: 314159
+sudoku_eval_fold_in_step: false
+sudoku_progress_every_batches: 20
+param_source: ema
+
+sudoku_run_all_sampler_modes: true
+sudoku_primary_sampler_label: linear_topk_margin
+sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
+sudoku_log_policy_table: true
+sudoku_prop52_enabled: false
+sudoku_prop52_only: false
+sudoku_write_progress_csv: true
+sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
+sudoku_write_latest_csv: true
+sudoku_latest_csv_path: metrics/sudoku_sjd_latest.csv
+
+sudoku_eval_sjd_runs:
+  linear_topk_margin:
+    kind: policy
+    policy: linear_topk_margin
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  linear_topk_probability:
+    kind: policy
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00
+  plugin_hazard_eta_0p97:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
+  predictor_only:
+    kind: sampler
+    sampler: sjd_sudoku_predictor
+    alloc_mode: argmax
+  pc_constant_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_constant
+    alloc_mode: argmax
+  pc_entropy_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_entropy
+    alloc_mode: argmax
+  pc_margin_l1_s0p10:
+    kind: sampler
+    sampler: sjd_sudoku_pc_margin
+    alloc_mode: argmax
+  plugin_hazard_margin_matched:
+    kind: policy
+    policy: plugin_hazard
+    n_steps: 50
+    sampling_grid: uniform
+    eta: 0.97
+    sitewise_hazard_mode: margin
+    sitewise_hazard_w_min: 0.5
+    sitewise_hazard_w_max: 2.0
+  predictor_only_margin_matched:
+    kind: sampler
+    sampler: sjd_sudoku_predictor
+    alloc_mode: argmax
+    sitewise_hazard_mode: margin
+    sitewise_hazard_w_min: 0.5
+    sitewise_hazard_w_max: 2.0
