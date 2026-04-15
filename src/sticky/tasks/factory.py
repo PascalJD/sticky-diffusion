@@ -131,6 +131,7 @@ def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
         task_name=task_name,
         **_tfds_image_dataset_kwargs(cfg),
         **_sjd_schedule_kwargs(cfg),
+        **_sjd_teacher_hazard_kwargs(cfg),
     )
 
 
@@ -154,6 +155,23 @@ def _sjd_sudoku_order_conditioning_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
+def _sjd_teacher_hazard_kwargs(cfg: DictConfig) -> dict[str, Any]:
+    mode = str(cfg.training.get("forward_site_hazard_mode", "none"))
+    source = str(cfg.training.get("teacher_source", "ema"))
+    if mode == "teacher_margin" and source != "ema":
+        raise ValueError(
+            f"training.teacher_source={source!r} not supported; only 'ema' is implemented."
+        )
+    return {
+        "forward_site_hazard_mode": mode,
+        "teacher_confidence_metric": str(cfg.training.get("teacher_confidence_metric", "margin")),
+        "teacher_w_min": float(cfg.training.get("teacher_w_min", 0.5)),
+        "teacher_w_max": float(cfg.training.get("teacher_w_max", 2.0)),
+        "teacher_neutral_weight": float(cfg.training.get("teacher_neutral_weight", 1.0)),
+        "teacher_log_metrics": bool(cfg.training.get("teacher_log_metrics", True)),
+    }
+
+
 def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     from sticky.tasks.sudoku_inpaint_sjd import SudokuInpaintSJDTask
 
@@ -161,6 +179,7 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
         **_sudoku_board_dataset_kwargs(cfg),
         **_sjd_schedule_kwargs(cfg),
         **_sjd_sudoku_order_conditioning_kwargs(cfg),
+        **_sjd_teacher_hazard_kwargs(cfg),
     )
 
 

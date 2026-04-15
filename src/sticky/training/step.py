@@ -50,15 +50,31 @@ def make_wrapped_eval_step(
 
 
 def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rate: float):
-    def loss_and_metrics(params, rng, batch, train: bool):
-        return task.loss_fn(rng=rng, model=model, params=params, batch=batch, train=train)
+    requires_teacher = bool(getattr(task, "requires_teacher_params", False))
+    if requires_teacher and ema_rate <= 0.0:
+        raise ValueError(
+            "task.requires_teacher_params=True but training.ema_rate<=0. "
+            "Teacher-conditioned forward hazard needs EMA params; set ema_rate>0 "
+            "or disable forward_site_hazard_mode=teacher_margin."
+        )
+
+    def loss_and_metrics(params, teacher_params, rng, batch, train: bool):
+        return task.loss_fn(
+            rng=rng,
+            model=model,
+            params=params,
+            batch=batch,
+            train=train,
+            teacher_params=teacher_params,
+        )
 
     def train_step_fn(state: TrainState, batch: Dict[str, Array], axis_name: str | None):
         rng, step_rng = jax.random.split(state.rng)
         if axis_name is not None:
             step_rng = jax.random.fold_in(step_rng, jax.lax.axis_index(axis_name))
+        teacher_params = state.ema_params if requires_teacher else None
         (loss, metrics), grads = jax.value_and_grad(loss_and_metrics, has_aux=True)(
-            state.params, step_rng, batch, True
+            state.params, teacher_params, step_rng, batch, True
         )
 
         if axis_name is not None:

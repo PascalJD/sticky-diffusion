@@ -29,3 +29,10 @@ pc_clamp_known: true
 pc_refresh_logits_after_langevin: false
 pc_allow_unstick_unknown_only: true
 metrics_count_nfe: true
+
+# Sitewise reverse off-hazard matched to teacher-conditioned training.
+# Default off → bit-identical to the legacy scalar path.
+sitewise_hazard_mode: none       # none | margin | top_prob | entropy
+sitewise_hazard_w_min: 0.5
+sitewise_hazard_w_max: 2.0
+sitewise_hazard_eps: 1e-12

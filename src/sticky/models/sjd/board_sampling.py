@@ -12,6 +12,11 @@ from .anchors import AnchorTable, clamp_known_state
 from .plugin_intensity import plugin_intensity_and_probs
 from .sampler import make_sampling_time_grid
 from .sdes import _expand_like, alpha_sigma
+from .sitewise_hazard import (
+    confidence_to_w,
+    sitewise_confidence,
+    sitewise_lam_off as sitewise_lam_off_fn,
+)
 
 
 Array = jnp.ndarray
@@ -183,6 +188,10 @@ def conditional_generate(
     stochastic_k: bool = False,
     eta: float | None = None,
     return_diagnostics: bool = False,
+    sitewise_hazard_mode: str = "none",
+    sitewise_hazard_w_min: float = 0.5,
+    sitewise_hazard_w_max: float = 2.0,
+    sitewise_hazard_eps: float = 1e-12,
 ) -> Array | tuple[Array, dict[str, Array]]:
     policy = normalize_policy_name(policy)
     known_tokens = jnp.asarray(known_tokens, dtype=jnp.int32)
@@ -285,6 +294,17 @@ def conditional_generate(
             )
             p_commit = None
         else:
+            sitewise_lam_off_tensor = None
+            if str(sitewise_hazard_mode) != "none":
+                r_i = sitewise_confidence(logits, str(sitewise_hazard_mode))
+                w_i = confidence_to_w(
+                    r_i,
+                    w_min=float(sitewise_hazard_w_min),
+                    w_max=float(sitewise_hazard_w_max),
+                )
+                sitewise_lam_off_tensor = sitewise_lam_off_fn(
+                    hazard, s_img, w_i, eps=float(sitewise_hazard_eps)
+                )
             lam_total, plugin_probs = plugin_intensity_and_probs(
                 logits=logits,
                 y=y,
@@ -296,6 +316,7 @@ def conditional_generate(
                 logit_temperature=float(logit_temperature),
                 intensity_mode=str(intensity_mode),
                 log_ratio_clip=float(log_ratio_clip),
+                sitewise_lam_off=sitewise_lam_off_tensor,
             )
             choice_probs = plugin_probs
             p_commit = 1.0 - jnp.exp(-jnp.maximum(lam_total, 0.0) * dt)

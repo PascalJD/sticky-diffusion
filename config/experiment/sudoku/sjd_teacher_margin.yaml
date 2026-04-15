@@ -1,0 +1,39 @@
+# SJD Sudoku with teacher-conditioned (EMA margin) sitewise forward hazard.
+# Per-cell survival S_i(t) = S(t)^{w_i} with w_i = w_min + (w_max - w_min) * (1 - r_i),
+# where r_i is the top-1/top-2 margin of the detached EMA teacher on a probe corruption.
+# Training-only; sampler/eval unchanged.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku_tfw
+  - /sampler: sjd_sudoku
+  - /training: sudoku_sjd
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /runtime: default
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+wandb:
+  run_name: sjd_sudoku_teacher_margin
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97
+
+training:
+  order_conditioning: none
+  forward_site_hazard_mode: teacher_margin
+  teacher_source: ema
+  teacher_confidence_metric: margin
+  teacher_w_min: 0.5
+  teacher_w_max: 2.0
+  teacher_neutral_weight: 1.0
+  teacher_log_metrics: true

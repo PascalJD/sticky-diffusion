@@ -23,3 +23,15 @@ metrics_every_steps: 1000
 save_final_metrics: true
 
 sample_timesteps: ${..sampler.n_steps}
+
+# Unified SJD forward-site hazard switch:
+#   "none"           — scalar survival S(t) applied uniformly across sites.
+#   "solver"         — sitewise S(t)^{w_i} from provided solver_rank (legacy solver-order).
+#   "teacher_margin" — sitewise S(t)^{w_i} from a detached EMA teacher's confidence.
+forward_site_hazard_mode: none
+teacher_source: ema
+teacher_confidence_metric: margin
+teacher_w_min: 0.5
+teacher_w_max: 2.0
+teacher_neutral_weight: 1.0
+teacher_log_metrics: true

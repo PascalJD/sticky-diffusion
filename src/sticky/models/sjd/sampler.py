@@ -39,6 +39,11 @@ from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
 from .plugin_intensity import plugin_intensity_and_choice, plugin_intensity_and_probs
 from .sdes import _expand_like, alpha_sigma
+from .sitewise_hazard import (
+    confidence_to_w,
+    sitewise_confidence,
+    sitewise_lam_off as sitewise_lam_off_fn,
+)
 
 
 Array = jnp.ndarray
@@ -71,6 +76,14 @@ class SamplerConfig:
     pc_refresh_logits_after_langevin: bool = False
     pc_allow_unstick_unknown_only: bool = True
     metrics_count_nfe: bool = True
+    # Sitewise reverse off-hazard matched to teacher-conditioned training.
+    # The current teacher-conditioned training hazard is sitewise-only (class-
+    # reduced confidence), so these knobs modulate lam_total / p_commit only
+    # and leave anchor choice_probs mathematically unchanged.
+    sitewise_hazard_mode: str = "none"  # "none" | "margin" | "top_prob" | "entropy"
+    sitewise_hazard_w_min: float = 0.5
+    sitewise_hazard_w_max: float = 2.0
+    sitewise_hazard_eps: float = 1e-12
 
 
 @struct.dataclass
@@ -291,6 +304,21 @@ def reverse_sample(
                 jump_y = jnp.where(is_last_step, y_for_model, jump_y)
                 jump_logits = jnp.where(is_last_step, logits_score, jump_logits)
 
+        sitewise_lam_off_jump = None
+        if str(cfg.sitewise_hazard_mode) != "none":
+            # Reuse jump_logits already computed for this reverse step — no
+            # extra NFE. Confidence is derived from the same tensor that
+            # drives plugin_intensity's allocation math.
+            r_i_jump = sitewise_confidence(jump_logits, str(cfg.sitewise_hazard_mode))
+            w_i_jump = confidence_to_w(
+                r_i_jump,
+                w_min=float(cfg.sitewise_hazard_w_min),
+                w_max=float(cfg.sitewise_hazard_w_max),
+            )
+            sitewise_lam_off_jump = sitewise_lam_off_fn(
+                hazard, jump_t_img, w_i_jump, eps=float(cfg.sitewise_hazard_eps)
+            )
+
         if cfg.alloc_mode == "sample":
             lam_total, choice_probs = plugin_intensity_and_probs(
                 logits=jump_logits,
@@ -304,6 +332,7 @@ def reverse_sample(
                 intensity_mode=cfg.intensity_mode,
                 log_ratio_clip=float(cfg.log_ratio_clip),
                 chunk_size=int(cfg.intensity_chunk_size),
+                sitewise_lam_off=sitewise_lam_off_jump,
             )
         else:
             lam_total, a_idx = plugin_intensity_and_choice(
@@ -321,6 +350,7 @@ def reverse_sample(
                 intensity_mode=cfg.intensity_mode,
                 log_ratio_clip=float(cfg.log_ratio_clip),
                 chunk_size=int(cfg.intensity_chunk_size),
+                sitewise_lam_off=sitewise_lam_off_jump,
             )
 
         active = (~committed).astype(jnp.float32)
@@ -472,6 +502,17 @@ def reverse_sample(
                     probs_commit = probs_corr
                     commit_y = y
 
+                sitewise_lam_off_pc = None
+                if str(cfg.sitewise_hazard_mode) != "none":
+                    r_i_pc = sitewise_confidence(logits_commit, str(cfg.sitewise_hazard_mode))
+                    w_i_pc = confidence_to_w(
+                        r_i_pc,
+                        w_min=float(cfg.sitewise_hazard_w_min),
+                        w_max=float(cfg.sitewise_hazard_w_max),
+                    )
+                    sitewise_lam_off_pc = sitewise_lam_off_fn(
+                        hazard, corr_t_img, w_i_pc, eps=float(cfg.sitewise_hazard_eps)
+                    )
                 lam_pc, choice_probs_pc = plugin_intensity_and_probs(
                     logits=logits_commit,
                     y=commit_y,
@@ -484,6 +525,7 @@ def reverse_sample(
                     intensity_mode=cfg.intensity_mode,
                     log_ratio_clip=float(cfg.log_ratio_clip),
                     chunk_size=int(cfg.intensity_chunk_size),
+                    sitewise_lam_off=sitewise_lam_off_pc,
                 )
                 gate_cont = pc_gate_from_probs(probs_commit, gate=pc_gate)
                 p_commit = jnp.where(

@@ -137,6 +137,10 @@ def _overlay_sjd_policy_fields(dst: dict[str, Any], src: dict[str, Any]) -> None
         "intensity_mode",
         "log_ratio_clip",
         "init_std",
+        "sitewise_hazard_mode",
+        "sitewise_hazard_w_min",
+        "sitewise_hazard_w_max",
+        "sitewise_hazard_eps",
     ):
         if key not in src:
             continue
@@ -170,6 +174,10 @@ def _overlay_sjd_sampler_fields(dst: dict[str, Any], src: dict[str, Any]) -> Non
         "pc_refresh_logits_after_langevin",
         "pc_allow_unstick_unknown_only",
         "metrics_count_nfe",
+        "sitewise_hazard_mode",
+        "sitewise_hazard_w_min",
+        "sitewise_hazard_w_max",
+        "sitewise_hazard_eps",
     ):
         if key not in src:
             continue
@@ -264,6 +272,10 @@ def _resolve_sudoku_sjd_run_specs(
         "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
         "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
         "init_std": float(cfg.sampler.get("init_std", 1.0)),
+        "sitewise_hazard_mode": str(cfg.sampler.get("sitewise_hazard_mode", "none")),
+        "sitewise_hazard_w_min": float(cfg.sampler.get("sitewise_hazard_w_min", 0.5)),
+        "sitewise_hazard_w_max": float(cfg.sampler.get("sitewise_hazard_w_max", 2.0)),
+        "sitewise_hazard_eps": float(cfg.sampler.get("sitewise_hazard_eps", 1e-12)),
     }
     base_sampler = {
         "kind": "sampler",
@@ -299,6 +311,10 @@ def _resolve_sudoku_sjd_run_specs(
             cfg.sampler.get("pc_allow_unstick_unknown_only", True)
         ),
         "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
+        "sitewise_hazard_mode": str(cfg.sampler.get("sitewise_hazard_mode", "none")),
+        "sitewise_hazard_w_min": float(cfg.sampler.get("sitewise_hazard_w_min", 0.5)),
+        "sitewise_hazard_w_max": float(cfg.sampler.get("sitewise_hazard_w_max", 2.0)),
+        "sitewise_hazard_eps": float(cfg.sampler.get("sitewise_hazard_eps", 1e-12)),
     }
 
     primary_label = str(
@@ -861,6 +877,10 @@ def build_sudoku_eval_logger(
                     sampler_spec["pc_allow_unstick_unknown_only"]
                 ),
                 metrics_count_nfe=bool(sampler_spec["metrics_count_nfe"]),
+                sitewise_hazard_mode=str(sampler_spec["sitewise_hazard_mode"]),
+                sitewise_hazard_w_min=float(sampler_spec["sitewise_hazard_w_min"]),
+                sitewise_hazard_w_max=float(sampler_spec["sitewise_hazard_w_max"]),
+                sitewise_hazard_eps=float(sampler_spec["sitewise_hazard_eps"]),
             )
 
             @jax.jit
@@ -907,6 +927,10 @@ def build_sudoku_eval_logger(
                     stochastic_k=bool(policy_spec.get("stochastic_k", False)),
                     eta=float(policy_spec["eta"]),
                     return_diagnostics=True,
+                    sitewise_hazard_mode=str(policy_spec["sitewise_hazard_mode"]),
+                    sitewise_hazard_w_min=float(policy_spec["sitewise_hazard_w_min"]),
+                    sitewise_hazard_w_max=float(policy_spec["sitewise_hazard_w_max"]),
+                    sitewise_hazard_eps=float(policy_spec["sitewise_hazard_eps"]),
                 )
 
             return _sample_conditional

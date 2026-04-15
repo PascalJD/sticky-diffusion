@@ -1,0 +1,30 @@
+# SJD CIFAR-10 with teacher-conditioned (EMA margin) sitewise forward hazard.
+# Per-pixel survival S_i(t) = S(t)^{w_i} with w_i = w_min + (w_max - w_min) * (1 - r_i),
+# where r_i is the top-1/top-2 margin of the detached EMA teacher on a probe corruption.
+# Training-only; sampler/eval unchanged.
+defaults:
+  - /dataset: cifar10_discrete
+  - /model/sjd@model: sjd_cifar10
+  - /optim: adamw_cifar10
+  - /training: sjd_cifar10
+  - /runtime: default
+  - /sampler: sjd_cifar10
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - _self_
+
+task:
+  name: sjd_cifar10
+
+wandb:
+  run_name: sjd_cifar10_teacher_margin
+
+training:
+  forward_site_hazard_mode: teacher_margin
+  teacher_source: ema
+  teacher_confidence_metric: margin
+  teacher_w_min: 0.5
+  teacher_w_max: 2.0
+  teacher_neutral_weight: 1.0
+  teacher_log_metrics: true

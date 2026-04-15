@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, ClassVar, Dict, Iterable, Mapping, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +28,9 @@ class Task:
 
     spec: TaskSpec
 
+    # True if loss_fn needs EMA teacher params threaded in from the train step.
+    requires_teacher_params: ClassVar[bool] = False
+
     def make_dataloaders(
         self, *, seed: int
     ) -> Tuple[Iterable[Batch], Optional[Iterable[Batch]]]:
@@ -41,6 +44,7 @@ class Task:
         params: Any,
         batch: Batch,
         train: bool,
+        teacher_params: Any = None,
     ) -> Tuple[Array, Metrics]:
         raise NotImplementedError
 

@@ -65,8 +65,18 @@ def _full_intensity_and_probs(
     logit_temperature: float,
     log_ratio_clip: float,
     eps: float,
+    sitewise_lam_off: Array | None = None,
 ) -> Tuple[Array, Array]:
-    """Dense plugin implementation that materializes [B, S, L]-scale tensors."""
+    """Dense plugin implementation that materializes [B, S, L]-scale tensors.
+
+    When ``sitewise_lam_off`` is None, `lam_off_star(hazard, t_img)` is used
+    as a scalar per-example baseline broadcast to all sites (legacy behavior).
+    When provided (shape (B, *site_shape) or broadcastable), it replaces the
+    scalar `lam_off` per-site. Because the same log_lam_base value is added
+    to every class/anchor entry at a site, the softmax-normalized
+    ``choice_probs`` is invariant under this substitution — only ``lam_total``
+    (and hence commit probability) changes.
+    """
     if logit_temperature <= 0.0:
         raise ValueError(f"logit_temperature must be > 0, got {logit_temperature}")
 
@@ -86,7 +96,16 @@ def _full_intensity_and_probs(
         log_ratio_clip=log_ratio_clip,
     ).reshape((B, -1, L))
 
-    lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
+    if sitewise_lam_off is None:
+        lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
+    else:
+        sw = jnp.asarray(sitewise_lam_off, dtype=jnp.float32)
+        if sw.shape[0] != B:
+            raise ValueError(
+                f"sitewise_lam_off batch dim {sw.shape[0]} does not match logits {B}."
+            )
+        # Flatten site axes and add a trailing anchor broadcast dim.
+        lam_base = sw.reshape((B, -1, 1))
     log_lam_base = jnp.log(jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)))
     logw_raw = log_lam_base + logp_flat + log_ratio
     lam_total_flat = jnp.maximum(
@@ -194,6 +213,7 @@ def plugin_intensity_and_probs(
     log_ratio_clip: float = 10.0,
     chunk_size: int = 256,
     eps: float = 1e-20,
+    sitewise_lam_off: Array | None = None,
 ) -> Tuple[Array, Array]:
     """Compute total plugin intensity and per-anchor allocation probabilities.
 
@@ -214,6 +234,7 @@ def plugin_intensity_and_probs(
         logit_temperature=logit_temperature,
         log_ratio_clip=log_ratio_clip,
         eps=eps,
+        sitewise_lam_off=sitewise_lam_off,
     )
 
 
@@ -234,6 +255,7 @@ def plugin_intensity_and_choice(
     log_ratio_clip: float = 10.0,
     chunk_size: int = 256,
     eps: float = 1e-20,
+    sitewise_lam_off: Array | None = None,
 ) -> Tuple[Array, Array]:
     """Backward-compatible wrapper returning the sampled or argmax anchor."""
     lam_total, choice_probs = plugin_intensity_and_probs(
@@ -249,6 +271,7 @@ def plugin_intensity_and_choice(
         log_ratio_clip=log_ratio_clip,
         chunk_size=chunk_size,
         eps=eps,
+        sitewise_lam_off=sitewise_lam_off,
     )
     a_idx = _sample_choice_from_probs(
         key=key,

@@ -132,7 +132,16 @@ def _take_gt_images(batch: dict[str, Array], *, num_log_images: int, use_pmap: b
 
 def make_eval_step_fn(*, task, model):
     def eval_step_fn(params, rng, batch, axis_name: str | None):
-        loss, metrics = task.loss_fn(rng=rng, model=model, params=params, batch=batch, train=False)
+        # Eval does not thread teacher params; tasks that require a teacher
+        # for training fall back to their baseline scalar hazard on this path.
+        loss, metrics = task.loss_fn(
+            rng=rng,
+            model=model,
+            params=params,
+            batch=batch,
+            train=False,
+            teacher_params=None,
+        )
         if axis_name is not None:
             loss = jax.lax.pmean(loss, axis_name=axis_name)
             metrics = jax.tree.map(lambda x: jax.lax.pmean(x, axis_name=axis_name), metrics)

@@ -101,6 +101,54 @@ def test_plugin_intensity_chunked_aliases_to_full():
     np.testing.assert_allclose(np.asarray(probs_alias), np.asarray(probs_full), atol=1e-6)
 
 
+def test_sitewise_lam_off_none_is_bit_identical_to_scalar():
+    beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
+    lam_legacy, probs_legacy = plugin_intensity_and_probs(
+        logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
+        hazard=hazard, jump=jump,
+    )
+    lam_new, probs_new = plugin_intensity_and_probs(
+        logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
+        hazard=hazard, jump=jump, sitewise_lam_off=None,
+    )
+    np.testing.assert_array_equal(np.asarray(lam_legacy), np.asarray(lam_new))
+    np.testing.assert_array_equal(np.asarray(probs_legacy), np.asarray(probs_new))
+
+
+def test_sitewise_lam_off_preserves_choice_probs_when_uniform_per_site():
+    """A per-site constant log_lam_base cancels out of softmax-over-anchors,
+    so normalized choice_probs must match the scalar-broadcast baseline."""
+    from sticky.models.sjd.hazard import lam_off_star
+
+    beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
+    # Build a (B, S) sitewise tensor equal to the scalar baseline broadcast,
+    # then multiply per-site by a varying factor (still uniform over anchors).
+    scalar = lam_off_star(hazard, t_img).astype(jnp.float32)  # (B,)
+    B, S = logits.shape[0], logits.shape[1]
+    varying = jnp.asarray(np.linspace(0.3, 3.0, S, dtype=np.float32))  # (S,)
+    sitewise = scalar[:, None] * varying[None, :]  # (B, S)
+
+    lam_baseline, probs_baseline = plugin_intensity_and_probs(
+        logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
+        hazard=hazard, jump=jump,
+    )
+    lam_sw, probs_sw = plugin_intensity_and_probs(
+        logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
+        hazard=hazard, jump=jump, sitewise_lam_off=sitewise,
+    )
+    # Choice probs must be invariant (axis-wise softmax of shifted logits).
+    np.testing.assert_allclose(
+        np.asarray(probs_sw), np.asarray(probs_baseline), atol=1e-6
+    )
+    # lam_total scales proportionally to the per-site factor.
+    scale = (sitewise / scalar[:, None]).reshape(B, S)
+    np.testing.assert_allclose(
+        np.asarray(lam_sw),
+        np.asarray(lam_baseline) * np.asarray(scale),
+        rtol=1e-5, atol=1e-6,
+    )
+
+
 def test_plugin_intensity_rejects_unknown_mode():
     beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
 
