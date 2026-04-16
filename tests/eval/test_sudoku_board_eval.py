@@ -413,6 +413,10 @@ def test_sjd_board_eval_logger_runs_all_policies_and_logs_table(monkeypatch):
         stochastic_k=False,
         eta=None,
         return_diagnostics=False,
+        sitewise_hazard_mode="none",
+        sitewise_hazard_w_min=0.5,
+        sitewise_hazard_w_max=2.0,
+        sitewise_hazard_eps=1e-12,
     ):
         del (
             rng,
@@ -430,6 +434,10 @@ def test_sjd_board_eval_logger_runs_all_policies_and_logs_table(monkeypatch):
             log_ratio_clip,
             init_std,
             stochastic_k,
+            sitewise_hazard_mode,
+            sitewise_hazard_w_min,
+            sitewise_hazard_w_max,
+            sitewise_hazard_eps,
         )
         calls.append((policy, n_steps, eta))
         diag = {
@@ -778,6 +786,10 @@ def test_sjd_eval_logger_writes_deduped_progress_csv(monkeypatch, tmp_path):
         stochastic_k,
         eta,
         return_diagnostics,
+        sitewise_hazard_mode="none",
+        sitewise_hazard_w_min=0.5,
+        sitewise_hazard_w_max=2.0,
+        sitewise_hazard_eps=1e-12,
     ):
         del (
             rng,
@@ -798,6 +810,10 @@ def test_sjd_eval_logger_writes_deduped_progress_csv(monkeypatch, tmp_path):
             init_std,
             stochastic_k,
             eta,
+            sitewise_hazard_mode,
+            sitewise_hazard_w_min,
+            sitewise_hazard_w_max,
+            sitewise_hazard_eps,
         )
         pred = jnp.asarray(solution, dtype=jnp.int32)
         diag = _policy_diag()
@@ -951,3 +967,173 @@ def test_sjd_eval_logger_writes_deduped_progress_csv(monkeypatch, tmp_path):
         latest_rows = list(csv.DictReader(handle))
     assert len(latest_rows) == 2
     assert {row["label"] for row in latest_rows} == {"linear_survival", "pc_margin_l1_s0p10"}
+
+
+def test_phase2_pc_matched_sampler_specs_resolve_correctly(monkeypatch):
+    """PC matched configs carry pc_enabled=True AND sitewise_hazard_mode=margin."""
+    solution = _solution_board()
+    clue_board, clue_mask = _clue_inputs()
+    batch = {
+        "solution_board": solution,
+        "clue_board": clue_board,
+        "clue_mask": clue_mask,
+        "image": solution,
+    }
+    monkeypatch.setattr(
+        sudoku_eval_mod,
+        "make_sudoku_board_iterator",
+        lambda **kwargs: iter([batch]),
+    )
+
+    calls = []
+
+    def _fake_conditional_generate_board(*, rng, params, model, anchors, beta, hazard, jump, known_tokens, known_token_mask, cfg):
+        del rng, params, model, anchors, beta, hazard, jump, known_tokens, known_token_mask
+        calls.append({
+            "pc_enabled": bool(cfg.pc_enabled),
+            "corrector_substeps": int(cfg.corrector_substeps),
+            "corrector_step_scale": float(cfg.corrector_step_scale),
+            "pc_gate": str(cfg.pc_gate),
+            "sitewise_hazard_mode": str(cfg.sitewise_hazard_mode),
+        })
+        diag = {
+            "sampling/nfe_total": jnp.asarray(6.0, dtype=jnp.float32),
+            "sampling/continuous_to_anchor_commits_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "sampling/anchor_to_continuous_unstick_attempts_total": jnp.asarray(2.0, dtype=jnp.float32),
+            "sampling/anchor_to_continuous_unstick_accepts_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "sampling/langevin_updates_total": jnp.asarray(3.0, dtype=jnp.float32),
+            "sampling/gate_mean_continuous": jnp.asarray(0.25, dtype=jnp.float32),
+            "sampling/gate_mean_committed": jnp.asarray(0.75, dtype=jnp.float32),
+            "sampling/frac_committed_pre_force": jnp.asarray(0.5, dtype=jnp.float32),
+            "sampling/frac_committed_final": jnp.asarray(1.0, dtype=jnp.float32),
+            "sampling/fill_frac_by_final_jump": jnp.asarray(0.1, dtype=jnp.float32),
+            "example_step_count": jnp.asarray(1.0, dtype=jnp.float32),
+            "masked_unknown_total_across_steps": jnp.asarray(2.0, dtype=jnp.float32),
+            "selected_count_total_across_steps": jnp.asarray(1.0, dtype=jnp.float32),
+            "selected_top_probability_sum_total": jnp.asarray(0.0, dtype=jnp.float32),
+            "selected_top_probability_count_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "selected_top_prob_margin_sum_total": jnp.asarray(0.0, dtype=jnp.float32),
+            "selected_top_prob_margin_count_total": jnp.asarray(1.0, dtype=jnp.float32),
+            "unknown_token_total": jnp.asarray(float((~clue_mask).sum()), dtype=jnp.float32),
+            "final_masked_unknown_total": jnp.asarray(0.0, dtype=jnp.float32),
+        }
+        return jnp.asarray(solution, dtype=jnp.int32), diag
+
+    monkeypatch.setattr(
+        __import__("sticky.models.sjd.sampling", fromlist=["conditional_generate_board"]),
+        "conditional_generate_board",
+        _fake_conditional_generate_board,
+    )
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "sjd"},
+            "sampler": {
+                "n_steps": 4,
+                "sampling_grid": "uniform",
+                "score_scale": 1.0,
+                "logit_temperature": 1.0,
+                "categorical_sampling_policy": "exact",
+                "alloc_mode": "argmax",
+                "intensity_mode": "full",
+                "log_ratio_clip": 10.0,
+                "init_std": 1.0,
+                "pc_enabled": False,
+                "corrector_substeps": 0,
+                "corrector_step_scale": 0.0,
+                "pc_gate": "constant_one",
+                "sitewise_hazard_mode": "none",
+                "sitewise_hazard_w_min": 0.5,
+                "sitewise_hazard_w_max": 2.0,
+                "sitewise_hazard_eps": 1e-12,
+            },
+            "training": {"seed": 0},
+        }
+    )
+    eval_cfg = OmegaConf.create(
+        {
+            "mode": "sudoku",
+            "prefix": "eval",
+            "verbose": False,
+            "sudoku_every": 1,
+            "sudoku_num_batches": 1,
+            "sudoku_num_batches_force": -1,
+            "sudoku_num_batches_per_sampler": 1,
+            "sudoku_eval_seed_offset": 1776,
+            "sudoku_sample_seed_offset": 314159,
+            "sudoku_eval_fold_in_step": False,
+            "sudoku_progress_every_batches": 20,
+            "sudoku_primary_sampler_label": "pc_constant_matched_argmax",
+            "sudoku_log_policy_table": False,
+            "sudoku_prop52_enabled": False,
+            "sudoku_eval_sjd_runs": {
+                "pc_constant_matched_argmax": {"kind": "sampler", "sampler": "sjd_sudoku_pc_constant_matched"},
+                "pc_margin_matched_argmax": {"kind": "sampler", "sampler": "sjd_sudoku_pc_margin_matched"},
+            },
+        }
+    )
+    maybe_eval = build_sudoku_eval_logger(
+        cfg=cfg,
+        eval_cfg=eval_cfg,
+        task=_fake_sjd_task(),
+        model=_FakeSJDModel(),
+        wandb_mod=None,
+        eval_every=1,
+        log_at_step_zero=False,
+    )
+    metrics = maybe_eval(10, params_for_sampling={})
+
+    assert len(calls) == 2
+    for call in calls:
+        assert call["pc_enabled"] is True
+        assert call["corrector_substeps"] == 1
+        assert call["corrector_step_scale"] == pytest.approx(0.1)
+        assert call["sitewise_hazard_mode"] == "margin"
+    assert calls[0]["pc_gate"] == "constant_one"
+    assert calls[1]["pc_gate"] == "margin"
+    assert metrics["eval/pc_constant_matched_argmax/solve_rate"] == 1.0
+    assert metrics["eval/pc_margin_matched_argmax/sampling/langevin_updates_total"] == 3.0
+
+
+def test_linear_topk_margin_policy_resolves():
+    """linear_topk_margin is reachable as a policy in SJD run specs."""
+    from sticky.eval.sudoku import _resolve_sudoku_sjd_run_specs
+
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "sjd"},
+            "sampler": {
+                "n_steps": 50,
+                "sampling_grid": "uniform",
+                "logit_temperature": 1.0,
+                "intensity_mode": "full",
+                "log_ratio_clip": 10.0,
+                "init_std": 1.0,
+                "sitewise_hazard_mode": "none",
+                "sitewise_hazard_w_min": 0.5,
+                "sitewise_hazard_w_max": 2.0,
+                "sitewise_hazard_eps": 1e-12,
+            },
+            "forward": {"jump": {"eta": 0.97}},
+        }
+    )
+    eval_cfg = OmegaConf.create(
+        {
+            "sudoku_primary_sampler_label": "linear_topk_margin",
+            "sudoku_eval_sjd_runs": {
+                "linear_topk_margin": {
+                    "kind": "policy",
+                    "policy": "linear_topk_margin",
+                    "n_steps": 50,
+                    "sampling_grid": "uniform",
+                    "stochastic_k": False,
+                    "eta": 1.00,
+                },
+            },
+        }
+    )
+    specs, primary_label, _ = _resolve_sudoku_sjd_run_specs(cfg=cfg, eval_cfg=eval_cfg, prefix="eval")
+    assert len(specs) == 1
+    assert specs[0]["policy"] == "linear_topk_margin"
+    assert specs[0]["label"] == "linear_topk_margin"
+    assert primary_label == "linear_topk_margin"

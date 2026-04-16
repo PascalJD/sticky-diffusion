@@ -9,6 +9,7 @@ import optax
 from flax import struct
 from omegaconf import DictConfig
 
+from sticky.core.paths import is_nullish
 from sticky.models.sjd.anchors import anchor_learnable_from_mapping
 from sticky.rng import PRNGKey, ensure_prng_key
 
@@ -211,4 +212,39 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
         ema_params=ema_params,
         opt_state=opt_state,
     )
+
+    ckpt_path_cfg = cfg.training.get("init_from_checkpoint", None)
+    if not is_nullish(ckpt_path_cfg, nullish=(None, "", "null")):
+        from pathlib import Path
+
+        from sticky.training.checkpoint_io import restore_state_from_checkpoint
+
+        ckpt_dir = Path(str(ckpt_path_cfg))
+        ckpt_step_cfg = cfg.training.get("init_checkpoint_step", None)
+        ckpt_step = None if is_nullish(ckpt_step_cfg, nullish=(None, "", "null")) else int(ckpt_step_cfg)
+        load_ema = bool(cfg.training.get("init_load_ema", True))
+        reset_optimizer = bool(cfg.training.get("init_reset_optimizer", True))
+        reset_step = bool(cfg.training.get("init_reset_step", True))
+
+        restored, restored_step, selected_path = restore_state_from_checkpoint(
+            state, ckpt_dir, ckpt_step,
+        )
+        new_params = restored.params
+        new_ema = restored.ema_params if (load_ema and restored.ema_params is not None) else ema_params
+        new_opt_state = opt_state if reset_optimizer else restored.opt_state
+        new_step = jnp.array(0, dtype=jnp.int32) if reset_step else restored.step
+
+        state = TrainState(
+            step=new_step,
+            rng=rng,
+            params=new_params,
+            ema_params=new_ema,
+            opt_state=new_opt_state,
+        )
+        print(
+            f"[init_from_checkpoint] loaded {selected_path} step={restored_step} "
+            f"load_ema={load_ema} reset_optimizer={reset_optimizer} reset_step={reset_step}",
+            flush=True,
+        )
+
     return state, tx

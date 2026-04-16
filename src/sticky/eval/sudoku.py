@@ -70,15 +70,80 @@ def _is_interpolation(value: Any) -> bool:
     return isinstance(value, str) and value.strip().startswith("${")
 
 
-def _load_sampler_group_overrides(name: str) -> dict[str, Any]:
+def _resolve_sampler_default_entry(entry: Any) -> str | None:
+    """Return the referenced sampler-group name for a defaults-list entry, or None to skip.
+
+    Supports the two forms used by sampler configs:
+      - bare string (relative within `sampler/` group), e.g. ``sjd_sudoku_pc_base``
+      - single-key mapping ``{group_path: name}`` where the group resolves to ``sampler``,
+        e.g. ``{/sampler: sjd_sudoku}`` or ``{sampler: sjd_sudoku}``.
+    ``_self_`` entries return ``None`` (handled by the caller).
+    """
+    if isinstance(entry, str):
+        token = entry.strip()
+        if not token or token == "_self_":
+            return None
+        return token
+    if isinstance(entry, dict) and len(entry) == 1:
+        key, value = next(iter(entry.items()))
+        group = str(key).strip().lstrip("/")
+        if group != "sampler":
+            raise ValueError(
+                f"Sampler defaults entry references unsupported group {key!r}; "
+                "only the 'sampler' group is supported here."
+            )
+        if value is None:
+            return None
+        return str(value).strip()
+    raise ValueError(f"Unsupported sampler defaults entry: {entry!r}")
+
+
+def _compose_sampler_group(name: str, _seen: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Hydra-style composition of a sampler config group.
+
+    Recursively resolves each entry in ``defaults``, merging in left-to-right
+    order, with the file's own contents merged at the position of ``_self_``
+    (or appended last if ``_self_`` is omitted, matching Hydra 1.1+ behavior).
+    """
+    if name in _seen:
+        cycle = " -> ".join(list(_seen) + [name])
+        raise ValueError(f"Circular sampler config defaults: {cycle}")
     path = config_root() / "sampler" / f"{name}.yaml"
     if not path.exists():
         raise FileNotFoundError(f"Unknown sampler config group {name!r}: {path}")
     raw = OmegaConf.to_container(OmegaConf.load(path), resolve=False)
     if not isinstance(raw, dict):
         raise ValueError(f"Sampler config {name!r} did not load as a mapping.")
-    raw.pop("defaults", None)
-    return raw
+    defaults_list = raw.pop("defaults", None) or []
+    if not isinstance(defaults_list, list):
+        raise ValueError(f"Sampler config {name!r} has non-list 'defaults'.")
+
+    next_seen = _seen | {name}
+    layers: list[dict[str, Any]] = []
+    self_inserted = False
+    for entry in defaults_list:
+        if isinstance(entry, str) and entry.strip() == "_self_":
+            layers.append(raw)
+            self_inserted = True
+            continue
+        ref = _resolve_sampler_default_entry(entry)
+        if ref is None:
+            continue
+        layers.append(_compose_sampler_group(ref, next_seen))
+    if not self_inserted:
+        layers.append(raw)
+
+    merged = OmegaConf.to_container(
+        OmegaConf.merge(*[OmegaConf.create(layer) for layer in layers]),
+        resolve=False,
+    )
+    if not isinstance(merged, dict):
+        raise ValueError(f"Composed sampler config {name!r} is not a mapping.")
+    return merged
+
+
+def _load_sampler_group_overrides(name: str) -> dict[str, Any]:
+    return _compose_sampler_group(name)
 
 
 def _iter_named_entries(entries_cfg: Any, field_name: str) -> list[tuple[str | None, dict[str, Any]]]:
