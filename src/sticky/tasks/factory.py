@@ -127,9 +127,16 @@ def _build_openwebtext_discrete_task(cfg: DictConfig):
 def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
+    # CIFAR10SJDTask does not accept drop_remainder / shuffle_buffer_size;
+    # strip them so the shared _tfds_image_dataset_kwargs helper can evolve
+    # without breaking the SJD task constructor.
+    image_kw = _tfds_image_dataset_kwargs(cfg)
+    image_kw.pop("drop_remainder", None)
+    image_kw.pop("shuffle_buffer_size", None)
+
     return CIFAR10SJDTask(
         task_name=task_name,
-        **_tfds_image_dataset_kwargs(cfg),
+        **image_kw,
         **_sjd_schedule_kwargs(cfg),
         **_sjd_teacher_hazard_kwargs(cfg),
     )
@@ -194,6 +201,9 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "bitdiff_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="bitdiff_cifar10"),
     "ddpm_cifar10": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="ddpm_cifar10"),
     "md4_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="md4_imagenet64"),
+    "mdlm_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="mdlm_imagenet64"),
+    "bitdiff_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="bitdiff_imagenet64"),
+    "ddpm_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="ddpm_imagenet64"),
     "openwebtext_discrete": _build_openwebtext_discrete_task,
     "sjd_cifar10": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_cifar10"),
     "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),

@@ -1,0 +1,12 @@
+# Bit Diffusion experiment bundle for ImageNet 64x64.
+defaults:
+  - /dataset: imagenet64_discrete
+  - /model/baseline@model: bitdiff_imagenet64
+  - /optim: adamw_imagenet64
+  - /sampler: bitdiff_cifar10
+  - /training: imagenet64
+  - /runtime: default
+  - _self_
+
+task:
+  name: bitdiff_imagenet64

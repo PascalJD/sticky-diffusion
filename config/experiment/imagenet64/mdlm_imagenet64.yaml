@@ -1,0 +1,18 @@
+# MDLM experiment bundle for ImageNet 64x64.
+defaults:
+  - /dataset: imagenet64_discrete
+  - /model/baseline@model: mdlm_imagenet64
+  - /optim: adamw_imagenet64
+  - /sampler: mdlm_cifar10
+  - /training: imagenet64
+  - /runtime: default
+  - _self_
+
+task:
+  name: mdlm_imagenet64
+
+sampler:
+  n_steps: 512
+
+training:
+  sample_timesteps: 512

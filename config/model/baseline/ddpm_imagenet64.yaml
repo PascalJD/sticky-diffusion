@@ -1,0 +1,21 @@
+# Continuous-state Gaussian DDPM model config for ImageNet64.
+defaults:
+  - /model/backbone@_here_: adm_unet_imagenet64
+  - _self_
+
+name: ddpm
+
+# Classical DDPM setup with 512 timesteps for 512 NFE.
+timesteps: 512
+beta_schedule: linear
+beta_start: 1.0e-4
+beta_end: 2.0e-2
+prediction_type: eps
+variance_type: fixed_small
+clip_x0: true
+
+# Continuous DDPM uses the 2D ADM variant.
+image_backbone: adm_unet2d
+
+# Conditioning.
+classes: -1
