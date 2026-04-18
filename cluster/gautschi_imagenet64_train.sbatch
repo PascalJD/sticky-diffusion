@@ -5,8 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=2
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=28
 #SBATCH --time=48:00:00
 #SBATCH --job-name=imgnet64
 
