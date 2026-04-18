@@ -14,7 +14,7 @@ K: 3
 force_decode_at_end: true
 
 # See Gat et al. 2024
-corrector_enabled: false
+corrector_enabled: true
 corrector_steps: 1
 corrector_remask_frac: 0.1
 corrector_metric: entropy

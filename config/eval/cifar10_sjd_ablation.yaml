@@ -1,0 +1,39 @@
+# Ablation eval for SJD CIFAR-10: base vs random-reopen vs perturb-check.
+# Each arm gets independent FID/IS computed in a single offline-eval pass.
+defaults:
+  - cifar10
+  - _self_
+
+# Full 50k samples for proper FID.
+fid_every: 0
+fid_num_samples: 50000
+fid_batch_size: 256
+is_every: 0
+is_num_samples: ${.fid_num_samples}
+is_batch_size: ${.fid_batch_size}
+run_at_end: true
+verbose: true
+fid_verbose: true
+
+fid_eval_sjd_runs:
+  base:
+    label: base
+    # No overrides: standard SJD predictor-only sampling.
+
+  random_reopen:
+    label: random_reopen
+    pc_enabled: true
+    corrector_substeps: 1
+    corrector_step_scale: 0.5
+    pc_gate: constant_one
+
+  pc_perturb_check:
+    label: pc_perturb_check
+    pc_enabled: true
+    corrector_substeps: 1
+    corrector_step_scale: 0.5
+    pc_gate: perturb_check
+    pc_eta_reopen: 0.2
+    pc_remask_window_lo: 0.15
+    pc_remask_window_hi: 0.85
+    pc_max_reopens_per_site: 1

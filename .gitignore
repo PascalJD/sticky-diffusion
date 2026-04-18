@@ -1,4 +1,5 @@
 # Sticky
+.claude/
 wandb/
 !config/wandb/
 !config/wandb/default.yaml

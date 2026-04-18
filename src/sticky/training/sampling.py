@@ -194,6 +194,10 @@ def build_sampling_fns(
                 cfg.sampler.get("pc_allow_unstick_unknown_only", True)
             ),
             metrics_count_nfe=bool(cfg.sampler.get("metrics_count_nfe", True)),
+            pc_eta_reopen=float(cfg.sampler.get("pc_eta_reopen", 0.2)),
+            pc_remask_window_lo=float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
+            pc_remask_window_hi=float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
+            pc_max_reopens_per_site=int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
         )
 
         def _sample_images_sjd(params, rng, batch_size: int):
@@ -223,3 +227,152 @@ def build_sampling_fns(
                 )
 
     return sample_images_jit, sample_images_fid_jit
+
+
+def _sjd_sampler_cfg_from_dict(spec: dict) -> "SamplerConfig":
+    """Build a SamplerConfig from a flat dict of sampler fields."""
+    from sticky.models.sjd.sampler import SamplerConfig
+
+    return SamplerConfig(
+        T=float(spec.get("T", 1.0)),
+        n_steps=int(spec["n_steps"]),
+        sampling_grid=str(spec.get("sampling_grid", "uniform")),
+        score_scale=float(spec.get("score_scale", 1.0)),
+        logit_temperature=float(spec.get("logit_temperature", 1.0)),
+        categorical_sampling_policy=str(spec.get("categorical_sampling_policy", "legacy_low")),
+        hazard_mode=str(spec.get("hazard_mode", "plugin")),
+        alloc_mode=str(spec.get("alloc_mode", "sample")),
+        intensity_mode=str(spec.get("intensity_mode", "full")),
+        log_ratio_clip=float(spec.get("log_ratio_clip", 10.0)),
+        intensity_chunk_size=int(spec.get("intensity_chunk_size", 256)),
+        init_std=float(spec.get("init_std", 1.0)),
+        force_classify_at_end=bool(spec.get("force_classify_at_end", True)),
+        refresh_logits_after_em_step=bool(spec.get("refresh_logits_after_em_step", False)),
+        pc_enabled=bool(spec.get("pc_enabled", False)),
+        corrector_substeps=int(spec.get("corrector_substeps", 0)),
+        corrector_step_scale=float(spec.get("corrector_step_scale", 0.0)),
+        pc_gate=str(spec.get("pc_gate", "constant_one")),
+        pc_clamp_known=bool(spec.get("pc_clamp_known", True)),
+        pc_refresh_logits_after_langevin=bool(spec.get("pc_refresh_logits_after_langevin", False)),
+        pc_allow_unstick_unknown_only=bool(spec.get("pc_allow_unstick_unknown_only", True)),
+        metrics_count_nfe=bool(spec.get("metrics_count_nfe", True)),
+        pc_eta_reopen=float(spec.get("pc_eta_reopen", 0.2)),
+        pc_remask_window_lo=float(spec.get("pc_remask_window_lo", 0.15)),
+        pc_remask_window_hi=float(spec.get("pc_remask_window_hi", 0.85)),
+        pc_max_reopens_per_site=int(spec.get("pc_max_reopens_per_site", 1)),
+    )
+
+
+def build_multi_fid_sampling_fns(
+    *,
+    cfg: DictConfig,
+    task: Any,
+    model: Any,
+    fid_batch_size: int,
+    sample_timesteps: int,
+    eval_sjd_runs: dict,
+) -> dict:
+    """Build a dict of labelled JIT'd SJD FID sampling functions.
+
+    Each entry in *eval_sjd_runs* is ``{label: str, ...sampler_overrides}``.
+    Overrides are merged on top of the base sampler config from *cfg.sampler*.
+
+    Returns ``{label: jitted_sample_fn}`` where each ``sample_fn(params, rng)``
+    returns a ``ReverseSampleResult``.
+    """
+    if str(cfg.model.name) != "sjd":
+        raise ValueError(
+            "build_multi_fid_sampling_fns only supports SJD models, "
+            f"got model.name={cfg.model.name!r}."
+        )
+
+    from sticky.models.sjd import sampling as sjd_sampling
+    from sticky.models.sjd.anchors import AnchorTable
+
+    beta = getattr(task, "beta", None)
+    if beta is None:
+        beta = hydra.utils.instantiate(cfg.forward.beta)
+    hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
+    jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
+
+    # Base sampler spec from the experiment config.
+    base_spec: dict = {
+        "T": float(cfg.sampler.get("T", 1.0)),
+        "n_steps": int(sample_timesteps),
+        "sampling_grid": str(cfg.sampler.get("sampling_grid", "uniform")),
+        "score_scale": float(cfg.sampler.get("score_scale", 1.0)),
+        "logit_temperature": float(
+            cfg.sampler.get("logit_temperature", cfg.sampler.get("temperature", 1.0))
+        ),
+        "categorical_sampling_policy": str(
+            cfg.sampler.get("categorical_sampling_policy", "legacy_low")
+        ),
+        "hazard_mode": str(cfg.sampler.get("hazard_mode", "plugin")),
+        "alloc_mode": str(cfg.sampler.get("alloc_mode", "sample")),
+        "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
+        "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
+        "intensity_chunk_size": int(cfg.sampler.get("intensity_chunk_size", 256)),
+        "init_std": float(cfg.sampler.get("init_std", 1.0)),
+        "force_classify_at_end": bool(cfg.sampler.get("force_classify_at_end", True)),
+        "refresh_logits_after_em_step": bool(
+            cfg.sampler.get("refresh_logits_after_em_step", False)
+        ),
+        "pc_enabled": bool(cfg.sampler.get("pc_enabled", False)),
+        "corrector_substeps": int(cfg.sampler.get("corrector_substeps", 0)),
+        "corrector_step_scale": float(cfg.sampler.get("corrector_step_scale", 0.0)),
+        "pc_gate": str(cfg.sampler.get("pc_gate", "constant_one")),
+        "pc_clamp_known": bool(cfg.sampler.get("pc_clamp_known", True)),
+        "pc_refresh_logits_after_langevin": bool(
+            cfg.sampler.get("pc_refresh_logits_after_langevin", False)
+        ),
+        "pc_allow_unstick_unknown_only": bool(
+            cfg.sampler.get("pc_allow_unstick_unknown_only", True)
+        ),
+        "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
+        "pc_eta_reopen": float(cfg.sampler.get("pc_eta_reopen", 0.2)),
+        "pc_remask_window_lo": float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
+        "pc_remask_window_hi": float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
+        "pc_max_reopens_per_site": int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
+    }
+
+    data_shape = tuple(task.spec.data_shape)
+    result: dict = {}
+
+    for run_key, run_entry in eval_sjd_runs.items():
+        if not isinstance(run_entry, dict):
+            run_entry = dict(run_entry)
+        label = str(run_entry.get("label", run_key)).strip()
+        if not label:
+            label = str(run_key)
+
+        # Merge overrides on top of base.
+        spec = dict(base_spec)
+        for k, v in run_entry.items():
+            if k == "label":
+                continue
+            if k in spec and v is not None:
+                spec[k] = v
+
+        sampler_cfg = _sjd_sampler_cfg_from_dict(spec)
+
+        def _make_sample_fn(sc):
+            def _sample(params, rng):
+                a_table = model.apply({"params": params}, method=model.anchor_table)
+                anchors = AnchorTable(table_float=a_table)
+                return sjd_sampling.simple_generate(
+                    rng=rng,
+                    params=params,
+                    model=model,
+                    anchors=anchors,
+                    beta=beta,
+                    hazard=hazard,
+                    jump=jump,
+                    cfg=sc,
+                    batch_size=fid_batch_size,
+                    shape=data_shape,
+                )
+            return jax.jit(_sample)
+
+        result[label] = _make_sample_fn(sampler_cfg)
+
+    return result

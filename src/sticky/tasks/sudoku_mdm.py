@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -106,7 +106,9 @@ class SudokuMDMTask(SudokuTaskBase):
         params,
         batch: Batch,
         train: bool,
+        teacher_params: Any = None,
     ) -> tuple[jnp.ndarray, Metrics]:
+        del teacher_params
         batch = self._ensure_packed_batch(batch)
 
         x = jnp.asarray(batch["packed_seq"], dtype=jnp.int32)

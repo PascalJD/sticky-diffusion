@@ -24,6 +24,7 @@ def simple_generate(
     cfg: SamplerConfig,
     known_idx: Array | None = None,
     known_mask: Array | None = None,
+    jump_reopen: "VPMatchedGaussianJump | None" = None,
 ) -> ReverseSampleResult:
 
     shape_tup: Tuple[int, ...] = tuple(int(x) for x in shape)
@@ -44,6 +45,7 @@ def simple_generate(
         cfg=cfg,
         known_idx=known_idx,
         known_mask=known_mask,
+        jump_reopen=jump_reopen,
     )
 
 
@@ -59,6 +61,7 @@ def conditional_generate_board(
     known_tokens: Array,
     known_token_mask: Array,
     cfg: SamplerConfig,
+    jump_reopen: "VPMatchedGaussianJump | None" = None,
 ) -> tuple[Array, dict[str, Array]]:
     known_tokens = jnp.asarray(known_tokens, dtype=jnp.int32)
     known_token_mask = jnp.asarray(known_token_mask, dtype=jnp.bool_)
@@ -86,6 +89,7 @@ def conditional_generate_board(
         cfg=cfg,
         known_idx=known_idx,
         known_mask=known_token_mask,
+        jump_reopen=jump_reopen,
     )
     board = (jnp.asarray(out.k_filled, dtype=jnp.int32) + 1).astype(jnp.int32)
     board = jnp.where(known_token_mask, known_tokens, board).astype(jnp.int32)

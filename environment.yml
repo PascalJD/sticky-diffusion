@@ -24,6 +24,12 @@ dependencies:
       - tf-keras==2.18.0
       - tensorflow-datasets==4.9.*
       - etils[epath]>=1.5.1
-      - clu 
-      - distrax 
+      - clu
+      - distrax
       - seaborn
+      - tqdm>=4.66
+      # Data prep: HuggingFace OpenWebText + GPT-2 tokenizer.
+      - datasets>=2.18
+      - transformers>=4.40
+      # Dev / test.
+      - pytest>=7.0

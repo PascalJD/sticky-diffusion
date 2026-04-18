@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -53,7 +53,9 @@ class CIFAR10DiscreteTask(TFDSDiscreteImageTaskBase):
         params,
         batch: Batch,
         train: bool,
+        teacher_params: Any = None,
     ) -> Tuple[jnp.ndarray, Metrics]:
+        del teacher_params
         key_sample, key_dropout = jax.random.split(rng)
         x = batch["image"].astype(jnp.int32)  # [B,32,32,3] in [0..255]
         if self.num_classes > 0:

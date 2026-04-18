@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 import jax
 import jax.numpy as jnp
@@ -258,6 +259,105 @@ def test_conditional_generate_board_clamps_clues_and_emits_digits():
         assert float(metrics["sampling/nfe_total"]) >= 3.0
 
 
+def test_perturb_check_runs_without_error():
+    cfg = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        categorical_sampling_policy="exact",
+        pc_enabled=True,
+        corrector_substeps=1,
+        corrector_step_scale=0.5,
+        pc_gate="perturb_check",
+        pc_eta_reopen=0.2,
+        pc_remask_window_lo=0.0,
+        pc_remask_window_hi=1.0,
+        pc_max_reopens_per_site=1,
+    )
+    out, _, known_idx, known_mask, _ = _run_sampler(cfg, key_seed=10)
+    metrics = jax.device_get(out.metrics)
+    for value in metrics.values():
+        assert np.isfinite(np.asarray(value)).all(), f"Non-finite metric found"
+    assert float(metrics["sampling/pc_reopen_total"]) >= 0.0
+    assert float(metrics["sampling/pc_reopen_gate_mean"]) >= 0.0
+    # Known sites must remain clamped.
+    np.testing.assert_array_equal(
+        np.asarray(out.k_filled)[0, np.asarray(known_mask)[0]],
+        np.asarray(known_idx)[0, np.asarray(known_mask)[0]],
+    )
+
+
+def test_perturb_check_respects_remask_window():
+    # Narrow window that excludes all timesteps → zero reopens.
+    cfg = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        categorical_sampling_policy="exact",
+        pc_enabled=True,
+        corrector_substeps=1,
+        corrector_step_scale=0.5,
+        pc_gate="perturb_check",
+        pc_eta_reopen=0.2,
+        pc_remask_window_lo=0.99,
+        pc_remask_window_hi=1.0,
+        pc_max_reopens_per_site=1,
+    )
+    out, _, _, _, _ = _run_sampler(cfg, key_seed=11)
+    metrics = jax.device_get(out.metrics)
+    assert float(metrics["sampling/pc_reopen_total"]) == 0.0
+
+
+def test_perturb_check_nfe_higher_than_constant_one():
+    # perturb_check adds 1 extra apply_model call per corrector substep
+    # (for the perturbed-state evaluation), on top of the commit-phase eval.
+    pc_constant = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        pc_enabled=True,
+        corrector_substeps=1,
+        corrector_step_scale=0.1,
+        pc_gate="constant_one",
+    )
+    pc_perturb = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        pc_enabled=True,
+        corrector_substeps=1,
+        corrector_step_scale=0.1,
+        pc_gate="perturb_check",
+        pc_eta_reopen=0.2,
+        pc_remask_window_lo=0.0,
+        pc_remask_window_hi=1.0,
+    )
+    out_const, _, _, _, _ = _run_sampler(pc_constant, key_seed=12)
+    out_perturb, _, _, _, _ = _run_sampler(pc_perturb, key_seed=12)
+    nfe_const = float(out_const.metrics["sampling/nfe_total"])
+    nfe_perturb = float(out_perturb.metrics["sampling/nfe_total"])
+    # constant_one with 1 substep: n_steps * (1 EM + 1 corr_commit) = 4*(1+1)=8 NFE
+    # perturb_check with 1 substep: n_steps * (1 EM + 1 perturb_eval + 1 corr_commit) = 4*(1+1+1)=12 NFE
+    assert nfe_perturb > nfe_const
+
+
+def test_perturb_check_disabled_matches_predictor_only():
+    base = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        categorical_sampling_policy="exact",
+        pc_enabled=False,
+    )
+    pc_disabled = SamplerConfig(
+        n_steps=4,
+        alloc_mode="argmax",
+        categorical_sampling_policy="exact",
+        pc_enabled=True,
+        corrector_substeps=0,
+        corrector_step_scale=0.5,
+        pc_gate="perturb_check",
+    )
+    out_base, _, _, _, _ = _run_sampler(base, key_seed=13)
+    out_disabled, _, _, _, _ = _run_sampler(pc_disabled, key_seed=13)
+    np.testing.assert_array_equal(np.asarray(out_base.k_filled), np.asarray(out_disabled.k_filled))
+
+
 def test_margin_pc_gate_matches_top2_margin_without_full_sort_assumptions():
     probs = jnp.asarray(
         [
@@ -275,3 +375,9 @@ def test_margin_pc_gate_matches_top2_margin_without_full_sort_assumptions():
         dtype=np.float32,
     )
     np.testing.assert_allclose(gate, expected, atol=1e-6)
+
+
+def test_pc_gate_from_probs_rejects_perturb_check():
+    probs = jnp.asarray([[0.25, 0.25, 0.25, 0.25]], dtype=jnp.float32)
+    with pytest.raises(ValueError, match="not a probability-only gate"):
+        pc_gate_from_probs(probs, gate="perturb_check")

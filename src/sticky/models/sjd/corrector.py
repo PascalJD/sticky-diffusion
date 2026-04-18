@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 Array = jnp.ndarray
 
-_VALID_PC_GATES = frozenset({"constant_one", "entropy", "margin"})
+_VALID_PC_GATES = frozenset({"constant_one", "entropy", "margin", "perturb_check"})
 
 
 def normalize_pc_gate_name(gate: str | None) -> str:
@@ -30,6 +30,12 @@ def pc_gate_from_probs(
 ) -> Array:
     probs = jnp.asarray(probs, dtype=jnp.float32)
     gate_key = normalize_pc_gate_name(gate)
+    if gate_key == "perturb_check":
+        raise ValueError(
+            "pc_gate='perturb_check' is not a probability-only gate. "
+            "It must be computed in the sampler from the perturbed recommit "
+            "distribution and the current anchor."
+        )
     if gate_key == "constant_one":
         return jnp.ones(probs.shape[:-1], dtype=jnp.float32)
 

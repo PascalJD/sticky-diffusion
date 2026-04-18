@@ -84,6 +84,11 @@ class SamplerConfig:
     sitewise_hazard_w_min: float = 0.5
     sitewise_hazard_w_max: float = 2.0
     sitewise_hazard_eps: float = 1e-12
+    # Perturb-check corrector gate knobs.
+    pc_eta_reopen: float = 0.2
+    pc_remask_window_lo: float = 0.15
+    pc_remask_window_hi: float = 0.85
+    pc_max_reopens_per_site: int = 1
 
 
 @struct.dataclass
@@ -142,6 +147,7 @@ def reverse_sample(
     cfg: SamplerConfig,
     known_idx: Array | None = None,
     known_mask: Array | None = None,
+    jump_reopen: VPMatchedGaussianJump | None = None,
 ) -> ReverseSampleResult:
     """
     This is a splitting scheme:
@@ -172,6 +178,14 @@ def reverse_sample(
     )
     pc_gate = normalize_pc_gate_name(cfg.pc_gate)
     pc_active = bool(cfg.pc_enabled) and int(cfg.corrector_substeps) > 0 and float(cfg.corrector_step_scale) > 0.0
+
+    if pc_gate == "perturb_check" and jump_reopen is None:
+        jump_reopen = VPMatchedGaussianJump(
+            beta=jump.beta,
+            eta=float(cfg.pc_eta_reopen),
+            std_floor=jump.std_floor,
+            clip=jump.clip,
+        )
 
     k0, k_loop = jax.random.split(key, 2)
     y = cfg.init_std * jax.random.normal(
@@ -240,6 +254,10 @@ def reverse_sample(
     pc_gate_cont_count = jnp.asarray(0.0, dtype=jnp.float32)
     pc_gate_committed_sum = jnp.asarray(0.0, dtype=jnp.float32)
     pc_gate_committed_count = jnp.asarray(0.0, dtype=jnp.float32)
+    reopen_count = jnp.zeros((batch_size,) + tuple(shape), dtype=jnp.int32)
+    pc_reopen_total = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_reopen_gate_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    pc_reopen_gate_count = jnp.asarray(0.0, dtype=jnp.float32)
 
     def step_fn(i: int, carry):
         (
@@ -261,6 +279,10 @@ def reverse_sample(
             pc_gate_cont_count,
             pc_gate_committed_sum,
             pc_gate_committed_count,
+            reopen_count,
+            pc_reopen_total,
+            pc_reopen_gate_sum,
+            pc_reopen_gate_count,
         ) = carry
 
         t_scalar = time_grid[i]
@@ -414,58 +436,173 @@ def reverse_sample(
                 k_anchor = jnp.clip(k_idx, 0, L - 1)
                 anchor_vec = a_table[k_anchor]
                 key, k_prop, k_accept = jax.random.split(key, 3)
-                proposed_y = jump.sample(k_prop, anchor_vec, corr_t_img)
-                if bool(cfg.pc_clamp_known):
-                    proposed_y, _, _ = clamp_known_state(
-                        y=proposed_y,
-                        committed=committed,
-                        k_idx=k_idx,
-                        known_mask=known_mask,
-                        known_idx=known_idx,
-                        a_table=a_table,
+
+                if pc_gate == "perturb_check":
+                    # --- Perturb-and-check reopen gate ---
+                    # 1. Remask window: only activate when normalised time is
+                    #    within [lo, hi].
+                    tau = next_t_scalar / jnp.asarray(float(cfg.T), dtype=jnp.float32)
+                    tau_in_window = (
+                        (tau >= jnp.asarray(float(cfg.pc_remask_window_lo), dtype=jnp.float32))
+                        & (tau <= jnp.asarray(float(cfg.pc_remask_window_hi), dtype=jnp.float32))
                     )
 
-                proposal_gate = jnp.ones(committed.shape, dtype=jnp.float32)
-                if pc_gate != "constant_one":
-                    proposal_logits, _ = apply_model(params, proposed_y, corr_t_img)
+                    # 2. Eligible sites: committed-unknown within reopen budget.
+                    reopen_eligible = committed_unknown & (
+                        reopen_count < int(cfg.pc_max_reopens_per_site)
+                    )
+
+                    # 3. Perturb committed sites with the smaller-eta kernel.
+                    perturbed_y = jnp.where(
+                        reopen_eligible[..., None],
+                        jump_reopen.sample(k_prop, anchor_vec, corr_t_img),
+                        y,
+                    )
+                    if bool(cfg.pc_clamp_known):
+                        perturbed_y, _, _ = clamp_known_state(
+                            y=perturbed_y,
+                            committed=committed,
+                            k_idx=k_idx,
+                            known_mask=known_mask,
+                            known_idx=known_idx,
+                            a_table=a_table,
+                        )
+
+                    # 4. Evaluate the model on the perturbed state (+1 NFE).
+                    perturbed_logits, _ = apply_model(params, perturbed_y, corr_t_img)
                     if cfg.metrics_count_nfe:
                         nfe_total = nfe_total + 1.0
-                    proposal_gate = pc_gate_from_probs(
-                        jax.nn.softmax(proposal_logits, axis=-1),
-                        gate=pc_gate,
+
+                    # 5. SJD recommit distribution on the perturbed state.
+                    _, perturbed_choice_probs = plugin_intensity_and_probs(
+                        logits=perturbed_logits,
+                        y=perturbed_y,
+                        t_img=corr_t_img,
+                        anchors=anchors,
+                        beta=beta,
+                        hazard=hazard,
+                        jump=jump,
+                        logit_temperature=float(cfg.logit_temperature),
+                        intensity_mode=cfg.intensity_mode,
+                        log_ratio_clip=float(cfg.log_ratio_clip),
+                        chunk_size=int(cfg.intensity_chunk_size),
                     )
 
-                p_unstick = jnp.where(
-                    committed_unknown,
-                    jnp.clip(proposal_gate * p_unstick_base, 0.0, 1.0),
-                    0.0,
-                )
-                accept_unstick = committed_unknown & (
-                    jax.random.uniform(
-                        k_accept,
-                        shape=committed.shape,
-                        minval=0.0,
-                        maxval=1.0,
+                    # 6. Compare current anchor prob vs best alternative.
+                    current_prob = jnp.take_along_axis(
+                        perturbed_choice_probs,
+                        jnp.clip(k_anchor, 0, L - 1)[..., None],
+                        axis=-1,
+                    )[..., 0]
+                    # Mask out the current anchor to find the best alternative.
+                    anchor_range = jnp.arange(L, dtype=jnp.int32)
+                    is_current = anchor_range == k_anchor[..., None]  # (..., L)
+                    masked_probs = jnp.where(
+                        is_current,
+                        jnp.float32(-1.0),
+                        perturbed_choice_probs,
                     )
-                    < p_unstick
-                )
-                pc_unstick_attempts_total = pc_unstick_attempts_total + _site_mask_count(committed_unknown)
-                pc_unstick_accepts_total = pc_unstick_accepts_total + _site_mask_count(accept_unstick)
-                pc_gate_committed_sum = pc_gate_committed_sum + masked_sum(proposal_gate, committed_unknown)
-                pc_gate_committed_count = pc_gate_committed_count + _site_mask_count(committed_unknown)
+                    alt_prob = jnp.max(masked_probs, axis=-1)
+                    reopen_gate = jnp.clip(alt_prob - current_prob, 0.0, 1.0)
 
-                y = jnp.where(accept_unstick[..., None], proposed_y, y)
-                committed = committed & (~accept_unstick)
-                k_idx = jnp.where(accept_unstick, -1, k_idx)
-                if bool(cfg.pc_clamp_known):
-                    y, committed, k_idx = clamp_known_state(
-                        y=y,
-                        committed=committed,
-                        k_idx=k_idx,
-                        known_mask=known_mask,
-                        known_idx=known_idx,
-                        a_table=a_table,
+                    # 7. Zero the gate outside the remask window.
+                    reopen_gate = jnp.where(tau_in_window, reopen_gate, 0.0)
+
+                    # 8. Reopen probability = base unstick rate * gate.
+                    p_reopen = jnp.where(
+                        reopen_eligible,
+                        jnp.clip(p_unstick_base * reopen_gate, 0.0, 1.0),
+                        0.0,
                     )
+
+                    # 9. Accept / reject.
+                    accept_reopen = reopen_eligible & (
+                        jax.random.uniform(
+                            k_accept,
+                            shape=committed.shape,
+                            minval=0.0,
+                            maxval=1.0,
+                        )
+                        < p_reopen
+                    )
+
+                    # 10. Update state & metrics.
+                    y = jnp.where(accept_reopen[..., None], perturbed_y, y)
+                    committed = committed & (~accept_reopen)
+                    k_idx = jnp.where(accept_reopen, -1, k_idx)
+                    reopen_count = reopen_count + accept_reopen.astype(jnp.int32)
+
+                    pc_unstick_attempts_total = pc_unstick_attempts_total + _site_mask_count(reopen_eligible)
+                    pc_unstick_accepts_total = pc_unstick_accepts_total + _site_mask_count(accept_reopen)
+                    pc_reopen_total = pc_reopen_total + _site_mask_count(accept_reopen)
+                    pc_reopen_gate_sum = pc_reopen_gate_sum + masked_sum(reopen_gate, reopen_eligible)
+                    pc_reopen_gate_count = pc_reopen_gate_count + _site_mask_count(reopen_eligible)
+                    pc_gate_committed_sum = pc_gate_committed_sum + masked_sum(reopen_gate, committed_unknown)
+                    pc_gate_committed_count = pc_gate_committed_count + _site_mask_count(committed_unknown)
+
+                    if bool(cfg.pc_clamp_known):
+                        y, committed, k_idx = clamp_known_state(
+                            y=y,
+                            committed=committed,
+                            k_idx=k_idx,
+                            known_mask=known_mask,
+                            known_idx=known_idx,
+                            a_table=a_table,
+                        )
+                else:
+                    # --- Existing unstick logic (constant_one / entropy / margin) ---
+                    proposed_y = jump.sample(k_prop, anchor_vec, corr_t_img)
+                    if bool(cfg.pc_clamp_known):
+                        proposed_y, _, _ = clamp_known_state(
+                            y=proposed_y,
+                            committed=committed,
+                            k_idx=k_idx,
+                            known_mask=known_mask,
+                            known_idx=known_idx,
+                            a_table=a_table,
+                        )
+
+                    proposal_gate = jnp.ones(committed.shape, dtype=jnp.float32)
+                    if pc_gate != "constant_one":
+                        proposal_logits, _ = apply_model(params, proposed_y, corr_t_img)
+                        if cfg.metrics_count_nfe:
+                            nfe_total = nfe_total + 1.0
+                        proposal_gate = pc_gate_from_probs(
+                            jax.nn.softmax(proposal_logits, axis=-1),
+                            gate=pc_gate,
+                        )
+
+                    p_unstick = jnp.where(
+                        committed_unknown,
+                        jnp.clip(proposal_gate * p_unstick_base, 0.0, 1.0),
+                        0.0,
+                    )
+                    accept_unstick = committed_unknown & (
+                        jax.random.uniform(
+                            k_accept,
+                            shape=committed.shape,
+                            minval=0.0,
+                            maxval=1.0,
+                        )
+                        < p_unstick
+                    )
+                    pc_unstick_attempts_total = pc_unstick_attempts_total + _site_mask_count(committed_unknown)
+                    pc_unstick_accepts_total = pc_unstick_accepts_total + _site_mask_count(accept_unstick)
+                    pc_gate_committed_sum = pc_gate_committed_sum + masked_sum(proposal_gate, committed_unknown)
+                    pc_gate_committed_count = pc_gate_committed_count + _site_mask_count(committed_unknown)
+
+                    y = jnp.where(accept_unstick[..., None], proposed_y, y)
+                    committed = committed & (~accept_unstick)
+                    k_idx = jnp.where(accept_unstick, -1, k_idx)
+                    if bool(cfg.pc_clamp_known):
+                        y, committed, k_idx = clamp_known_state(
+                            y=y,
+                            committed=committed,
+                            k_idx=k_idx,
+                            known_mask=known_mask,
+                            known_idx=known_idx,
+                            a_table=a_table,
+                        )
 
                 logits_corr, _ = apply_model(params, y, corr_t_img)
                 if cfg.metrics_count_nfe:
@@ -527,7 +664,14 @@ def reverse_sample(
                     chunk_size=int(cfg.intensity_chunk_size),
                     sitewise_lam_off=sitewise_lam_off_pc,
                 )
-                gate_cont = pc_gate_from_probs(probs_commit, gate=pc_gate)
+                # perturb_check only gates the anchor->continuous reopen move.
+                # Once a site is continuous again, recommit with the standard
+                # SJD plug-in rule, i.e. no extra margin/entropy gate here.
+                if pc_gate == "perturb_check":
+                    gate_cont = jnp.ones(continuous_mask.shape, dtype=jnp.float32)
+                else:
+                    gate_cont = pc_gate_from_probs(probs_commit, gate=pc_gate)
+
                 p_commit = jnp.where(
                     continuous_mask,
                     jnp.clip(gate_cont * (1.0 - jnp.exp(-lam_pc * eps_corr)), 0.0, 1.0),
@@ -589,6 +733,10 @@ def reverse_sample(
             pc_gate_cont_count,
             pc_gate_committed_sum,
             pc_gate_committed_count,
+            reopen_count,
+            pc_reopen_total,
+            pc_reopen_gate_sum,
+            pc_reopen_gate_count,
         )
 
     carry = (
@@ -610,6 +758,10 @@ def reverse_sample(
         pc_gate_cont_count,
         pc_gate_committed_sum,
         pc_gate_committed_count,
+        reopen_count,
+        pc_reopen_total,
+        pc_reopen_gate_sum,
+        pc_reopen_gate_count,
     )
     carry = jax.lax.fori_loop(0, int(cfg.n_steps), step_fn, carry)
     (
@@ -631,6 +783,10 @@ def reverse_sample(
         pc_gate_cont_count,
         pc_gate_committed_sum,
         pc_gate_committed_count,
+        reopen_count,
+        pc_reopen_total,
+        pc_reopen_gate_sum,
+        pc_reopen_gate_count,
     ) = carry
 
     n_sites = jnp.asarray(committed.size, dtype=jnp.float32)
@@ -694,6 +850,9 @@ def reverse_sample(
         / jnp.maximum(pc_gate_cont_count, 1.0),
         "sampling/gate_mean_committed": pc_gate_committed_sum
         / jnp.maximum(pc_gate_committed_count, 1.0),
+        "sampling/pc_reopen_total": pc_reopen_total / batch_den,
+        "sampling/pc_reopen_gate_mean": pc_reopen_gate_sum
+        / jnp.maximum(pc_reopen_gate_count, 1.0),
     }
 
     return ReverseSampleResult(

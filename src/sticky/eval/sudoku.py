@@ -243,6 +243,10 @@ def _overlay_sjd_sampler_fields(dst: dict[str, Any], src: dict[str, Any]) -> Non
         "sitewise_hazard_w_min",
         "sitewise_hazard_w_max",
         "sitewise_hazard_eps",
+        "pc_eta_reopen",
+        "pc_remask_window_lo",
+        "pc_remask_window_hi",
+        "pc_max_reopens_per_site",
     ):
         if key not in src:
             continue
@@ -380,6 +384,10 @@ def _resolve_sudoku_sjd_run_specs(
         "sitewise_hazard_w_min": float(cfg.sampler.get("sitewise_hazard_w_min", 0.5)),
         "sitewise_hazard_w_max": float(cfg.sampler.get("sitewise_hazard_w_max", 2.0)),
         "sitewise_hazard_eps": float(cfg.sampler.get("sitewise_hazard_eps", 1e-12)),
+        "pc_eta_reopen": float(cfg.sampler.get("pc_eta_reopen", 0.2)),
+        "pc_remask_window_lo": float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
+        "pc_remask_window_hi": float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
+        "pc_max_reopens_per_site": int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
     }
 
     primary_label = str(
@@ -946,6 +954,10 @@ def build_sudoku_eval_logger(
                 sitewise_hazard_w_min=float(sampler_spec["sitewise_hazard_w_min"]),
                 sitewise_hazard_w_max=float(sampler_spec["sitewise_hazard_w_max"]),
                 sitewise_hazard_eps=float(sampler_spec["sitewise_hazard_eps"]),
+                pc_eta_reopen=float(sampler_spec.get("pc_eta_reopen", 0.2)),
+                pc_remask_window_lo=float(sampler_spec.get("pc_remask_window_lo", 0.15)),
+                pc_remask_window_hi=float(sampler_spec.get("pc_remask_window_hi", 0.85)),
+                pc_max_reopens_per_site=int(sampler_spec.get("pc_max_reopens_per_site", 1)),
             )
 
             @jax.jit

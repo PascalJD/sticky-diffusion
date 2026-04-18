@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -150,7 +150,9 @@ class SudokuInpaintMDMTask(Task):
         params,
         batch: Batch,
         train: bool,
+        teacher_params: Any = None,
     ) -> tuple[jnp.ndarray, Metrics]:
+        del teacher_params
         solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
         clue_board = jnp.asarray(batch["clue_board"], dtype=jnp.int32)
         clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)

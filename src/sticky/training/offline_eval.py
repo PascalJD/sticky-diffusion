@@ -534,6 +534,7 @@ def run_offline_checkpoint_eval(
     eval_sample_batch_size = max(fid_batch_size, is_batch_size)
 
     sample_images_fid_jit = None
+    extra_fid_sampling_fns = None
     if eval_mode != "sudoku":
         _, sample_images_fid_jit = build_sampling_fns(
             cfg=effective_cfg,
@@ -546,6 +547,27 @@ def run_offline_checkpoint_eval(
         )
         if sample_images_fid_jit is None:
             raise RuntimeError("Could not build sampling function for offline evaluation.")
+
+        # Multi-sampler FID/IS runs for SJD ablations.
+        fid_eval_sjd_runs_cfg = eval_cfg_local.get("fid_eval_sjd_runs", None)
+        if (
+            fid_eval_sjd_runs_cfg is not None
+            and str(effective_cfg.model.name) == "sjd"
+        ):
+            from sticky.training.sampling import build_multi_fid_sampling_fns
+
+            fid_eval_sjd_runs = OmegaConf.to_container(
+                fid_eval_sjd_runs_cfg, resolve=True
+            )
+            if isinstance(fid_eval_sjd_runs, dict) and fid_eval_sjd_runs:
+                extra_fid_sampling_fns = build_multi_fid_sampling_fns(
+                    cfg=effective_cfg,
+                    task=task,
+                    model=model,
+                    fid_batch_size=eval_sample_batch_size,
+                    sample_timesteps=sample_timesteps,
+                    eval_sjd_runs=fid_eval_sjd_runs,
+                )
 
     fid_prefix = str(eval_cfg_local.get("prefix", "eval"))
     fid_log_at_step_zero = bool(eval_cfg_local.get("log_at_step_zero", False))
@@ -576,6 +598,7 @@ def run_offline_checkpoint_eval(
         model=model,
         eval_every=(sudoku_every if eval_mode == "sudoku" else max(fid_every, is_every)),
         sample_timesteps_override=(sample_timesteps if eval_mode == "sudoku" else None),
+        extra_fid_sampling_fns=extra_fid_sampling_fns,
     )
     if maybe_log_eval is None:
         raise RuntimeError(

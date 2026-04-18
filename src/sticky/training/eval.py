@@ -174,6 +174,7 @@ def build_eval_logger(
     model: Optional[Any] = None,
     eval_every: int = 0,
     sample_timesteps_override: Optional[int] = None,
+    extra_fid_sampling_fns: Optional[Dict[str, Any]] = None,
 ):
     mode = str(eval_cfg.get("mode", "fid_is")).lower()
     if mode == "sudoku":
@@ -365,6 +366,12 @@ def build_eval_logger(
 
         metrics: Dict[str, float] = {}
 
+        # When extra_fid_sampling_fns is provided, each labelled run already
+        # covers the default config (the "base" entry).  Skip the redundant
+        # primary FID/IS computation so we don't waste ~50 % of wall time
+        # on a duplicate arm.
+        skip_primary = bool(extra_fid_sampling_fns)
+
         can_compute_joint = (
             run_fid
             and run_is
@@ -374,7 +381,9 @@ def build_eval_logger(
             and (is_calc is not None)
         )
 
-        if can_compute_joint:
+        if skip_primary:
+            pass  # jump straight to the extra runs below
+        elif can_compute_joint:
             if verbose:
                 print(
                     f"[eval] Running joint FID/IS at step {step_i} "
@@ -441,6 +450,79 @@ def build_eval_logger(
                         f"IS={is_mean:.3f}±{is_std:.3f}",
                         flush=True,
                     )
+
+        # --- Extra labelled FID/IS runs (e.g. ablation samplers) ---
+        if extra_fid_sampling_fns and (run_fid or run_is):
+            for run_label, run_sample_fn in extra_fid_sampling_fns.items():
+                run_prefix = f"{fid_prefix}/{run_label}"
+
+                def make_run_sample_fn(fn, seed_offset: int):
+                    ctr = {"i": 0}
+                    rng_key = jax.random.fold_in(base_rng, seed_offset)
+
+                    def _sample_fn(n: int):
+                        i = ctr["i"]
+                        ctr["i"] = i + 1
+                        rng = jax.random.fold_in(rng_key, i)
+                        out = fn(params_for_sampling, rng)
+                        imgs = _extract_images(cfg, out)
+                        return imgs[:n]
+
+                    return _sample_fn
+
+                run_seed = hash(run_label) & 0x7FFFFFFF
+                run_sample = make_run_sample_fn(run_sample_fn, seed_offset=run_seed)
+
+                can_joint = (
+                    run_fid and run_is
+                    and (fid_num_samples == is_num_samples)
+                    and (fid_batch_size == is_batch_size)
+                    and (fid_calc is not None)
+                    and (is_calc is not None)
+                )
+                if can_joint:
+                    if verbose:
+                        print(
+                            f"[eval] Running joint FID/IS for '{run_label}' at step {step_i}",
+                            flush=True,
+                        )
+                    t0_run = time.perf_counter()
+                    fid_v, is_m, is_s = _compute_joint_fid_is(
+                        fid_calc=fid_calc,
+                        is_calc=is_calc,
+                        sample_fn=run_sample,
+                        num_samples=fid_num_samples,
+                        batch_size=fid_batch_size,
+                        verbose=fid_verbose,
+                        progress_every_batches=fid_progress_every_batches,
+                    )
+                    metrics[f"{run_prefix}/fid"] = float(fid_v)
+                    metrics[f"{run_prefix}/is"] = float(is_m)
+                    metrics[f"{run_prefix}/is_std"] = float(is_s)
+                    if verbose:
+                        print(
+                            f"[eval] '{run_label}' done in {time.perf_counter() - t0_run:.1f}s: "
+                            f"FID={fid_v:.3f}, IS={is_m:.3f}±{is_s:.3f}",
+                            flush=True,
+                        )
+                else:
+                    if run_fid and fid_calc is not None:
+                        fid_v = fid_calc.compute_from_sample_fn(
+                            make_run_sample_fn(run_sample_fn, seed_offset=run_seed + 1),
+                            num_samples=fid_num_samples,
+                            batch_size=fid_batch_size,
+                            verbose=fid_verbose,
+                            progress_every_batches=fid_progress_every_batches,
+                        )
+                        metrics[f"{run_prefix}/fid"] = float(fid_v)
+                    if run_is and is_calc is not None:
+                        is_m, is_s = is_calc.compute_from_sample_fn(
+                            make_run_sample_fn(run_sample_fn, seed_offset=run_seed + 2),
+                            num_samples=is_num_samples,
+                            batch_size=is_batch_size,
+                        )
+                        metrics[f"{run_prefix}/is"] = float(is_m)
+                        metrics[f"{run_prefix}/is_std"] = float(is_s)
 
         if (wandb_mod is not None) and metrics:
             wandb_mod.log(metrics, step=step_i)

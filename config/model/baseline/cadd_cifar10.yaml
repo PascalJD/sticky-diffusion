@@ -1,6 +1,6 @@
 defaults:
   - /model/backbone@_here_: adm_unet
-  - /model/cadd_latent@cadd_latent: gaussian
+  - /model/cadd_latent@cadd_latent: flow_matching
   - _self_
 
 # Canonical CADD model for CIFAR-10.

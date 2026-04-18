@@ -121,7 +121,7 @@ def make_openwebtext_iterator(
                 if (stop - start) < int(batch_size) and bool(drop_remainder):
                     break
                 batch_indices = indices[start:stop]
-                batch = np.asarray(tokens[batch_indices], dtype=np.int32)
+                batch = np.asarray(tokens[batch_indices], dtype=np.int64)
                 yield {"image": batch}
 
             if not bool(repeat):
