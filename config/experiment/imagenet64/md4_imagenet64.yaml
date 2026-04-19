@@ -17,10 +17,3 @@ sampler:
 
 training:
   sample_timesteps: 512
-
-# MD4 adds 8 DiT transformer layers over the UNet, which pushes peak
-# activation memory above what SJD's plain ADM UNet needs. Halve the
-# batch to fit on 2x H100 80GB.
-dataset:
-  batch_size: 32
-  eval_batch_size: 32

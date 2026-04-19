@@ -1,6 +1,8 @@
 # MD4 model config for ImageNet64.
+# Uses the same adm_unet_imagenet64 backbone as SJD/MDLM/BitDiff/DDPM
+# for a fair Table 2 comparison (all ~110M params, no DiT stack).
 defaults:
-  - /model/backbone@_here_: md4_unet_imagenet64
+  - /model/backbone@_here_: adm_unet_imagenet64
   - _self_
 
 name: md4
@@ -10,6 +12,15 @@ cont_time: true
 timesteps: 512
 noise_schedule_type: linear
 time_features: t
+
+# Shared masked-discrete knobs (also declared by MDLM).
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false
 
 # Conditioning.
 classes: -1
