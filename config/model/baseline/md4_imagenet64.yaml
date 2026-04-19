@@ -1,6 +1,6 @@
 # MD4 model config for ImageNet64.
 defaults:
-  - /model/backbone@_here_: adm_unet_imagenet64
+  - /model/backbone@_here_: md4_unet_imagenet64
   - _self_
 
 name: md4
