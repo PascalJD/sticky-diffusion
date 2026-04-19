@@ -1,7 +1,7 @@
 # Downsampled ImageNet 64x64 discrete-token dataset settings.
 name: imagenet64_discrete
 data_dir: data/tfds
-tfds_name: downsampled_imagenet/64x64
+tfds_name: sticky_imagenet64
 train_split: train
 eval_split: validation
 include_label: false
