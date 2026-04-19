@@ -41,6 +41,7 @@ class CIFAR10DiscreteTask(TFDSDiscreteImageTaskBase):
     include_label: bool | str = "auto"
     dummy_label_value: int = -1
     data_shape: Tuple[int, ...] = (32, 32, 3)
+    shuffle_buffer_size: Optional[int] = None
 
     def __post_init__(self):
         self.spec = self._build_image_task_spec(name=str(self.task_name))
