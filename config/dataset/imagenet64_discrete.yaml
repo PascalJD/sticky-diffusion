@@ -7,8 +7,11 @@ eval_split: validation
 include_label: false
 
 # Global batch sizes (for single-device and pmap paths).
-batch_size: 128
-eval_batch_size: 128
+# SJD plug-in hazard computes batch x H x W x C x |anchors| x anchor_dim,
+# which for anchor_dim=64 on 64x64x3 images needs ~400MB per batch item.
+# On 2x H100 80GB, 64 global (32/device) fits comfortably; 128 OOMs.
+batch_size: 64
+eval_batch_size: 64
 shuffle_buffer_size: 50000
 
 # Optional per-device override used for parameter initialization.
