@@ -46,7 +46,8 @@ class StickyImagenet64(tfds.core.GeneratorBasedBuilder):
     VERSION = tfds.core.Version(VERSION)
 
     def _info(self) -> tfds.core.DatasetInfo:
-        return self.dataset_info_from_configs(
+        return tfds.core.DatasetInfo(
+            builder=self,
             features=tfds.features.FeaturesDict(
                 {
                     "image": tfds.features.Image(shape=IMAGE_SHAPE, dtype=np.uint8),
