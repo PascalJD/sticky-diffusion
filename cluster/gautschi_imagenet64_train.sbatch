@@ -46,6 +46,6 @@ echo "extra_overrides=$*"
   "eval=${EVAL_CONFIG}" \
   "wandb.enabled=${WANDB_ENABLED}" \
   "hydra.run.dir=${RUN_DIR}" \
-  "dataset.data_dir=${SCRATCH}/sticky-diffusion/data/tfds" \
+  "experiment.dataset.data_dir=${SCRATCH}/sticky-diffusion/data/tfds" \
   "eval.fid_cache_dir=${SCRATCH}/sticky-diffusion/data/fid_stats" \
   "$@"
