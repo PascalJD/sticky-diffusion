@@ -305,6 +305,13 @@ class AnchorTableConfig:
     projection_seed: int | None = None
     pretrained_path: str | None = None
     transform: AnchorTransformConfig = field(default_factory=AnchorTransformConfig)
+    # CDCD §3.2: when True, every read of the anchor table returns
+    # (table / ||table||_row) * sqrt(anchor_dim). Backprop flows through the
+    # normalization, so the underlying parameter is free to vary while the
+    # anchors the model ever sees stay on the d-sphere of radius sqrt(d).
+    # When enabled, the AnchorTransformConfig knobs `equalize_row_norms`,
+    # `target_row_norm`, and `scale` become redundant.
+    normalize_at_use: bool = False
 
 
 @dataclass(frozen=True)
@@ -466,6 +473,14 @@ def anchor_table_config_from_mapping(
                     default=1.0,
                 )
             ),
+        ),
+        normalize_at_use=bool(
+            _resolve_anchor_value(
+                model_cfg,
+                nested_key="normalize_at_use",
+                flat_key="anchor_normalize_at_use",
+                default=False,
+            )
         ),
     )
 
@@ -724,6 +739,20 @@ class TokenAnchors(nn.Module):
     config: AnchorTableConfig
     learnable: bool = True
 
+    def _normalize(self, table: Array) -> Array:
+        """Apply CDCD-style L2-normalize-then-scale-by-sqrt(d), if enabled.
+
+        Pure JAX function: differentiable when called from a tracing context,
+        so gradients on the underlying parameter flow through the normalization
+        as required by CDCD §3.2.
+        """
+        if not self.config.normalize_at_use:
+            return table
+        norms = jnp.linalg.norm(table, axis=-1, keepdims=True)
+        unit = table / jnp.maximum(norms, 1e-12)
+        scale = jnp.sqrt(jnp.asarray(table.shape[-1], dtype=table.dtype))
+        return unit * scale
+
     @nn.compact
     def __call__(self, ids: Array) -> Array:
         table = self.param(
@@ -734,10 +763,14 @@ class TokenAnchors(nn.Module):
         )
         if not self.learnable:
             table = jax.lax.stop_gradient(table)
+        table = self._normalize(table)
         return jnp.take(table, ids, axis=0)
 
     def table_float(self) -> Array:
         table = self.get_variable("params", "table")
+        if not self.learnable:
+            table = jax.lax.stop_gradient(table)
+        table = self._normalize(table)
         return table.astype(jnp.float32)
 
 

@@ -16,7 +16,7 @@ categorical_sampling_policy: legacy_low
 # Plug-in hazard/intensity controls.
 hazard_mode: plugin
 log_ratio_clip: 10.0
-refresh_logits_after_em_step: true
+refresh_logits_after_em_step: false
 
 # Numerical/stochastic controls.
 init_std: 1.0

@@ -1,0 +1,20 @@
+defaults:
+  - transform: default
+  - _self_
+
+# Gaussian anchor table with CDCD §3.2 runtime normalization.
+# Every read returns (table / ||table||_row) * sqrt(dim), so the
+# anchors the model ever sees live on the d-sphere of radius sqrt(d)
+# regardless of the underlying parameter scale. Backprop flows through
+# the normalization, which is the mechanism that prevents unbounded
+# growth of ||a_k|| under cross-entropy + score interpolation.
+family: normal
+dim: 64
+learnable: true
+seed: 0
+
+# CDCD Table 1: small init_std outperforms large init_std even with
+# normalize_at_use=true (gradients are still preconditioned by the
+# underlying parameter scale). 0.001 is the value they recommend.
+init_std: 0.001
+normalize_at_use: true
