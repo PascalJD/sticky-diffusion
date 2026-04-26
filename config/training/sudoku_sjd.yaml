@@ -4,8 +4,8 @@ defaults:
 
 name: sudoku_sjd
 
-num_train_steps: 0
-num_train_epochs: 300
+num_train_steps: ${training.max_steps}
+num_train_epochs: 0
 best_update_on_equal: true
 
 log_every_steps: 500
@@ -15,7 +15,7 @@ checkpoint_every_steps: 10000
 checkpoint_keep: 5
 log_images_every_steps: 0
 
-best_checkpoint_metric: eval/pc_margin_l1_s0p10/solve_rate
+best_checkpoint_metric: eval/predictor_only/solve_rate
 best_checkpoint_mode: max
 
 sample_timesteps: ${..sampler.n_steps}
@@ -27,10 +27,3 @@ state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
 time_sampling: uniform
 # Loss weighting: "uniform" (default) or "alpha_deriv" (MDM importance weight)
 loss_weighting: uniform
-
-# Solver-order conditioning: "none" (default, baseline) or "solver"
-# When "solver", per-cell forward survival becomes S(t)^{w_i} with
-# w_i linearly interpolated in [order_w_min, order_w_max] by solver rank.
-order_conditioning: none
-order_w_min: 0.5
-order_w_max: 2.0

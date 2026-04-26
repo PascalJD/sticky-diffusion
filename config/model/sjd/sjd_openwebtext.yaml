@@ -1,0 +1,17 @@
+defaults:
+  - /model/backbone@_here_: transformer_openwebtext_125m
+  - /model/anchor@anchor: pretrained_gpt2
+  - _self_
+
+# SJD model for OpenWebText (vocab=50257, seq_len=1024).
+# - Anchors are the GPT-2 wte table (frozen by default).
+# - Backbone is a 12x768 LLAMA2-style transformer with adaLN-zero.
+name: sjd
+
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: false
+cond_type: adaln_zero
+time_features: t
+model_sharding: false

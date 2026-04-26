@@ -1,7 +1,0 @@
-defaults:
-  - base
-  - _self_
-
-method: top_prob_margin
-sampling_grid: loglinear
-categorical_sampling_policy: exact

@@ -132,15 +132,12 @@ def _take_gt_images(batch: dict[str, Array], *, num_log_images: int, use_pmap: b
 
 def make_eval_step_fn(*, task, model):
     def eval_step_fn(params, rng, batch, axis_name: str | None):
-        # Eval does not thread teacher params; tasks that require a teacher
-        # for training fall back to their baseline scalar hazard on this path.
         loss, metrics = task.loss_fn(
             rng=rng,
             model=model,
             params=params,
             batch=batch,
             train=False,
-            teacher_params=None,
         )
         if axis_name is not None:
             loss = jax.lax.pmean(loss, axis_name=axis_name)
@@ -203,7 +200,13 @@ def run_likelihood_eval(
     if total_examples <= 0:
         return {}
 
-    return {f"eval/{k}": v / total_examples for k, v in metric_sums.items()}
+    # Whitelist (Prompt B): the only likelihood-eval metric forwarded to W&B
+    # is `eval/loss`. The full per-batch metric set still flows through
+    # sanitize_metrics for any internal aggregation, but only `loss` is
+    # surfaced as a logged metric.
+    if "loss" not in metric_sums:
+        return {}
+    return {"eval/loss": metric_sums["loss"] / total_examples}
 
 
 @dataclass

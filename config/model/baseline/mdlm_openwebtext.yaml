@@ -1,0 +1,28 @@
+# MDLM model config for OpenWebText.
+# Uses the 12x768 LLAMA2-style transformer backbone shared with SJD for fair
+# comparison. Matches Sahoo et al. (2024) hyperparameters.
+defaults:
+  - /model/backbone@_here_: transformer_openwebtext_125m
+  - _self_
+
+name: mdlm
+
+cont_time: true
+timesteps: 1000
+noise_schedule_type: loglinear
+time_features: t
+
+antithetic_time_sampling: true
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: false
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false
+
+# Text task: not image-first.
+image_backbone: auto
+
+classes: -1
+cache_predictions: false

@@ -1,0 +1,25 @@
+# Canonical OpenWebText experiment bundle for SJD.
+# Reference target: 8 x H100, BS 512, 1M steps, seq_len 1024, vocab 50257.
+defaults:
+  - /dataset: openwebtext_gpt2_1024
+  - /model/sjd@model: sjd_openwebtext
+  - /optim: adamw_openwebtext
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /sampler/openwebtext@sampler: sjd_openwebtext
+  - /eval@_global_.eval: openwebtext
+  - /training: sjd_openwebtext
+  - _self_
+
+task:
+  name: openwebtext_sjd
+
+wandb:
+  run_name: sjd_openwebtext_baseline
+
+# Per-device batch size on 8 devices gives 512 global.
+dataset:
+  batch_size: 64
+  eval_batch_size: 16

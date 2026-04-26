@@ -1,3 +1,0 @@
-# Legacy flat alias for the canonical backbone config.
-defaults:
-  - /model/backbone@_here_: md4_unet

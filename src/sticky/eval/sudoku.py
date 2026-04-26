@@ -74,7 +74,7 @@ def _resolve_sampler_default_entry(entry: Any) -> str | None:
     """Return the referenced sampler-group name for a defaults-list entry, or None to skip.
 
     Supports the two forms used by sampler configs:
-      - bare string (relative within `sampler/` group), e.g. ``sjd_sudoku_pc_base``
+      - bare string (relative within `sampler/` group), e.g. ``sjd_sudoku``
       - single-key mapping ``{group_path: name}`` where the group resolves to ``sampler``,
         e.g. ``{/sampler: sjd_sudoku}`` or ``{sampler: sjd_sudoku}``.
     ``_self_`` entries return ``None`` (handled by the caller).
@@ -108,7 +108,17 @@ def _compose_sampler_group(name: str, _seen: frozenset[str] = frozenset()) -> di
     if name in _seen:
         cycle = " -> ".join(list(_seen) + [name])
         raise ValueError(f"Circular sampler config defaults: {cycle}")
-    path = config_root() / "sampler" / f"{name}.yaml"
+    # Resolve the sampler-group YAML against the per-task subfolders introduced
+    # in the config cleanup (sampler/{cifar10,openwebtext,sudoku}/<name>.yaml),
+    # falling back to a flat sampler/<name>.yaml for shared bases like base.yaml.
+    sampler_root = config_root() / "sampler"
+    candidates = [
+        sampler_root / "sudoku" / f"{name}.yaml",
+        sampler_root / "cifar10" / f"{name}.yaml",
+        sampler_root / "openwebtext" / f"{name}.yaml",
+        sampler_root / f"{name}.yaml",
+    ]
+    path = next((p for p in candidates if p.exists()), candidates[-1])
     if not path.exists():
         raise FileNotFoundError(f"Unknown sampler config group {name!r}: {path}")
     raw = OmegaConf.to_container(OmegaConf.load(path), resolve=False)
@@ -199,13 +209,8 @@ def _overlay_sjd_policy_fields(dst: dict[str, Any], src: dict[str, Any]) -> None
         "stochastic_k",
         "eta",
         "logit_temperature",
-        "intensity_mode",
         "log_ratio_clip",
         "init_std",
-        "sitewise_hazard_mode",
-        "sitewise_hazard_w_min",
-        "sitewise_hazard_w_max",
-        "sitewise_hazard_eps",
     ):
         if key not in src:
             continue
@@ -225,28 +230,11 @@ def _overlay_sjd_sampler_fields(dst: dict[str, Any], src: dict[str, Any]) -> Non
         "categorical_sampling_policy",
         "hazard_mode",
         "alloc_mode",
-        "intensity_mode",
         "log_ratio_clip",
-        "intensity_chunk_size",
         "init_std",
         "force_classify_at_end",
         "refresh_logits_after_em_step",
-        "pc_enabled",
-        "corrector_substeps",
-        "corrector_step_scale",
-        "pc_gate",
-        "pc_clamp_known",
-        "pc_refresh_logits_after_langevin",
-        "pc_allow_unstick_unknown_only",
         "metrics_count_nfe",
-        "sitewise_hazard_mode",
-        "sitewise_hazard_w_min",
-        "sitewise_hazard_w_max",
-        "sitewise_hazard_eps",
-        "pc_eta_reopen",
-        "pc_remask_window_lo",
-        "pc_remask_window_hi",
-        "pc_max_reopens_per_site",
     ):
         if key not in src:
             continue
@@ -338,13 +326,8 @@ def _resolve_sudoku_sjd_run_specs(
         "stochastic_k": bool(eval_cfg.get("sudoku_stochastic_k", False)),
         "eta": float(cfg.get("forward", {}).get("jump", {}).get("eta", 0.97)),
         "logit_temperature": float(cfg.sampler.get("logit_temperature", 1.0)),
-        "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
         "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
         "init_std": float(cfg.sampler.get("init_std", 1.0)),
-        "sitewise_hazard_mode": str(cfg.sampler.get("sitewise_hazard_mode", "none")),
-        "sitewise_hazard_w_min": float(cfg.sampler.get("sitewise_hazard_w_min", 0.5)),
-        "sitewise_hazard_w_max": float(cfg.sampler.get("sitewise_hazard_w_max", 2.0)),
-        "sitewise_hazard_eps": float(cfg.sampler.get("sitewise_hazard_eps", 1e-12)),
     }
     base_sampler = {
         "kind": "sampler",
@@ -360,34 +343,13 @@ def _resolve_sudoku_sjd_run_specs(
         ),
         "hazard_mode": str(cfg.sampler.get("hazard_mode", "plugin")),
         "alloc_mode": str(cfg.sampler.get("alloc_mode", "sample")),
-        "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
         "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
-        "intensity_chunk_size": int(cfg.sampler.get("intensity_chunk_size", 256)),
         "init_std": float(cfg.sampler.get("init_std", 1.0)),
         "force_classify_at_end": bool(cfg.sampler.get("force_classify_at_end", True)),
         "refresh_logits_after_em_step": bool(
             cfg.sampler.get("refresh_logits_after_em_step", False)
         ),
-        "pc_enabled": bool(cfg.sampler.get("pc_enabled", False)),
-        "corrector_substeps": int(cfg.sampler.get("corrector_substeps", 0)),
-        "corrector_step_scale": float(cfg.sampler.get("corrector_step_scale", 0.0)),
-        "pc_gate": str(cfg.sampler.get("pc_gate", "constant_one")),
-        "pc_clamp_known": bool(cfg.sampler.get("pc_clamp_known", True)),
-        "pc_refresh_logits_after_langevin": bool(
-            cfg.sampler.get("pc_refresh_logits_after_langevin", False)
-        ),
-        "pc_allow_unstick_unknown_only": bool(
-            cfg.sampler.get("pc_allow_unstick_unknown_only", True)
-        ),
         "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
-        "sitewise_hazard_mode": str(cfg.sampler.get("sitewise_hazard_mode", "none")),
-        "sitewise_hazard_w_min": float(cfg.sampler.get("sitewise_hazard_w_min", 0.5)),
-        "sitewise_hazard_w_max": float(cfg.sampler.get("sitewise_hazard_w_max", 2.0)),
-        "sitewise_hazard_eps": float(cfg.sampler.get("sitewise_hazard_eps", 1e-12)),
-        "pc_eta_reopen": float(cfg.sampler.get("pc_eta_reopen", 0.2)),
-        "pc_remask_window_lo": float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
-        "pc_remask_window_hi": float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
-        "pc_max_reopens_per_site": int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
     }
 
     primary_label = str(
@@ -502,7 +464,6 @@ def _accumulate_sjd_sampler_diagnostics(
         "sampling/gate_mean_committed",
         "sampling/frac_committed_pre_force",
         "sampling/frac_committed_final",
-        "sampling/fill_frac_by_final_jump",
     ):
         if key not in diag:
             continue
@@ -594,7 +555,6 @@ def _base_totals() -> dict[str, float]:
         "sampling/gate_mean_committed__weighted_sum": 0.0,
         "sampling/frac_committed_pre_force__weighted_sum": 0.0,
         "sampling/frac_committed_final__weighted_sum": 0.0,
-        "sampling/fill_frac_by_final_jump__weighted_sum": 0.0,
         "sampling/wallclock_sec_per_board__weighted_sum": 0.0,
     }
 
@@ -686,9 +646,6 @@ def _finalize_metrics(
                 f"{metric_prefix}/sampling/frac_committed_final": float(
                     totals["sampling/frac_committed_final__weighted_sum"] / num_examples
                 ),
-                f"{metric_prefix}/sampling/fill_frac_by_final_jump": float(
-                    totals["sampling/fill_frac_by_final_jump__weighted_sum"] / num_examples
-                ),
                 f"{metric_prefix}/sampling/wallclock_sec_per_board": float(
                     totals["sampling/wallclock_sec_per_board__weighted_sum"] / num_examples
                 ),
@@ -723,10 +680,6 @@ def _make_sjd_runs_table(wandb_mod, rows: list[dict[str, Any]]):
         "kind",
         "policy",
         "eta",
-        "predictor_corrector",
-        "gate_type",
-        "corrector_substeps",
-        "corrector_strength",
         "n_steps",
         "nfe_total",
         "solve_rate",
@@ -748,14 +701,6 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         "kind": spec.get("kind", "sampler"),
         "policy": spec.get("policy"),
         "eta": spec.get("eta"),
-        "predictor_corrector": bool(
-            spec.get("kind") == "sampler"
-            and spec.get("pc_enabled", False)
-            and int(spec.get("corrector_substeps", 0)) > 0
-        ),
-        "gate_type": str(spec.get("pc_gate", "constant_one")),
-        "corrector_substeps": int(spec.get("corrector_substeps", 0)),
-        "corrector_strength": float(spec.get("corrector_step_scale", 0.0)),
         "n_steps": metrics.get(f"{prefix}/n_steps"),
         "nfe_total": sampling_nfe_total,
         "solve_rate": metrics.get(f"{prefix}/solve_rate"),
@@ -798,17 +743,10 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         "sampling_frac_committed_final": metrics.get(
             f"{prefix}/sampling/frac_committed_final"
         ),
-        "sampling_fill_frac_by_final_jump": metrics.get(
-            f"{prefix}/sampling/fill_frac_by_final_jump"
-        ),
         "sampling_wallclock_sec_per_board": sampling_wallclock,
         "wallclock_sec_per_board": sampling_wallclock,
     }
     if spec.get("kind") == "policy":
-        row["predictor_corrector"] = False
-        row["gate_type"] = None
-        row["corrector_substeps"] = 0
-        row["corrector_strength"] = 0.0
         row["nfe_total"] = None
         row["sampling_nfe_total"] = None
         row["sampling_langevin_updates_total"] = None
@@ -817,7 +755,6 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         row["sampling_gate_mean_committed"] = None
         row["sampling_frac_committed_pre_force"] = None
         row["sampling_frac_committed_final"] = None
-        row["sampling_fill_frac_by_final_jump"] = None
         row["sampling_wallclock_sec_per_board"] = None
         row["wallclock_sec_per_board"] = None
     return row
@@ -932,32 +869,12 @@ def build_sudoku_eval_logger(
                 categorical_sampling_policy=str(sampler_spec["categorical_sampling_policy"]),
                 hazard_mode=str(sampler_spec["hazard_mode"]),
                 alloc_mode=str(sampler_spec["alloc_mode"]),
-                intensity_mode=str(sampler_spec["intensity_mode"]),
                 log_ratio_clip=float(sampler_spec["log_ratio_clip"]),
-                intensity_chunk_size=int(sampler_spec["intensity_chunk_size"]),
                 init_std=float(sampler_spec["init_std"]),
                 force_classify_at_end=bool(sampler_spec["force_classify_at_end"]),
                 refresh_logits_after_em_step=bool(sampler_spec["refresh_logits_after_em_step"]),
-                pc_enabled=bool(sampler_spec["pc_enabled"]),
-                corrector_substeps=int(sampler_spec["corrector_substeps"]),
-                corrector_step_scale=float(sampler_spec["corrector_step_scale"]),
-                pc_gate=str(sampler_spec["pc_gate"]),
-                pc_clamp_known=bool(sampler_spec["pc_clamp_known"]),
-                pc_refresh_logits_after_langevin=bool(
-                    sampler_spec["pc_refresh_logits_after_langevin"]
-                ),
-                pc_allow_unstick_unknown_only=bool(
-                    sampler_spec["pc_allow_unstick_unknown_only"]
-                ),
                 metrics_count_nfe=bool(sampler_spec["metrics_count_nfe"]),
-                sitewise_hazard_mode=str(sampler_spec["sitewise_hazard_mode"]),
-                sitewise_hazard_w_min=float(sampler_spec["sitewise_hazard_w_min"]),
-                sitewise_hazard_w_max=float(sampler_spec["sitewise_hazard_w_max"]),
-                sitewise_hazard_eps=float(sampler_spec["sitewise_hazard_eps"]),
-                pc_eta_reopen=float(sampler_spec.get("pc_eta_reopen", 0.2)),
-                pc_remask_window_lo=float(sampler_spec.get("pc_remask_window_lo", 0.15)),
-                pc_remask_window_hi=float(sampler_spec.get("pc_remask_window_hi", 0.85)),
-                pc_max_reopens_per_site=int(sampler_spec.get("pc_max_reopens_per_site", 1)),
+                tau_grid_size=int(sampler_spec.get("tau_grid_size", 32)),
             )
 
             @jax.jit
@@ -998,16 +915,11 @@ def build_sudoku_eval_logger(
                     policy=str(policy_spec["policy"]),
                     sampling_grid=str(policy_spec["sampling_grid"]),
                     logit_temperature=float(policy_spec["logit_temperature"]),
-                    intensity_mode=str(policy_spec["intensity_mode"]),
                     log_ratio_clip=float(policy_spec["log_ratio_clip"]),
                     init_std=float(policy_spec["init_std"]),
                     stochastic_k=bool(policy_spec.get("stochastic_k", False)),
                     eta=float(policy_spec["eta"]),
                     return_diagnostics=True,
-                    sitewise_hazard_mode=str(policy_spec["sitewise_hazard_mode"]),
-                    sitewise_hazard_w_min=float(policy_spec["sitewise_hazard_w_min"]),
-                    sitewise_hazard_w_max=float(policy_spec["sitewise_hazard_w_max"]),
-                    sitewise_hazard_eps=float(policy_spec["sitewise_hazard_eps"]),
                 )
 
             return _sample_conditional

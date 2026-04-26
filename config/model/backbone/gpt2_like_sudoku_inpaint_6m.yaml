@@ -1,6 +1,6 @@
 # GPT-2-like tiny sequence backbone for the simple 81-cell Sudoku inpainting
 # sanity benchmark. This is Shah-board / monotone-only / not the packed seq2seq
-# legacy path and not an exact Ye/TFW reproduction.
+# legacy path.
 feature_dim: 32
 n_layers: 3
 n_dit_layers: 0

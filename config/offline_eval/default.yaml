@@ -50,3 +50,7 @@ eval_prop52_only: false
 
 # Where to write the JSON report (relative to Hydra output dir unless absolute).
 output_path: offline_eval_metrics.json
+
+# Sampler overrides applied after loading the run config (when use_run_config=true).
+# Keys are sampler field names.
+sampler_overrides: {}

@@ -3,9 +3,10 @@ defaults:
   - /dataset: imagenet64_discrete
   - /model/baseline@model: bitdiff_imagenet64
   - /optim: adamw_imagenet64
-  - /sampler: bitdiff_cifar10
+  - /sampler/cifar10@sampler: bitdiff_cifar10
   - /training: imagenet64
   - /runtime: default
+  - /eval@_global_.eval: imagenet64
   - _self_
 
 task:

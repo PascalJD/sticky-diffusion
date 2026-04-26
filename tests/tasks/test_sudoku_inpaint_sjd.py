@@ -95,57 +95,6 @@ def test_loss_uses_clean_digit_indices_and_excludes_clues(monkeypatch):
     assert float(metrics["given_fraction"]) > 0.0
 
 
-def test_teacher_margin_threads_teacher_params(monkeypatch):
-    captured = {}
-
-    def _fake_ce_allocation_loss(**kwargs):
-        captured.update(kwargs)
-        return (
-            jnp.asarray(0.5, dtype=jnp.float32),
-            {"CE/acc_top1_event": jnp.asarray(1.0, dtype=jnp.float32)},
-        )
-
-    monkeypatch.setattr(task_mod, "ce_allocation_loss", _fake_ce_allocation_loss)
-
-    task = SudokuInpaintSJDTask(
-        data_dir=None,
-        train_file="train.npy",
-        test_file="test.npy",
-        batch_size=2,
-        eval_batch_size=2,
-        data_shape=(81,),
-        vocab_size=9,
-        num_classes=-1,
-        beta=_beta,
-        hazard=object(),
-        jump=object(),
-        T=1.0,
-        log_state_dependency=False,
-        forward_site_hazard_mode="teacher_margin",
-        teacher_confidence_metric="top_prob",
-        teacher_w_min=0.3,
-        teacher_w_max=1.7,
-    )
-    assert task.requires_teacher_params is True
-
-    task.loss_fn(
-        rng=jnp.asarray([0, 1], dtype=jnp.uint32),
-        model=_DummySJDModel(),
-        params={"foo": jnp.zeros(())},
-        batch=_batch(),
-        train=True,
-        teacher_params={"bar": jnp.zeros(())},
-    )
-
-    assert captured["forward_site_hazard_mode"] == "teacher_margin"
-    assert captured["teacher_confidence_metric"] == "top_prob"
-    assert float(captured["teacher_w_min"]) == 0.3
-    assert float(captured["teacher_w_max"]) == 1.7
-    assert captured["teacher_params"] is not None
-    assert captured["teacher_apply_fn"] is not None
-    assert captured["x0_anchor_teacher"] is not None
-
-
 def test_loss_fn_traces_under_jit(monkeypatch):
     def _fake_ce_allocation_loss(**kwargs):
         del kwargs

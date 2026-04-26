@@ -12,8 +12,8 @@ from sticky.data.sudoku import make_sudoku_board_iterator
 from sticky.models.sjd.anchors import AnchorTable
 from sticky.models.sjd.board_sampling import puzzle_digits_to_clean_indices
 from sticky.models.sjd.plugin_intensity import (
-    dhm_target_intensity,
-    plugin_intensity_and_probs,
+    dhm_target,
+    plugin_hazard_and_allocation,
 )
 from sticky.models.sjd.sdes import vp_perturb
 from sticky.rng import make_rng
@@ -51,7 +51,6 @@ def extract_prop52_eta_specs(policy_specs: Iterable[dict[str, Any]]) -> list[dic
                 "eta": eta,
                 "eta_label": eta_label,
                 "logit_temperature": float(spec.get("logit_temperature", 1.0)),
-                "intensity_mode": str(spec.get("intensity_mode", "full")),
                 "log_ratio_clip": float(spec.get("log_ratio_clip", 10.0)),
             }
         )
@@ -165,14 +164,14 @@ def _eta_arrays_fn(
     jump,
     eta: float,
     logit_temperature: float,
-    intensity_mode: str,
     log_ratio_clip: float,
+    tau_grid_size: int = 32,
 ):
     jump_eff = replace(jump, eta=float(eta))
 
     @jax.jit
     def _eta_arrays(logits, y_in, t_img, x0_idx):
-        lam_hat = dhm_target_intensity(
+        lam_hat = dhm_target(
             y=y_in,
             t_img=t_img,
             true_anchor_idx=x0_idx,
@@ -181,8 +180,9 @@ def _eta_arrays_fn(
             hazard=hazard,
             jump=jump_eff,
             log_ratio_clip=float(log_ratio_clip),
+            tau_grid_size=int(tau_grid_size),
         )
-        lam_plug, _ = plugin_intensity_and_probs(
+        lam_plug, _ = plugin_hazard_and_allocation(
             logits=logits,
             y=y_in,
             t_img=t_img,
@@ -191,8 +191,8 @@ def _eta_arrays_fn(
             hazard=hazard,
             jump=jump_eff,
             logit_temperature=float(logit_temperature),
-            intensity_mode=str(intensity_mode),
             log_ratio_clip=float(log_ratio_clip),
+            tau_grid_size=int(tau_grid_size),
         )
         return lam_hat.astype(jnp.float32), lam_plug.astype(jnp.float32)
 
@@ -407,7 +407,6 @@ def run_sudoku_prop52_diagnostics(
             jump=task.jump,
             eta=float(spec["eta"]),
             logit_temperature=float(spec["logit_temperature"]),
-            intensity_mode=str(spec["intensity_mode"]),
             log_ratio_clip=float(spec["log_ratio_clip"]),
         )
         for spec in eta_specs

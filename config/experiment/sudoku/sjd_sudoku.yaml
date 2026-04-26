@@ -2,13 +2,14 @@
 defaults:
   - /dataset: sudoku_shah_board
   - /model/sjd@model: sjd_sudoku_inpaint
-  - /optim: adamw_sudoku_tfw
-  - /sampler: sjd_sudoku
-  - /training: sudoku_sjd
+  - /optim: adamw_sudoku
+  - /runtime: default
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
   - /forward/jump: vp_matched
-  - /runtime: default
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd
+  - /training: sudoku_sjd
   - _self_
 
 task:

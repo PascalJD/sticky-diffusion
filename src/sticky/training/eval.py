@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import zlib
 from typing import Any, Dict, Optional
 
 import jax
@@ -352,6 +353,7 @@ def build_eval_logger(
 
         def make_sample_fn(seed_offset: int):
             ctr = {"i": 0}
+            metrics_acc: Dict[str, list] = {}
             rng_key = jax.random.fold_in(base_rng, seed_offset)
 
             def _sample_fn(n: int):
@@ -359,10 +361,24 @@ def build_eval_logger(
                 ctr["i"] = i + 1
                 rng = jax.random.fold_in(rng_key, i)
                 out = sample_images_fid_jit(params_for_sampling, rng)
+                # Accumulate SJD sampling metrics across batches.
+                if hasattr(out, "metrics") and out.metrics:
+                    for mk, mv in out.metrics.items():
+                        v = float(jax.block_until_ready(mv))
+                        metrics_acc.setdefault(mk, []).append(v)
                 imgs = _extract_images(cfg, out)
                 return imgs[:n]
 
+            _sample_fn.metrics_acc = metrics_acc
             return _sample_fn
+
+        def _flush_sampling_metrics(fn, prefix: str, dst: Dict[str, float]):
+            """Average accumulated SJD sampling metrics from a sample_fn and write to *dst*."""
+            acc = getattr(fn, "metrics_acc", None)
+            if acc:
+                for mk, vals in acc.items():
+                    if vals:
+                        dst[f"{prefix}/{mk}"] = sum(vals) / len(vals)
 
         metrics: Dict[str, float] = {}
 
@@ -404,6 +420,7 @@ def build_eval_logger(
             metrics[f"{fid_prefix}/fid"] = float(fid_val)
             metrics[f"{fid_prefix}/is"] = float(is_mean)
             metrics[f"{fid_prefix}/is_std"] = float(is_std)
+            _flush_sampling_metrics(sample_fn, fid_prefix, metrics)
             if verbose:
                 print(
                     f"[eval] Joint FID/IS done in {time.perf_counter() - t0:.1f}s: "
@@ -411,6 +428,7 @@ def build_eval_logger(
                     flush=True,
                 )
         else:
+            fid_flushed = False
             if run_fid and fid_calc is not None:
                 if verbose:
                     print(
@@ -418,14 +436,17 @@ def build_eval_logger(
                         f"(num_samples={fid_num_samples}, batch_size={fid_batch_size})",
                         flush=True,
                     )
+                fid_sample = make_sample_fn(seed_offset=1)
                 fid_val = fid_calc.compute_from_sample_fn(
-                    make_sample_fn(seed_offset=1),
+                    fid_sample,
                     num_samples=fid_num_samples,
                     batch_size=fid_batch_size,
                     verbose=fid_verbose,
                     progress_every_batches=fid_progress_every_batches,
                 )
                 metrics[f"{fid_prefix}/fid"] = float(fid_val)
+                _flush_sampling_metrics(fid_sample, fid_prefix, metrics)
+                fid_flushed = True
                 if verbose:
                     print(f"[eval] FID result: {fid_val:.3f}", flush=True)
 
@@ -437,13 +458,16 @@ def build_eval_logger(
                         f"(num_samples={is_num_samples}, batch_size={is_batch_size})",
                         flush=True,
                     )
+                is_sample = make_sample_fn(seed_offset=2)
                 is_mean, is_std = is_calc.compute_from_sample_fn(
-                    make_sample_fn(seed_offset=2),
+                    is_sample,
                     num_samples=is_num_samples,
                     batch_size=is_batch_size,
                 )
                 metrics[f"{fid_prefix}/is"] = float(is_mean)
                 metrics[f"{fid_prefix}/is_std"] = float(is_std)
+                if not fid_flushed:
+                    _flush_sampling_metrics(is_sample, fid_prefix, metrics)
                 if verbose:
                     print(
                         f"[eval] IS done in {time.perf_counter() - t0:.1f}s: "
@@ -458,6 +482,7 @@ def build_eval_logger(
 
                 def make_run_sample_fn(fn, seed_offset: int):
                     ctr = {"i": 0}
+                    run_metrics_acc: Dict[str, list] = {}
                     rng_key = jax.random.fold_in(base_rng, seed_offset)
 
                     def _sample_fn(n: int):
@@ -465,12 +490,17 @@ def build_eval_logger(
                         ctr["i"] = i + 1
                         rng = jax.random.fold_in(rng_key, i)
                         out = fn(params_for_sampling, rng)
+                        if hasattr(out, "metrics") and out.metrics:
+                            for mk, mv in out.metrics.items():
+                                v = float(jax.block_until_ready(mv))
+                                run_metrics_acc.setdefault(mk, []).append(v)
                         imgs = _extract_images(cfg, out)
                         return imgs[:n]
 
+                    _sample_fn.metrics_acc = run_metrics_acc
                     return _sample_fn
 
-                run_seed = hash(run_label) & 0x7FFFFFFF
+                run_seed = zlib.crc32(run_label.encode("utf-8")) & 0x7FFFFFFF
                 run_sample = make_run_sample_fn(run_sample_fn, seed_offset=run_seed)
 
                 can_joint = (
@@ -499,6 +529,7 @@ def build_eval_logger(
                     metrics[f"{run_prefix}/fid"] = float(fid_v)
                     metrics[f"{run_prefix}/is"] = float(is_m)
                     metrics[f"{run_prefix}/is_std"] = float(is_s)
+                    _flush_sampling_metrics(run_sample, run_prefix, metrics)
                     if verbose:
                         print(
                             f"[eval] '{run_label}' done in {time.perf_counter() - t0_run:.1f}s: "
@@ -506,23 +537,34 @@ def build_eval_logger(
                             flush=True,
                         )
                 else:
+                    run_fid_flushed = False
                     if run_fid and fid_calc is not None:
+                        fid_run_sample = make_run_sample_fn(
+                            run_sample_fn, seed_offset=run_seed + 1
+                        )
                         fid_v = fid_calc.compute_from_sample_fn(
-                            make_run_sample_fn(run_sample_fn, seed_offset=run_seed + 1),
+                            fid_run_sample,
                             num_samples=fid_num_samples,
                             batch_size=fid_batch_size,
                             verbose=fid_verbose,
                             progress_every_batches=fid_progress_every_batches,
                         )
                         metrics[f"{run_prefix}/fid"] = float(fid_v)
+                        _flush_sampling_metrics(fid_run_sample, run_prefix, metrics)
+                        run_fid_flushed = True
                     if run_is and is_calc is not None:
+                        is_run_sample = make_run_sample_fn(
+                            run_sample_fn, seed_offset=run_seed + 2
+                        )
                         is_m, is_s = is_calc.compute_from_sample_fn(
-                            make_run_sample_fn(run_sample_fn, seed_offset=run_seed + 2),
+                            is_run_sample,
                             num_samples=is_num_samples,
                             batch_size=is_batch_size,
                         )
                         metrics[f"{run_prefix}/is"] = float(is_m)
                         metrics[f"{run_prefix}/is_std"] = float(is_s)
+                        if not run_fid_flushed:
+                            _flush_sampling_metrics(is_run_sample, run_prefix, metrics)
 
         if (wandb_mod is not None) and metrics:
             wandb_mod.log(metrics, step=step_i)

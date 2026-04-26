@@ -1,0 +1,8 @@
+# AdamW settings for OpenWebText runs.
+# Matches MDLM (Sahoo et al., 2024) recipe: LR 3e-4, warmup 2500, wd=0.
+name: adamw
+learning_rate: 3.0e-4
+warmup_steps: 2500
+lr_schedule: warmup_constant
+weight_decay: 0.0
+b2: 0.999

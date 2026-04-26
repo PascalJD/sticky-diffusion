@@ -1,0 +1,21 @@
+# MDLM experiment bundle for OpenWebText.
+# Matches Sahoo et al. (2024) reference: BS 512, 1M steps, seq_len 1024.
+defaults:
+  - /dataset: openwebtext_gpt2_1024
+  - /model/baseline@model: mdlm_openwebtext
+  - /optim: adamw_openwebtext
+  - /sampler/openwebtext@sampler: mdlm_openwebtext
+  - /training: openwebtext
+  - /runtime: default
+  - /eval@_global_.eval: text_basic
+  - _self_
+
+task:
+  name: mdlm_openwebtext
+
+wandb:
+  run_name: mdlm_openwebtext_reference
+
+dataset:
+  batch_size: 64
+  eval_batch_size: 16

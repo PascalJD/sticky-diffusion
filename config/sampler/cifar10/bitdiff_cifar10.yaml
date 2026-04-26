@@ -1,0 +1,10 @@
+defaults:
+  - /sampler/base@_here_
+  - _self_
+
+# Bit Diffusion defaults to deterministic DDIM-like sampling.
+# `method=ddpm` remains available as a DDIM-style alias with fixed eta=1.0.
+method: ddim
+sampling_grid: uniform
+time_difference: 0.0
+stochasticity: 0.0

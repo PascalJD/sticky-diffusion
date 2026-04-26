@@ -36,15 +36,6 @@ class SudokuInpaintSJDTask(Task):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
-    order_conditioning: str = "none"
-    order_w_min: float = 0.5
-    order_w_max: float = 2.0
-    forward_site_hazard_mode: str = "none"
-    teacher_confidence_metric: str = "margin"
-    teacher_w_min: float = 0.5
-    teacher_w_max: float = 2.0
-    teacher_neutral_weight: float = 1.0
-    teacher_log_metrics: bool = True
     drop_remainder: bool = True
     shuffle: bool = True
     mmap: bool = True
@@ -64,10 +55,6 @@ class SudokuInpaintSJDTask(Task):
             vocab_size=int(self.vocab_size),
             num_classes=int(self.num_classes),
         )
-
-    @property
-    def requires_teacher_params(self) -> bool:
-        return str(self.forward_site_hazard_mode) == "teacher_margin"
 
     def _make_board_iterator(
         self,
@@ -141,13 +128,9 @@ class SudokuInpaintSJDTask(Task):
         params,
         batch: Batch,
         train: bool,
-        teacher_params=None,
     ) -> tuple[jnp.ndarray, Metrics]:
         solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
         clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
-        solver_rank = batch.get("solver_rank", None)
-        if solver_rank is not None:
-            solver_rank = jnp.asarray(solver_rank, dtype=jnp.float32)
         x0_idx = solution_board - 1
         # Keep a helpful eager-mode validation without triggering Python truth-value
         # conversion on tracers inside the jitted training step.
@@ -177,23 +160,6 @@ class SudokuInpaintSJDTask(Task):
                 )
             return model.apply({"params": p}, xt, t=t_img, train=False)
 
-        teacher_mode = str(self.forward_site_hazard_mode) == "teacher_margin"
-        x0_anchor_teacher = None
-        teacher_apply_fn = None
-        # When teacher mode is declared but no teacher params are available
-        # (eval path via loop_helpers.make_eval_step_fn), fall back to the
-        # baseline scalar hazard for this call. Attribute stays unchanged.
-        effective_mode = str(self.forward_site_hazard_mode)
-        if teacher_mode and teacher_params is None:
-            effective_mode = "none"
-        if teacher_mode and teacher_params is not None:
-            x0_anchor_teacher = model.apply(
-                {"params": teacher_params}, x0_idx, method=model.embed
-            )
-
-            def teacher_apply_fn(p, xt, t_img):  # noqa: E306  (shadow by design)
-                return model.apply({"params": p}, xt, t=t_img, train=False)
-
         loss, metrics = ce_allocation_loss(
             key=key_loss,
             params=params,
@@ -209,19 +175,6 @@ class SudokuInpaintSJDTask(Task):
             given_mask=clue_mask,
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
-            solver_rank=solver_rank,
-            order_conditioning=str(self.order_conditioning),
-            order_w_min=float(self.order_w_min),
-            order_w_max=float(self.order_w_max),
-            forward_site_hazard_mode=effective_mode,
-            x0_anchor_teacher=x0_anchor_teacher,
-            teacher_params=teacher_params,
-            teacher_apply_fn=teacher_apply_fn,
-            teacher_confidence_metric=str(self.teacher_confidence_metric),
-            teacher_w_min=float(self.teacher_w_min),
-            teacher_w_max=float(self.teacher_w_max),
-            teacher_neutral_weight=float(self.teacher_neutral_weight),
-            teacher_log_metrics=bool(self.teacher_log_metrics),
         )
 
         metrics = dict(metrics)

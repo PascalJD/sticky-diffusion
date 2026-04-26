@@ -109,11 +109,11 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
                 "K": 3,
                 "force_decode_at_end": False,
                 "categorical_sampling_policy": "exact",
-                "corrector_enabled": True,
-                "corrector_steps": 2,
-                "corrector_remask_frac": 0.2,
-                "corrector_metric": "neg_entropy",
-                "corrector_sample_mode": "argmax",
+                "remask_refine_enabled": True,
+                "remask_refine_steps": 2,
+                "remask_refine_frac": 0.2,
+                "remask_refine_metric": "neg_entropy",
+                "remask_refine_sample_mode": "argmax",
             },
         }
     )
@@ -129,11 +129,11 @@ def test_build_model_reads_cadd_sampling_knobs_from_sampler_config(monkeypatch):
     assert model.kwargs["K"] == 3
     assert model.kwargs["force_decode_at_end"] is False
     assert model.kwargs["categorical_sampling_policy"] == "exact"
-    assert model.kwargs["corrector_enabled"] is True
-    assert model.kwargs["corrector_steps"] == 2
-    assert model.kwargs["corrector_remask_frac"] == 0.2
-    assert model.kwargs["corrector_metric"] == "neg_entropy"
-    assert model.kwargs["corrector_sample_mode"] == "argmax"
+    assert model.kwargs["remask_refine_enabled"] is True
+    assert model.kwargs["remask_refine_steps"] == 2
+    assert model.kwargs["remask_refine_frac"] == 0.2
+    assert model.kwargs["remask_refine_metric"] == "neg_entropy"
+    assert model.kwargs["remask_refine_sample_mode"] == "argmax"
 
 
 def test_build_model_reads_md4_sampling_knobs_from_sampler_config(monkeypatch):

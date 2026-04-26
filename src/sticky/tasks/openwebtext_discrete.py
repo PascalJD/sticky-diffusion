@@ -78,9 +78,7 @@ class OpenWebTextDiscreteTask(Task):
         params,
         batch: Batch,
         train: bool,
-        teacher_params: Any = None,
     ) -> Tuple[jnp.ndarray, Metrics]:
-        del teacher_params
         key_sample, key_dropout = jax.random.split(rng)
         x = batch["image"].astype(jnp.int32)
         cond = (

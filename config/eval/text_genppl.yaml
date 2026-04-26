@@ -1,0 +1,27 @@
+# CANDI-style generative-PPL + entropy frontier for OpenWebText.
+# Scores samples with an off-the-shelf GPT-2 variant at each NFE in nfe_sweep,
+# then reports eval/genppl@{nfe} and eval/entropy@{nfe} scalars.
+#
+# Enable via `eval=text_genppl` on an OWT experiment. The training loop's
+# text-sampling path must be extended to honor `mode: text_genppl` before these
+# metrics appear (see docs/openwebtext/eval.md or follow-up wiring).
+enabled: true
+mode: text_genppl
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+
+fid_enabled: false
+is_enabled: false
+
+text_every: 25000
+text_num_samples: 256
+text_batch_size: 8
+text_output_prefix: text_samples
+
+# CANDI frontier protocol.
+nfe_sweep: [16, 32, 64, 128]
+oracle_model: gpt2-large
+oracle_batch_size: 4
+temperature: 1.0
+seed: 0

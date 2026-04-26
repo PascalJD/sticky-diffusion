@@ -1,6 +1,6 @@
 # AdamW settings shared by Sudoku experiments.
 name: adamw
-learning_rate: 3.0e-4
+learning_rate: 1.0e-3
 warmup_steps: 4000
 lr_schedule: warmup_cosine_decay
 grad_clip_norm: 1.0

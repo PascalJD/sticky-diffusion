@@ -103,11 +103,11 @@ def _build_tfds_discrete_image_task(cfg: DictConfig, *, task_name: str):
     )
 
 
-def _build_openwebtext_discrete_task(cfg: DictConfig):
+def _build_openwebtext_discrete_task(cfg: DictConfig, *, task_name: str = "openwebtext_discrete"):
     from sticky.tasks.openwebtext_discrete import OpenWebTextDiscreteTask
 
     return OpenWebTextDiscreteTask(
-        task_name="openwebtext_discrete",
+        task_name=task_name,
         train_tokens_path=str(cfg.dataset.get("train_tokens_path")),
         eval_tokens_path=_optional_str(cfg.dataset.get("eval_tokens_path", None)),
         batch_size=int(cfg.dataset.get("batch_size")),
@@ -138,45 +138,7 @@ def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
         task_name=task_name,
         **image_kw,
         **_sjd_schedule_kwargs(cfg),
-        **_sjd_teacher_hazard_kwargs(cfg),
     )
-
-
-def _build_mdm_sudoku_inpaint_task(cfg: DictConfig):
-    from sticky.tasks.sudoku_inpaint_mdm import SudokuInpaintMDMTask
-
-    return SudokuInpaintMDMTask(**_sudoku_board_dataset_kwargs(cfg))
-
-
-def _build_mdlm_sudoku_task(cfg: DictConfig):
-    from sticky.tasks.sudoku_mdlm import SudokuMDLMTask
-
-    return SudokuMDLMTask(**_sudoku_board_dataset_kwargs(cfg))
-
-
-def _sjd_sudoku_order_conditioning_kwargs(cfg: DictConfig) -> dict[str, Any]:
-    return {
-        "order_conditioning": str(cfg.training.get("order_conditioning", "none")),
-        "order_w_min": float(cfg.training.get("order_w_min", 0.5)),
-        "order_w_max": float(cfg.training.get("order_w_max", 2.0)),
-    }
-
-
-def _sjd_teacher_hazard_kwargs(cfg: DictConfig) -> dict[str, Any]:
-    mode = str(cfg.training.get("forward_site_hazard_mode", "none"))
-    source = str(cfg.training.get("teacher_source", "ema"))
-    if mode == "teacher_margin" and source != "ema":
-        raise ValueError(
-            f"training.teacher_source={source!r} not supported; only 'ema' is implemented."
-        )
-    return {
-        "forward_site_hazard_mode": mode,
-        "teacher_confidence_metric": str(cfg.training.get("teacher_confidence_metric", "margin")),
-        "teacher_w_min": float(cfg.training.get("teacher_w_min", 0.5)),
-        "teacher_w_max": float(cfg.training.get("teacher_w_max", 2.0)),
-        "teacher_neutral_weight": float(cfg.training.get("teacher_neutral_weight", 1.0)),
-        "teacher_log_metrics": bool(cfg.training.get("teacher_log_metrics", True)),
-    }
 
 
 def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
@@ -185,8 +147,28 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     return SudokuInpaintSJDTask(
         **_sudoku_board_dataset_kwargs(cfg),
         **_sjd_schedule_kwargs(cfg),
-        **_sjd_sudoku_order_conditioning_kwargs(cfg),
-        **_sjd_teacher_hazard_kwargs(cfg),
+    )
+
+
+def _build_openwebtext_sjd_task(cfg: DictConfig):
+    from sticky.tasks.openwebtext_sjd import OpenWebTextSJDTask
+
+    return OpenWebTextSJDTask(
+        task_name="openwebtext_sjd",
+        train_tokens_path=str(cfg.dataset.get("train_tokens_path")),
+        eval_tokens_path=_optional_str(cfg.dataset.get("eval_tokens_path", None)),
+        batch_size=int(cfg.dataset.get("batch_size")),
+        eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+        seq_len=int(cfg.dataset.get("seq_len")),
+        vocab_size=int(cfg.dataset.get("vocab_size")),
+        tokenizer_name=_optional_str(cfg.dataset.get("tokenizer_name", None)),
+        num_classes=int(cfg.dataset.get("num_classes", -1)),
+        drop_remainder=bool(cfg.dataset.get("drop_remainder", True)),
+        shuffle=bool(cfg.dataset.get("shuffle", True)),
+        mmap=bool(cfg.dataset.get("mmap", True)),
+        max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
+        max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
+        **_sjd_schedule_kwargs(cfg),
     )
 
 
@@ -205,11 +187,12 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "bitdiff_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="bitdiff_imagenet64"),
     "ddpm_imagenet64": lambda cfg: _build_tfds_discrete_image_task(cfg, task_name="ddpm_imagenet64"),
     "openwebtext_discrete": _build_openwebtext_discrete_task,
+    "mdlm_openwebtext": lambda cfg: _build_openwebtext_discrete_task(cfg, task_name="mdlm_openwebtext"),
+    "md4_openwebtext": lambda cfg: _build_openwebtext_discrete_task(cfg, task_name="md4_openwebtext"),
     "sjd_cifar10": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_cifar10"),
     "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),
-    "mdlm_sudoku": _build_mdlm_sudoku_task,
-    "mdm_sudoku_inpaint": _build_mdm_sudoku_inpaint_task,
     "sjd_sudoku_inpaint": _build_sjd_sudoku_inpaint_task,
+    "openwebtext_sjd": _build_openwebtext_sjd_task,
 }
 
 

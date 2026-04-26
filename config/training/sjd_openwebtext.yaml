@@ -1,0 +1,23 @@
+defaults:
+  - openwebtext
+  - _self_
+
+# OpenWebText training schedule for SJD.
+# Matches MDLM/MD4 reference: 1M steps, BS 512 (configured via dataset.batch_size),
+# constant LR 3e-4 post-warmup, EMA 0.9999.
+name: sjd_openwebtext
+
+num_train_steps: 1000000
+
+checkpoint_keep: 3
+log_every_steps: 500
+checkpoint_every_steps: 25000
+
+sample_timesteps: ${..sampler.n_steps}
+
+log_state_dependency: true
+state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
+
+# Enable MDM-style variance reduction by default for OWT.
+time_sampling: antithetic
+loss_weighting: alpha_deriv

@@ -1,10 +1,13 @@
 # Root Hydra config used by the training entrypoint.
 defaults:
-  - experiment: sudoku/mdm_sudoku_inpaint_tfw_sanity
-  - eval: sudoku_inpaint_discrete
+  - experiment: sudoku/sjd_sudoku
   - hydra: default
   - wandb: default
   - _self_
 
 # Top-level seed placeholder (training uses experiment.training.seed).
 seed: 0
+
+# Top-level smoke-test override mirrored by canonical step-based training configs.
+training:
+  max_steps: 400000

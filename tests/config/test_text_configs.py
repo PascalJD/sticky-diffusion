@@ -17,9 +17,9 @@ def test_openwebtext_dataset_training_and_eval_configs_compose():
         [
             "experiment=cifar10/md4_cifar10",
             "dataset@experiment.dataset=openwebtext_gpt2_1024",
-            "training@experiment.training=owt",
-            "eval=text_basic",
+            "training@experiment.training=openwebtext",
             "experiment.task.name=openwebtext_discrete",
+            "eval=text_basic",
         ]
     )
 
@@ -29,7 +29,7 @@ def test_openwebtext_dataset_training_and_eval_configs_compose():
     assert cfg.experiment.dataset.vocab_size == 50257
     assert cfg.experiment.dataset.tokenizer_name == "gpt2"
 
-    assert cfg.experiment.training.name == "owt"
+    assert cfg.experiment.training.name == "openwebtext"
     assert cfg.experiment.training.log_images_every_steps == 0
     assert cfg.experiment.training.best_checkpoint_metric == "eval/loss"
 

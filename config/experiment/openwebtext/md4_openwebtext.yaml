@@ -1,0 +1,21 @@
+# MD4 experiment bundle for OpenWebText.
+# Matches Shi et al. (2024) md4/configs/md4/openwebtext.py: BS 512, 1M steps, seq_len 1024.
+defaults:
+  - /dataset: openwebtext_gpt2_1024
+  - /model/baseline@model: md4_openwebtext
+  - /optim: adamw_openwebtext
+  - /sampler/openwebtext@sampler: md4_openwebtext
+  - /training: openwebtext
+  - /runtime: default
+  - /eval@_global_.eval: text_basic
+  - _self_
+
+task:
+  name: md4_openwebtext
+
+wandb:
+  run_name: md4_openwebtext_reference
+
+dataset:
+  batch_size: 64
+  eval_batch_size: 16

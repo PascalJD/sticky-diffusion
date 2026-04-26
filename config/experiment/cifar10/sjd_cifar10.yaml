@@ -3,12 +3,13 @@ defaults:
   - /dataset: cifar10_discrete
   - /model/sjd@model: sjd_cifar10
   - /optim: adamw_cifar10
-  - /training: sjd_cifar10
   - /runtime: default
-  - /sampler: sjd_cifar10
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
   - /forward/jump: vp_matched
+  - /sampler/cifar10@sampler: sjd_cifar10
+  - /eval@_global_.eval: cifar10
+  - /training: sjd_cifar10
   - _self_
 
 task:

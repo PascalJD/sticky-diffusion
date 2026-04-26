@@ -1,0 +1,5 @@
+defaults:
+  - /sampler/base@_here_
+  - _self_
+
+# DDPM currently requires n_steps == model.timesteps.

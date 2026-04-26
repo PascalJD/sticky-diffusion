@@ -1,0 +1,12 @@
+defaults:
+  - /sampler/base@_here_
+  - _self_
+
+# Experimental sampler modes:
+# - continuous: pure continuous reverse updates for embed mode
+# - hybrid_cache: cached predicted-token embeddings
+# - hybrid_expected: expected representation under p_theta
+# - hybrid_exact: reserved for debug onehot mode only
+method: continuous
+sampling_grid: uniform
+guidance_scale: 0.0

@@ -1,11 +1,11 @@
 # Root Hydra config for offline checkpoint evaluation.
 defaults:
-  - experiment: sudoku/mdm_sudoku_inpaint_tfw_sanity
-  - eval: sudoku_inpaint_discrete
+  - experiment: sudoku/sjd_sudoku
   - offline_eval: default
   - hydra: default
   - wandb: default
   - _self_
+  - override eval: sudoku_sjd_report
 
 wandb:
   enabled: false
@@ -13,3 +13,6 @@ wandb:
 hydra:
   job:
     name: eval_checkpoint
+
+training:
+  max_steps: 400000

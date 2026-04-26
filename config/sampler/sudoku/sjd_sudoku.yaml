@@ -1,0 +1,22 @@
+# Base sampler defaults for Sudoku SJD runs.
+T: ${oc.select:forward.beta.T, 1.0}
+n_steps: 50
+sampling_grid: uniform
+
+alloc_mode: argmax
+score_from_classifier: true
+score_scale: 1.0
+logit_temperature: 1.0
+categorical_sampling_policy: exact
+
+hazard_mode: plugin
+log_ratio_clip: 10.0
+
+init_std: 1.0
+eps_denom: 1e-12
+rng_fold: 4
+
+force_classify_at_end: true
+refresh_logits_after_em_step: false
+
+metrics_count_nfe: true

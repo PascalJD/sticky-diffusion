@@ -18,7 +18,7 @@ def test_imagenet64_experiments_compose():
         ("md4_imagenet64", "md4"),
         ("sjd_imagenet64", "sjd"),
     ):
-        cfg = _compose([f"experiment=imagenet64/{experiment}", "eval=imagenet64"])
+        cfg = _compose([f"experiment=imagenet64/{experiment}"])
 
         assert cfg.experiment.task.name == experiment
         assert cfg.experiment.model.name == model_name
@@ -36,7 +36,7 @@ def test_imagenet64_experiments_compose():
 
 
 def test_imagenet64_md4_uses_64x64_adm_backbone_and_512_step_sampling():
-    cfg = _compose(["experiment=imagenet64/md4_imagenet64", "eval=imagenet64"])
+    cfg = _compose(["experiment=imagenet64/md4_imagenet64"])
 
     assert cfg.experiment.model.image_backbone == "adm_unet5d"
     assert cfg.experiment.model.sequence_backbone == "auto"
@@ -53,7 +53,7 @@ def test_imagenet64_md4_uses_64x64_adm_backbone_and_512_step_sampling():
 
 
 def test_imagenet64_sjd_uses_64x64_adm_backbone_and_keeps_512_nfe_path():
-    cfg = _compose(["experiment=imagenet64/sjd_imagenet64", "eval=imagenet64"])
+    cfg = _compose(["experiment=imagenet64/sjd_imagenet64"])
 
     assert cfg.experiment.model.image_backbone == "adm_unet5d"
     assert cfg.experiment.model.sequence_backbone == "auto"
@@ -69,12 +69,4 @@ def test_imagenet64_sjd_uses_64x64_adm_backbone_and_keeps_512_nfe_path():
     assert cfg.experiment.training.sample_timesteps == 256
 
 
-def test_imagenet64_report_profile_composes():
-    for experiment in ("md4_imagenet64", "sjd_imagenet64"):
-        cfg = _compose([f"experiment=imagenet64/{experiment}", "eval=imagenet64_report"])
-
-        assert cfg.experiment.task.name == experiment
-        assert cfg.eval.fid_split == "validation"
-        assert cfg.eval.fid_every == 0
-        assert cfg.eval.fid_num_samples == 50000
-        assert cfg.eval.fid_cache_dir == "data/fid_stats"
+# `imagenet64_report` eval profile was removed in the config cleanup.

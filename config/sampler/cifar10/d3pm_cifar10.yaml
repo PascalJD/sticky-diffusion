@@ -1,0 +1,8 @@
+defaults:
+  - /sampler/base@_here_
+  - _self_
+
+# D3PM uses the exact trained discrete chain at sampling time, so non-uniform
+# sampling grids are rejected rather than silently ignored.
+method: ancestral
+sampling_grid: uniform

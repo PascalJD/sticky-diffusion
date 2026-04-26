@@ -109,6 +109,17 @@ def _apply_explicit_eval_overrides(
     if not is_nullish(tau_cfg, nullish=(None, "", "null")):
         effective_cfg.sampler.logit_temperature = float(tau_cfg)
 
+    sampler_overrides = offline_cfg.get("sampler_overrides", None)
+    if sampler_overrides is not None:
+        sampler_sec = effective_cfg.get("sampler", None)
+        if sampler_sec is None:
+            raise ValueError(
+                "offline_eval.sampler_overrides requires experiment.sampler "
+                "to be configured."
+            )
+        for key, value in sampler_overrides.items():
+            effective_cfg.sampler[key] = value
+
 
 def _resolve_effective_experiment_cfg(
     *,
@@ -385,7 +396,7 @@ def _best_plugin_eta_by_board_accuracy(
     return best
 
 
-def _best_pc_sampler_by_board_accuracy(
+def _best_sjd_profile_by_board_accuracy(
     sudoku_sampler_summary: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     if not sudoku_sampler_summary:
@@ -394,7 +405,7 @@ def _best_pc_sampler_by_board_accuracy(
     best_score = None
     for sampler_info in sudoku_sampler_summary.get("samplers", []):
         label = str(sampler_info.get("label", ""))
-        if not label.startswith("pc_"):
+        if label.startswith("plugin_hazard_eta_"):
             continue
         score = sampler_info.get("board_acc", None)
         if score is None:
@@ -748,6 +759,11 @@ def run_offline_checkpoint_eval(
                 offline_cfg.get("logit_temperature", None)
             ),
             "use_run_config": bool(offline_cfg.get("use_run_config", False)),
+            "sampler_overrides": (
+                dict(offline_cfg.get("sampler_overrides"))
+                if offline_cfg.get("sampler_overrides", None) is not None
+                else None
+            ),
         },
         "metrics": metrics,
     }
@@ -819,11 +835,11 @@ def run_offline_checkpoint_eval(
             )
     best_sampler = _best_sampler_by_board_accuracy(sudoku_sampler_summary)
     best_plugin_eta = _best_plugin_eta_by_board_accuracy(sudoku_sampler_summary)
-    best_pc_sampler = _best_pc_sampler_by_board_accuracy(sudoku_sampler_summary)
+    best_sjd_profile = _best_sjd_profile_by_board_accuracy(sudoku_sampler_summary)
     if (
         best_sampler is not None
         or best_plugin_eta is not None
-        or best_pc_sampler is not None
+        or best_sjd_profile is not None
         or sudoku_prop52_collapse_summary
         or sudoku_prop52_summary_rows
     ):
@@ -852,17 +868,17 @@ def run_offline_checkpoint_eval(
         else:
             print("- best eta under plug-in hazard: not available", flush=True)
 
-        if best_pc_sampler is not None:
-            best_pc_score = best_pc_sampler.get("board_acc", None)
-            if best_pc_score is None:
-                best_pc_score = best_pc_sampler.get("board_acc_exact", None)
+        if best_sjd_profile is not None:
+            best_profile_score = best_sjd_profile.get("board_acc", None)
+            if best_profile_score is None:
+                best_profile_score = best_sjd_profile.get("board_acc_exact", None)
             print(
-                f"- best predictor-corrector sampler: {best_pc_sampler.get('label')} "
-                f"({best_pc_score})",
+                f"- best SJD sampler profile: {best_sjd_profile.get('label')} "
+                f"({best_profile_score})",
                 flush=True,
             )
         else:
-            print("- best predictor-corrector sampler: not available", flush=True)
+            print("- best SJD sampler profile: not available", flush=True)
 
         if sudoku_prop52_collapse_summary:
             print(

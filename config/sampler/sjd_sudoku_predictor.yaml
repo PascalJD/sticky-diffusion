@@ -1,8 +1,0 @@
-defaults:
-  - /sampler: sjd_sudoku
-  - _self_
-
-pc_enabled: false
-corrector_substeps: 0
-corrector_step_scale: 0.0
-pc_gate: constant_one

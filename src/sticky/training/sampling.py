@@ -150,7 +150,6 @@ def build_sampling_fns(
     elif str(cfg.model.name) == "sjd":
         from sticky.models.sjd import sampling as sjd_sampling
         from sticky.models.sjd.anchors import AnchorTable
-        from sticky.models.sjd.sampler import SamplerConfig
 
         beta = getattr(task, "beta", None)
         if beta is None:
@@ -158,46 +157,8 @@ def build_sampling_fns(
         hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
         jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
 
-        sampler_cfg = SamplerConfig(
-            T=float(cfg.sampler.get("T", 1.0)),
-            n_steps=int(sample_timesteps),
-            sampling_grid=str(cfg.sampler.get("sampling_grid", "uniform")),
-            score_scale=float(cfg.sampler.get("score_scale", 1.0)),
-            logit_temperature=float(
-                cfg.sampler.get(
-                    "logit_temperature",
-                    cfg.sampler.get("temperature", 1.0),
-                )
-            ),
-            categorical_sampling_policy=str(
-                cfg.sampler.get("categorical_sampling_policy", "legacy_low")
-            ),
-            hazard_mode=str(cfg.sampler.get("hazard_mode", "plugin")),
-            alloc_mode=str(cfg.sampler.get("alloc_mode", "sample")),
-            intensity_mode=str(cfg.sampler.get("intensity_mode", "full")),
-            log_ratio_clip=float(cfg.sampler.get("log_ratio_clip", 10.0)),
-            intensity_chunk_size=int(cfg.sampler.get("intensity_chunk_size", 256)),
-            init_std=float(cfg.sampler.get("init_std", 1.0)),
-            force_classify_at_end=bool(cfg.sampler.get("force_classify_at_end", True)),
-            refresh_logits_after_em_step=bool(
-                cfg.sampler.get("refresh_logits_after_em_step", False)
-            ),
-            pc_enabled=bool(cfg.sampler.get("pc_enabled", False)),
-            corrector_substeps=int(cfg.sampler.get("corrector_substeps", 0)),
-            corrector_step_scale=float(cfg.sampler.get("corrector_step_scale", 0.0)),
-            pc_gate=str(cfg.sampler.get("pc_gate", "constant_one")),
-            pc_clamp_known=bool(cfg.sampler.get("pc_clamp_known", True)),
-            pc_refresh_logits_after_langevin=bool(
-                cfg.sampler.get("pc_refresh_logits_after_langevin", False)
-            ),
-            pc_allow_unstick_unknown_only=bool(
-                cfg.sampler.get("pc_allow_unstick_unknown_only", True)
-            ),
-            metrics_count_nfe=bool(cfg.sampler.get("metrics_count_nfe", True)),
-            pc_eta_reopen=float(cfg.sampler.get("pc_eta_reopen", 0.2)),
-            pc_remask_window_lo=float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
-            pc_remask_window_hi=float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
-            pc_max_reopens_per_site=int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
+        sampler_cfg = _sjd_sampler_cfg_from_dict(
+            _base_sampler_spec_from_cfg(cfg.sampler, sample_timesteps=sample_timesteps)
         )
 
         def _sample_images_sjd(params, rng, batch_size: int):
@@ -229,6 +190,41 @@ def build_sampling_fns(
     return sample_images_jit, sample_images_fid_jit
 
 
+def _base_sampler_spec_from_cfg(cfg_sampler, *, sample_timesteps: int) -> dict:
+    """Build a flat spec dict from a Hydra sampler config group.
+
+    This is the single source of truth for reading ``cfg.sampler`` into the flat
+    dict consumed by :func:`_sjd_sampler_cfg_from_dict`.  Both the primary
+    ``build_sampling_fns`` SJD path and ``build_multi_fid_sampling_fns`` call
+    this helper so that every ``SamplerConfig`` field is threaded through.
+    """
+    return {
+        "T": float(cfg_sampler.get("T", 1.0)),
+        "n_steps": int(sample_timesteps),
+        "sampling_grid": str(cfg_sampler.get("sampling_grid", "uniform")),
+        "score_from_classifier": bool(cfg_sampler.get("score_from_classifier", True)),
+        "score_scale": float(cfg_sampler.get("score_scale", 1.0)),
+        "logit_temperature": float(
+            cfg_sampler.get("logit_temperature", cfg_sampler.get("temperature", 1.0))
+        ),
+        "categorical_sampling_policy": str(
+            cfg_sampler.get("categorical_sampling_policy", "legacy_low")
+        ),
+        "hazard_mode": str(cfg_sampler.get("hazard_mode", "plugin")),
+        "alloc_mode": str(cfg_sampler.get("alloc_mode", "sample")),
+        "log_ratio_clip": float(cfg_sampler.get("log_ratio_clip", 10.0)),
+        "init_std": float(cfg_sampler.get("init_std", 1.0)),
+        "eps_denom": float(cfg_sampler.get("eps_denom", 1e-12)),
+        "force_classify_at_end": bool(cfg_sampler.get("force_classify_at_end", True)),
+        "refresh_logits_after_em_step": bool(
+            cfg_sampler.get("refresh_logits_after_em_step", False)
+        ),
+        "metrics_count_nfe": bool(cfg_sampler.get("metrics_count_nfe", True)),
+        # tau-grid resolution for the SJD plug-in / classifier_induced_score.
+        "tau_grid_size": int(cfg_sampler.get("tau_grid_size", 32)),
+    }
+
+
 def _sjd_sampler_cfg_from_dict(spec: dict) -> "SamplerConfig":
     """Build a SamplerConfig from a flat dict of sampler fields."""
     from sticky.models.sjd.sampler import SamplerConfig
@@ -237,29 +233,19 @@ def _sjd_sampler_cfg_from_dict(spec: dict) -> "SamplerConfig":
         T=float(spec.get("T", 1.0)),
         n_steps=int(spec["n_steps"]),
         sampling_grid=str(spec.get("sampling_grid", "uniform")),
+        score_from_classifier=bool(spec.get("score_from_classifier", True)),
         score_scale=float(spec.get("score_scale", 1.0)),
         logit_temperature=float(spec.get("logit_temperature", 1.0)),
         categorical_sampling_policy=str(spec.get("categorical_sampling_policy", "legacy_low")),
         hazard_mode=str(spec.get("hazard_mode", "plugin")),
         alloc_mode=str(spec.get("alloc_mode", "sample")),
-        intensity_mode=str(spec.get("intensity_mode", "full")),
         log_ratio_clip=float(spec.get("log_ratio_clip", 10.0)),
-        intensity_chunk_size=int(spec.get("intensity_chunk_size", 256)),
         init_std=float(spec.get("init_std", 1.0)),
+        eps_denom=float(spec.get("eps_denom", 1e-12)),
         force_classify_at_end=bool(spec.get("force_classify_at_end", True)),
         refresh_logits_after_em_step=bool(spec.get("refresh_logits_after_em_step", False)),
-        pc_enabled=bool(spec.get("pc_enabled", False)),
-        corrector_substeps=int(spec.get("corrector_substeps", 0)),
-        corrector_step_scale=float(spec.get("corrector_step_scale", 0.0)),
-        pc_gate=str(spec.get("pc_gate", "constant_one")),
-        pc_clamp_known=bool(spec.get("pc_clamp_known", True)),
-        pc_refresh_logits_after_langevin=bool(spec.get("pc_refresh_logits_after_langevin", False)),
-        pc_allow_unstick_unknown_only=bool(spec.get("pc_allow_unstick_unknown_only", True)),
         metrics_count_nfe=bool(spec.get("metrics_count_nfe", True)),
-        pc_eta_reopen=float(spec.get("pc_eta_reopen", 0.2)),
-        pc_remask_window_lo=float(spec.get("pc_remask_window_lo", 0.15)),
-        pc_remask_window_hi=float(spec.get("pc_remask_window_hi", 0.85)),
-        pc_max_reopens_per_site=int(spec.get("pc_max_reopens_per_site", 1)),
+        tau_grid_size=int(spec.get("tau_grid_size", 32)),
     )
 
 
@@ -296,44 +282,9 @@ def build_multi_fid_sampling_fns(
     jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
 
     # Base sampler spec from the experiment config.
-    base_spec: dict = {
-        "T": float(cfg.sampler.get("T", 1.0)),
-        "n_steps": int(sample_timesteps),
-        "sampling_grid": str(cfg.sampler.get("sampling_grid", "uniform")),
-        "score_scale": float(cfg.sampler.get("score_scale", 1.0)),
-        "logit_temperature": float(
-            cfg.sampler.get("logit_temperature", cfg.sampler.get("temperature", 1.0))
-        ),
-        "categorical_sampling_policy": str(
-            cfg.sampler.get("categorical_sampling_policy", "legacy_low")
-        ),
-        "hazard_mode": str(cfg.sampler.get("hazard_mode", "plugin")),
-        "alloc_mode": str(cfg.sampler.get("alloc_mode", "sample")),
-        "intensity_mode": str(cfg.sampler.get("intensity_mode", "full")),
-        "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
-        "intensity_chunk_size": int(cfg.sampler.get("intensity_chunk_size", 256)),
-        "init_std": float(cfg.sampler.get("init_std", 1.0)),
-        "force_classify_at_end": bool(cfg.sampler.get("force_classify_at_end", True)),
-        "refresh_logits_after_em_step": bool(
-            cfg.sampler.get("refresh_logits_after_em_step", False)
-        ),
-        "pc_enabled": bool(cfg.sampler.get("pc_enabled", False)),
-        "corrector_substeps": int(cfg.sampler.get("corrector_substeps", 0)),
-        "corrector_step_scale": float(cfg.sampler.get("corrector_step_scale", 0.0)),
-        "pc_gate": str(cfg.sampler.get("pc_gate", "constant_one")),
-        "pc_clamp_known": bool(cfg.sampler.get("pc_clamp_known", True)),
-        "pc_refresh_logits_after_langevin": bool(
-            cfg.sampler.get("pc_refresh_logits_after_langevin", False)
-        ),
-        "pc_allow_unstick_unknown_only": bool(
-            cfg.sampler.get("pc_allow_unstick_unknown_only", True)
-        ),
-        "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
-        "pc_eta_reopen": float(cfg.sampler.get("pc_eta_reopen", 0.2)),
-        "pc_remask_window_lo": float(cfg.sampler.get("pc_remask_window_lo", 0.15)),
-        "pc_remask_window_hi": float(cfg.sampler.get("pc_remask_window_hi", 0.85)),
-        "pc_max_reopens_per_site": int(cfg.sampler.get("pc_max_reopens_per_site", 1)),
-    }
+    base_spec: dict = _base_sampler_spec_from_cfg(
+        cfg.sampler, sample_timesteps=sample_timesteps
+    )
 
     data_shape = tuple(task.spec.data_shape)
     result: dict = {}

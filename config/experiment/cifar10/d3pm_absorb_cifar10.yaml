@@ -3,9 +3,10 @@ defaults:
   - /dataset: cifar10_discrete
   - /model/baseline@model: d3pm_absorb_cifar10
   - /optim: adamw_cifar10
-  - /sampler: d3pm_cifar10
+  - /sampler/cifar10@sampler: d3pm_cifar10
   - /training: cifar10
   - /runtime: default
+  - /eval@_global_.eval: cifar10
   - _self_
 
 task:

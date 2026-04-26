@@ -1,8 +1,0 @@
-defaults:
-  - base
-  - _self_
-
-# MD4 decode policy.
-method: ancestral
-sampling_grid: cosine
-topp: 0.98

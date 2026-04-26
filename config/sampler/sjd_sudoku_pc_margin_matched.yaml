@@ -1,7 +1,0 @@
-defaults:
-  - sjd_sudoku_pc_margin
-  - _self_
-
-sitewise_hazard_mode: margin
-sitewise_hazard_w_min: 0.5
-sitewise_hazard_w_max: 2.0

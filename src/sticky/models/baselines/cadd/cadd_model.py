@@ -147,14 +147,14 @@ class CADD(nn.Module):
     force_decode_at_end: bool = True
     categorical_sampling_policy: str = "legacy_low"  # legacy_low | jax_high | exact
 
-    # Optional sampling-time corrector (in the spirit of Gat et al., 2024).
-    # The CADD paper reports applying a corrector for image generation, but does
-    # not fully specify hyperparameters; we expose a simple remasking corrector.
-    corrector_enabled: bool = False
-    corrector_steps: int = 1
-    corrector_remask_frac: float = 0.0
-    corrector_metric: str = "entropy"  # entropy | neg_entropy
-    corrector_sample_mode: str = "sample"  # sample | argmax
+    # Optional sampling-time refinement (in the spirit of Gat et al., 2024).
+    # The CADD paper reports applying a refinement for image generation, but does
+    # not fully specify hyperparameters; we expose a simple remasking refinement.
+    remask_refine_enabled: bool = False
+    remask_refine_steps: int = 1
+    remask_refine_frac: float = 0.0
+    remask_refine_metric: str = "entropy"  # entropy | neg_entropy
+    remask_refine_sample_mode: str = "sample"  # sample | argmax
 
     def setup(self):
         if int(self.K) < 1:
@@ -505,7 +505,7 @@ class CADD(nn.Module):
             return jnp.einsum("...k,kd->...d", probs, table)
         raise NotImplementedError(f"Unknown z0_estimator={self.z0_estimator!r}")
 
-    def _corrector_step(
+    def _remask_refine_step(
         self,
         rng: Array,
         *,
@@ -514,12 +514,12 @@ class CADD(nn.Module):
         t: Array,
         cond_emb: Array | None,
     ) -> tuple[Array, Array]:
-        """A simple remask/resample corrector step at fixed time `t`.
+        """A simple remask/resample refinement step at fixed time `t`.
 
         This is a lightweight, JIT-friendly approximation inspired by
-        remasking-based correctors for discrete diffusion/flow models.
+        remasking-based refinements for discrete diffusion/flow models.
         """
-        remask_frac = float(self.corrector_remask_frac)
+        remask_frac = float(self.remask_refine_frac)
         if remask_frac <= 0.0:
             return x, z
 
@@ -535,13 +535,13 @@ class CADD(nn.Module):
 
         eps = 1e-20
         ent = -jnp.sum(probs * jnp.log(jnp.clip(probs, eps, 1.0)), axis=-1)
-        if self.corrector_metric == "neg_entropy":
+        if self.remask_refine_metric == "neg_entropy":
             score = -ent
-        elif self.corrector_metric == "entropy":
+        elif self.remask_refine_metric == "entropy":
             score = ent
         else:
             raise NotImplementedError(
-                f"Unknown corrector_metric={self.corrector_metric!r}"
+                f"Unknown remask_refine_metric={self.remask_refine_metric!r}"
             )
 
         # Never remask positions that are already masked.
@@ -587,9 +587,9 @@ class CADD(nn.Module):
             cond_emb=cond_emb,
         )
 
-        if self.corrector_sample_mode == "argmax":
+        if self.remask_refine_sample_mode == "argmax":
             sampled = jnp.argmax(probs2, axis=-1).astype(jnp.int32)
-        elif self.corrector_sample_mode == "sample":
+        elif self.remask_refine_sample_mode == "sample":
             sampled = categorical_sample_from_probs(
                 rng_tok,
                 probs2,
@@ -597,7 +597,7 @@ class CADD(nn.Module):
             )
         else:
             raise NotImplementedError(
-                f"Unknown corrector_sample_mode={self.corrector_sample_mode!r}"
+                f"Unknown remask_refine_sample_mode={self.remask_refine_sample_mode!r}"
             )
 
         x_new = jnp.where(remask, sampled, x).astype(jnp.int32)
@@ -680,12 +680,12 @@ class CADD(nn.Module):
             stay_mask_latent = stay_mask[None, ..., None]
         z_s = jnp.where(stay_mask_latent, z_cont, z_unmasked)
 
-        # Optional remasking-based corrector (keeps time fixed at `s`).
-        if self.corrector_enabled and (self.corrector_steps > 0) and (self.corrector_remask_frac > 0.0):
-            # Use a deterministic split schedule so the corrector is JIT-friendly.
-            for j in range(int(self.corrector_steps)):
+        # Optional remasking-based refinement (keeps time fixed at `s`).
+        if self.remask_refine_enabled and (self.remask_refine_steps > 0) and (self.remask_refine_frac > 0.0):
+            # Use a deterministic split schedule so the refinement is JIT-friendly.
+            for j in range(int(self.remask_refine_steps)):
                 rng_body = jax.random.fold_in(rng_body, 10_000 + j)
-                x_s, z_s = self._corrector_step(
+                x_s, z_s = self._remask_refine_step(
                     rng_body,
                     x=x_s,
                     z=z_s,

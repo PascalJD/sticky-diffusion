@@ -101,8 +101,8 @@ def test_prop52_eta_one_collapses_state_variance(monkeypatch):
         }
     )
     policy_specs = [
-        {"policy": "plugin_hazard", "eta": 0.5, "logit_temperature": 1.0, "intensity_mode": "full", "log_ratio_clip": 10.0},
-        {"policy": "plugin_hazard", "eta": 1.0, "logit_temperature": 1.0, "intensity_mode": "full", "log_ratio_clip": 10.0},
+        {"policy": "plugin_hazard", "eta": 0.5, "logit_temperature": 1.0, "log_ratio_clip": 10.0},
+        {"policy": "plugin_hazard", "eta": 1.0, "logit_temperature": 1.0, "log_ratio_clip": 10.0},
     ]
 
     result = run_sudoku_prop52_diagnostics(

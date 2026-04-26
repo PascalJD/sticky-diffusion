@@ -1,5 +1,0 @@
-defaults:
-  - mdlm_sudoku_base
-  - _self_
-
-method: uniform

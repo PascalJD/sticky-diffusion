@@ -17,7 +17,11 @@ import sticky.models.baselines.md4.sampling as md4_sampling_mod
 import sticky.models.baselines.mdlm.sampling as mdlm_sampling_mod
 import sticky.models.sjd.sampler as sampler_mod
 import sticky.models.sjd.sampling as sjd_sampling_mod
-from sticky.training.sampling import build_sampling_fns
+from sticky.training.sampling import (
+    build_sampling_fns,
+    _base_sampler_spec_from_cfg,
+    _sjd_sampler_cfg_from_dict,
+)
 
 
 def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
@@ -31,9 +35,7 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
             self.sampling_grid = str(kwargs["sampling_grid"])
             recorded["categorical_sampling_policy"] = str(kwargs["categorical_sampling_policy"])
             self.categorical_sampling_policy = str(kwargs["categorical_sampling_policy"])
-            recorded["pc_enabled"] = bool(kwargs["pc_enabled"])
-            recorded["corrector_substeps"] = int(kwargs["corrector_substeps"])
-            recorded["corrector_step_scale"] = float(kwargs["corrector_step_scale"])
+            recorded["metrics_count_nfe"] = bool(kwargs["metrics_count_nfe"])
 
     class DummyAnchorTable:
         def __init__(self, table_float):
@@ -96,9 +98,7 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
                 "score_scale": 1.0,
                 "logit_temperature": 1.0,
                 "categorical_sampling_policy": "exact",
-                "pc_enabled": True,
-                "corrector_substeps": 2,
-                "corrector_step_scale": 0.1,
+                "metrics_count_nfe": False,
             },
         }
     )
@@ -130,9 +130,7 @@ def test_sjd_sampling_wrapper_preserves_generation_contract(monkeypatch):
     assert recorded["n_steps"] == 37
     assert recorded["sampling_grid"] == "cosine"
     assert recorded["categorical_sampling_policy"] == "exact"
-    assert recorded["pc_enabled"] is True
-    assert recorded["corrector_substeps"] == 2
-    assert recorded["corrector_step_scale"] == 0.1
+    assert recorded["metrics_count_nfe"] is False
     assert recorded["calls"] == [
         {"batch_size": 4, "shape": (32, 32, 3), "n_steps": 37},
         {"batch_size": 6, "shape": (32, 32, 3), "n_steps": 37},
@@ -374,3 +372,61 @@ def test_d3pm_sampling_rejects_non_uniform_grid():
             fid_every=1,
             fid_batch_size=4,
         )
+
+
+# ---- Tests for _sjd_sampler_cfg_from_dict and _base_sampler_spec_from_cfg ----
+
+
+def test_sjd_sampler_cfg_from_dict_threads_predictor_fields():
+    spec = {
+        "n_steps": 100,
+        "eps_denom": 1e-10,
+        "score_from_classifier": True,
+        "metrics_count_nfe": False,
+        "tau_grid_size": 12,
+    }
+    cfg = _sjd_sampler_cfg_from_dict(spec)
+    assert cfg.eps_denom == 1e-10
+    assert cfg.score_from_classifier is True
+    assert cfg.metrics_count_nfe is False
+    assert cfg.tau_grid_size == 12
+    assert cfg.n_steps == 100
+
+
+def test_base_sampler_spec_from_cfg_extracts_all_keys():
+    cfg_sampler = OmegaConf.create({
+        "T": 1.0,
+        "sampling_grid": "cosine",
+        "score_from_classifier": True,
+        "score_scale": 1.0,
+        "logit_temperature": 1.5,
+        "categorical_sampling_policy": "exact",
+        "hazard_mode": "plugin",
+        "alloc_mode": "sample",
+        "log_ratio_clip": 10.0,
+        "init_std": 1.0,
+        "eps_denom": 1e-12,
+        "force_classify_at_end": True,
+        "refresh_logits_after_em_step": False,
+        "metrics_count_nfe": True,
+        "tau_grid_size": 24,
+    })
+    spec = _base_sampler_spec_from_cfg(cfg_sampler, sample_timesteps=42)
+    assert spec["n_steps"] == 42
+    assert spec["logit_temperature"] == 1.5
+    assert spec["eps_denom"] == 1e-12
+    assert spec["score_from_classifier"] is True
+    assert spec["tau_grid_size"] == 24
+    # Round-trip through _sjd_sampler_cfg_from_dict
+    cfg = _sjd_sampler_cfg_from_dict(spec)
+    assert cfg.n_steps == 42
+    assert cfg.tau_grid_size == 24
+
+
+def test_offline_eval_config_has_sampler_overrides():
+    from pathlib import Path
+    cfg = OmegaConf.load(
+        Path(__file__).resolve().parents[2] / "config" / "offline_eval" / "default.yaml"
+    )
+    assert "sampler_overrides" in cfg
+    assert cfg.sampler_overrides == {}

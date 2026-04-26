@@ -1,6 +1,4 @@
-# Canonical compact/default SJD Sudoku comparison:
-# a small but representative mix of time-only, heuristic state-dependent,
-# model-implied state-dependent, and predictor/corrector runs.
+# Canonical compact/default SJD Sudoku comparison.
 mode: sudoku
 enabled: true
 prefix: eval
@@ -18,7 +16,7 @@ sudoku_progress_every_batches: 20
 param_source: ema
 
 sudoku_run_all_sampler_modes: true
-sudoku_primary_sampler_label: pc_margin_l1_s0p10
+sudoku_primary_sampler_label: predictor_only
 sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
 sudoku_log_policy_table: true
 sudoku_prop52_enabled: false
@@ -56,31 +54,4 @@ sudoku_eval_sjd_runs:
     eta: 0.97
   predictor_only:
     kind: sampler
-    sampler: sjd_sudoku_predictor
-  pc_constant_l1_s0p10:
-    kind: sampler
-    sampler: sjd_sudoku_pc_constant
-  pc_entropy_l1_s0p10:
-    kind: sampler
-    sampler: sjd_sudoku_pc_entropy
-  pc_margin_l1_s0p10:
-    kind: sampler
-    sampler: sjd_sudoku_pc_margin
-  # Sitewise-matched runs: reverse off-hazard modulated by teacher-style
-  # class-reduced confidence (margin) derived from already-available logits.
-  # Adds no NFE; leaves choice_probs unchanged.
-  plugin_hazard_margin_matched:
-    kind: policy
-    policy: plugin_hazard
-    n_steps: 50
-    sampling_grid: uniform
-    eta: 0.97
-    sitewise_hazard_mode: margin
-    sitewise_hazard_w_min: 0.5
-    sitewise_hazard_w_max: 2.0
-  predictor_only_margin_matched:
-    kind: sampler
-    sampler: sjd_sudoku_predictor
-    sitewise_hazard_mode: margin
-    sitewise_hazard_w_min: 0.5
-    sitewise_hazard_w_max: 2.0
+    sampler: sjd_sudoku

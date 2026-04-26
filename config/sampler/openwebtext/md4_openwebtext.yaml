@@ -1,0 +1,9 @@
+defaults:
+  - /sampler/base@_here_
+  - _self_
+
+# MD4 decode policy for OpenWebText tokens.
+method: ancestral
+sampling_grid: cosine
+topp: 0.98
+n_steps: 128

@@ -1,5 +1,0 @@
-defaults:
-  - sjd_sudoku_pc_base
-  - _self_
-
-pc_gate: entropy

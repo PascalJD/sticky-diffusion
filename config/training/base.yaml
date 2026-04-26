@@ -1,7 +1,7 @@
 # Shared CIFAR-10 training defaults.
 seed: 0
 
-num_train_steps: 400000
+num_train_steps: ${training.max_steps}
 ema_rate: 0.9999
 
 log_every_steps: 500
@@ -30,15 +30,3 @@ init_load_ema: true
 init_reset_optimizer: true
 init_reset_step: true
 init_checkpoint_step: null
-
-# Unified SJD forward-site hazard switch:
-#   "none"           — scalar survival S(t) applied uniformly across sites.
-#   "solver"         — sitewise S(t)^{w_i} from provided solver_rank (legacy solver-order).
-#   "teacher_margin" — sitewise S(t)^{w_i} from a detached EMA teacher's confidence.
-forward_site_hazard_mode: none
-teacher_source: ema
-teacher_confidence_metric: margin
-teacher_w_min: 0.5
-teacher_w_max: 2.0
-teacher_neutral_weight: 1.0
-teacher_log_metrics: true

@@ -50,12 +50,6 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
-    forward_site_hazard_mode: str = "none"
-    teacher_confidence_metric: str = "margin"
-    teacher_w_min: float = 0.5
-    teacher_w_max: float = 2.0
-    teacher_neutral_weight: float = 1.0
-    teacher_log_metrics: bool = True
 
     # data augmentation
     augment_enabled: bool = True
@@ -71,10 +65,6 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
     def spec(self) -> TaskSpec:
         return self._spec
 
-    @property
-    def requires_teacher_params(self) -> bool:
-        return str(self.forward_site_hazard_mode) == "teacher_margin"
-
     def make_dataloaders(self, seed: int):
         return super().make_dataloaders(seed=seed)
 
@@ -86,7 +76,6 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
         params: Any,
         batch: Dict[str, Array],
         train: bool,
-        teacher_params: Any = None,
     ):
         key_loss, key_dropout = jax.random.split(rng)
 
@@ -113,22 +102,6 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
                 )
             return model.apply({"params": p}, xt, t_img, train=False)
 
-        teacher_mode = str(self.forward_site_hazard_mode) == "teacher_margin"
-        x0_anchor_teacher = None
-        teacher_apply_fn = None
-        # Eval fallback: when teacher mode is declared but no teacher params
-        # were threaded, drop to the baseline scalar hazard for this call.
-        effective_mode = str(self.forward_site_hazard_mode)
-        if teacher_mode and teacher_params is None:
-            effective_mode = "none"
-        if teacher_mode and teacher_params is not None:
-            x0_anchor_teacher = model.apply(
-                {"params": teacher_params}, x0_idx, method=model.embed
-            )
-
-            def teacher_apply_fn(p, xt, t_img):  # noqa: E306
-                return model.apply({"params": p}, xt, t_img, train=False)
-
         loss, metrics = ce_allocation_loss(
             key=key_loss,
             params=params,
@@ -143,15 +116,6 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
             T=float(self.T),
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
-            forward_site_hazard_mode=effective_mode,
-            x0_anchor_teacher=x0_anchor_teacher,
-            teacher_params=teacher_params,
-            teacher_apply_fn=teacher_apply_fn,
-            teacher_confidence_metric=str(self.teacher_confidence_metric),
-            teacher_w_min=float(self.teacher_w_min),
-            teacher_w_max=float(self.teacher_w_max),
-            teacher_neutral_weight=float(self.teacher_neutral_weight),
-            teacher_log_metrics=bool(self.teacher_log_metrics),
         )
 
         return loss, metrics

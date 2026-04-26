@@ -12,25 +12,11 @@ from sticky.training.step import make_train_step_fn, make_wrapped_train_step
 
 
 class _DummyTask:
-    requires_teacher_params = False
-
-    def loss_fn(self, *, rng, model, params, batch, train, teacher_params=None):
-        del rng, model, train, teacher_params
+    def loss_fn(self, *, rng, model, params, batch, train):
+        del rng, model, train
         pred = params["w"] * batch["x"]
         loss = jnp.mean(jnp.square(pred - batch["y"]))
         return loss, {"mse": loss}
-
-
-class _TeacherTask:
-    requires_teacher_params = True
-
-    def loss_fn(self, *, rng, model, params, batch, train, teacher_params=None):
-        del rng, model, train
-        if teacher_params is None:
-            raise AssertionError("teacher_params must be threaded when required")
-        pred = params["w"] * batch["x"] + teacher_params["w"] * 0.0
-        loss = jnp.mean(jnp.square(pred - batch["y"]))
-        return loss, {"mse": loss, "CE/teacher_conf_mean": jnp.asarray(0.5, dtype=jnp.float32)}
 
 
 def _make_state():
@@ -68,40 +54,6 @@ def test_train_step_compiles_on_single_device():
     assert new_state.step.shape == ()
     assert int(jax.device_get(new_state.step)) == 1
     assert loss >= 0.0
-
-
-def test_train_step_threads_teacher_params_when_enabled():
-    state, tx = _make_state()
-    train_step_fn = make_train_step_fn(
-        task=_TeacherTask(),
-        model=SimpleNamespace(),
-        tx=tx,
-        ema_rate=0.9,
-    )
-    train_step = make_wrapped_train_step(train_step_fn, use_pmap=False)
-
-    batch = {
-        "x": jnp.asarray([[1.0], [2.0]], dtype=jnp.float32),
-        "y": jnp.asarray([[0.0], [0.0]], dtype=jnp.float32),
-    }
-    new_state, metrics = train_step(state, batch)
-
-    assert int(jax.device_get(new_state.step)) == 1
-    assert "CE/teacher_conf_mean" in metrics
-
-
-def test_train_step_raises_when_teacher_without_ema():
-    _, tx = _make_state()
-    try:
-        make_train_step_fn(
-            task=_TeacherTask(),
-            model=SimpleNamespace(),
-            tx=tx,
-            ema_rate=0.0,
-        )
-    except ValueError:
-        return
-    raise AssertionError("expected ValueError when teacher task is used with ema_rate=0")
 
 
 def test_train_step_compiles_with_pmap():

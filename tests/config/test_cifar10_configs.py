@@ -25,7 +25,7 @@ def test_canonical_cifar10_experiments_compose():
         ("mdlm_cifar10", "mdlm"),
         ("sjd_cifar10", "sjd"),
     ):
-        cfg = _compose([f"experiment=cifar10/{experiment}", "eval=cifar10"])
+        cfg = _compose([f"experiment=cifar10/{experiment}"])
 
         assert cfg.experiment.task.name == experiment
         assert cfg.experiment.model.name == model_name
@@ -36,7 +36,7 @@ def test_canonical_cifar10_experiments_compose():
 
 
 def test_grouped_cifar10_experiment_paths_compose():
-    cfg = _compose(["experiment=cifar10/md4_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/md4_cifar10"])
 
     assert cfg.experiment.task.name == "md4_cifar10"
     assert cfg.experiment.model.name == "md4"
@@ -57,7 +57,7 @@ def test_adm_image_models_share_canonical_architecture_bundle():
     }
 
     for experiment, image_backbone in expectations.items():
-        cfg = _compose([f"experiment=cifar10/{experiment}", "eval=cifar10"])
+        cfg = _compose([f"experiment=cifar10/{experiment}"])
 
         assert cfg.experiment.model.feature_dim == 96
         assert cfg.experiment.model.ch_mult == [3, 4, 4]
@@ -71,20 +71,19 @@ def test_adm_image_models_share_canonical_architecture_bundle():
 
 
 def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
-    cfg = _compose(["experiment=cifar10/cadd_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/cadd_cifar10"])
     assert cfg.experiment.model.cadd_latent.type == "gaussian"
     assert cfg.experiment.model.cadd_latent.continuous_schedule_type == "linear"
     assert cfg.experiment.sampler.sampling_grid == "cosine"
     assert cfg.experiment.sampler.temperature_schedule == "cosine_decay"
     assert cfg.experiment.sampler.categorical_sampling_policy == "legacy_low"
     assert cfg.experiment.sampler.K == 3
-    assert cfg.experiment.sampler.corrector_remask_frac == 0.1
+    assert cfg.experiment.sampler.remask_refine_frac == 0.1
     assert cfg.experiment.training.sample_timesteps == 512
 
     override_cfg = _compose(
         [
             "experiment=cifar10/cadd_cifar10",
-            "eval=cifar10",
             "model/cadd_latent@experiment.model.cadd_latent=flow_matching",
         ]
     )
@@ -92,7 +91,7 @@ def test_cadd_cifar10_keeps_gaussian_default_and_flow_matching_override():
 
 
 def test_candi_cifar10_uses_canonical_adm_image_bundle():
-    cfg = _compose(["experiment=cifar10/candi_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/candi_cifar10"])
 
     assert cfg.experiment.model.name == "candi"
     assert cfg.experiment.model.image_backbone == "adm_unet5d"
@@ -115,7 +114,7 @@ def test_candi_cifar10_uses_canonical_adm_image_bundle():
 
 
 def test_bitdiff_cifar10_uses_canonical_adm_image_bundle():
-    cfg = _compose(["experiment=cifar10/bitdiff_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/bitdiff_cifar10"])
 
     assert cfg.experiment.model.name == "bitdiff"
     assert cfg.experiment.model.image_backbone == "adm_unet5d"
@@ -137,7 +136,7 @@ def test_bitdiff_cifar10_uses_canonical_adm_image_bundle():
 
 
 def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
-    cfg = _compose(["experiment=cifar10/sjd_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/sjd_cifar10"])
 
     assert cfg.experiment.training.sample_timesteps == 256
     assert cfg.experiment.training.log_state_dependency is True
@@ -150,7 +149,6 @@ def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
     override_cfg = _compose(
         [
             "experiment=cifar10/sjd_cifar10",
-            "eval=cifar10",
             "model/anchor@experiment.model.anchor=ordered_normal",
         ]
     )
@@ -159,7 +157,7 @@ def test_sjd_cifar10_preserves_logging_and_canonical_anchor_overrides():
 
 
 def test_md4_cifar10_uses_md4_architecture_bundle():
-    cfg = _compose(["experiment=cifar10/md4_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/md4_cifar10"])
 
     assert cfg.experiment.model.image_backbone == "unet5d"
     assert cfg.experiment.model.sequence_backbone == "auto"
@@ -173,7 +171,7 @@ def test_md4_cifar10_uses_md4_architecture_bundle():
 
 
 def test_mdlm_cifar10_uses_canonical_adm_image_bundle():
-    cfg = _compose(["experiment=cifar10/mdlm_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/mdlm_cifar10"])
 
     assert cfg.experiment.model.image_backbone == "adm_unet5d"
     assert cfg.experiment.model.sequence_backbone == "auto"
@@ -198,7 +196,7 @@ def test_d3pm_cifar10_variants_use_canonical_adm_image_bundle():
     }
 
     for experiment, transition_type in expectations.items():
-        cfg = _compose([f"experiment=cifar10/{experiment}", "eval=cifar10"])
+        cfg = _compose([f"experiment=cifar10/{experiment}"])
 
         assert cfg.experiment.model.name == "d3pm"
         assert cfg.experiment.model.transition_type == transition_type
@@ -219,29 +217,10 @@ def test_d3pm_cifar10_variants_use_canonical_adm_image_bundle():
 
 
 def test_ddpm_cifar10_sampler_tracks_model_timesteps():
-    cfg = _compose(["experiment=cifar10/ddpm_cifar10", "eval=cifar10"])
+    cfg = _compose(["experiment=cifar10/ddpm_cifar10"])
 
     assert cfg.experiment.sampler.n_steps == cfg.experiment.model.timesteps
     assert cfg.experiment.training.sample_timesteps == 1000
 
 
-def test_cifar10_report_eval_profile_composes_for_all_canonical_experiments():
-    for experiment in (
-        "bitdiff_cifar10",
-        "candi_cifar10",
-        "cadd_cifar10",
-        "ddpm_cifar10",
-        "d3pm_absorb_cifar10",
-        "d3pm_uniform_cifar10",
-        "d3pm_gaussian_cifar10",
-        "md4_cifar10",
-        "mdlm_cifar10",
-        "sjd_cifar10",
-    ):
-        cfg = _compose([f"experiment=cifar10/{experiment}", "eval=cifar10_report"])
-
-        assert cfg.eval.enabled is True
-        assert cfg.eval.run_at_end is True
-        assert cfg.eval.fid_every == 0
-        assert cfg.eval.fid_num_samples == 50000
-        assert cfg.eval.is_enabled is True
+# `cifar10_report` eval profile was removed in the config cleanup.

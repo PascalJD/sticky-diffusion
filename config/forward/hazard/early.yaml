@@ -1,4 +1,0 @@
-# Early-event hazard schedule.
-_target_: sticky.models.sjd.hazard.make_hazard_early
-
-kappa: 3.0

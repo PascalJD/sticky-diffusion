@@ -1,0 +1,11 @@
+defaults:
+  - transform: default
+  - _self_
+
+# Pretrained GPT-2 token embedding table (wte) as SJD anchor.
+# Shape (50257, 768). Frozen by default (learnable=false).
+# Generate the npz with `python tools/extract_gpt2_embeddings.py`.
+family: pretrained
+dim: 768
+learnable: false
+pretrained_path: data/anchors/gpt2_wte.npz

@@ -482,31 +482,31 @@ def _build_cadd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
             )
         ),
         categorical_sampling_policy=_categorical_sampling_policy(cfg),
-        corrector_enabled=bool(
+        remask_refine_enabled=bool(
             sampler_cfg.get(
-                "corrector_enabled",
-                cfg.model.get("corrector_enabled", False),
+                "remask_refine_enabled",
+                cfg.model.get("remask_refine_enabled", False),
             )
         ),
-        corrector_steps=int(
-            sampler_cfg.get("corrector_steps", cfg.model.get("corrector_steps", 1))
+        remask_refine_steps=int(
+            sampler_cfg.get("remask_refine_steps", cfg.model.get("remask_refine_steps", 1))
         ),
-        corrector_remask_frac=float(
+        remask_refine_frac=float(
             sampler_cfg.get(
-                "corrector_remask_frac",
-                cfg.model.get("corrector_remask_frac", 0.0),
+                "remask_refine_frac",
+                cfg.model.get("remask_refine_frac", 0.0),
             )
         ),
-        corrector_metric=str(
+        remask_refine_metric=str(
             sampler_cfg.get(
-                "corrector_metric",
-                cfg.model.get("corrector_metric", "entropy"),
+                "remask_refine_metric",
+                cfg.model.get("remask_refine_metric", "entropy"),
             )
         ),
-        corrector_sample_mode=str(
+        remask_refine_sample_mode=str(
             sampler_cfg.get(
-                "corrector_sample_mode",
-                cfg.model.get("corrector_sample_mode", "sample"),
+                "remask_refine_sample_mode",
+                cfg.model.get("remask_refine_sample_mode", "sample"),
             )
         ),
     )

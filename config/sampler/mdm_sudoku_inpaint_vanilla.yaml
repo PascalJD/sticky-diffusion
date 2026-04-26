@@ -1,8 +1,0 @@
-defaults:
-  - base
-  - _self_
-
-# Monotone board-level reveal in uniform random order.
-method: vanilla
-sampling_grid: loglinear
-categorical_sampling_policy: exact
