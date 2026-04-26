@@ -183,7 +183,7 @@ def test_final_masked_unknown_total_reports_pre_decode_unresolved_cells(monkeypa
         lam = jnp.zeros(logits.shape[:-1], dtype=jnp.float32)
         return lam, probs
 
-    monkeypatch.setattr(board_sampling_mod, "plugin_intensity_and_probs", _zero_plugin)
+    monkeypatch.setattr(board_sampling_mod, "plugin_hazard_and_allocation", _zero_plugin)
 
     _, diag = board_sampling_mod.conditional_generate(
         jax.random.PRNGKey(2),

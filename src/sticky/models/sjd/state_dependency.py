@@ -4,9 +4,9 @@ from typing import Dict, Optional
 
 import jax.numpy as jnp
 
-from .hazard import HazardSchedule, lam_off_star
+from .corruption import mixture_logpdf
+from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
-from .sdes import _expand_like, vp_logpdf
 
 Array = jnp.ndarray
 
@@ -28,17 +28,29 @@ def state_dependency_metrics(
     jump: VPMatchedGaussianJump,
     hazard: Optional[HazardSchedule] = None,
     log_ratio_clip: float = 10.0,
+    tau_grid_size: int = 32,
 ) -> Dict[str, Array]:
-    """State-dependence diagnostics for the jump modulation ratio.
+    """Active-mask mean/std of the DHM log-ratio log r_a(y) - log p_t(y|a).
 
-    The reverse jump modulation contains a state-dependent factor proportional
-    to r_t(y|a) / q_t(y|a). Computing the full expectation over all anchors is
-    O(B·S·L), so this logs a cheap proxy using the model's argmax anchor.
+    Computes a cheap proxy on the model's argmax anchor `a_pred = argmax(logits)`
+    rather than averaging over all anchors:
+      log_ratio_i = log r_{a_pred,i}(y_i) - log p_t(y_i | a_pred,i)
+    where the denominator is the SJD off-anchor conditional p_t(y|a) computed
+    by `mixture_logpdf` via tau-quadrature (Appendix C.1/C.2). The numerator is
+    `jump.logpdf` (the VP-matched un-sticking kernel r_a).
+
+    Returns exactly two keys, per the Prompt B whitelist:
+      state_dep/log_ratio_mean, state_dep/log_ratio_std.
     """
     if logits.shape[:-1] != y.shape[:-1]:
         raise ValueError(
             "Expected logits and y to share site shape, got "
             f"logits={logits.shape}, y={y.shape}"
+        )
+    if hazard is None:
+        raise ValueError(
+            "state_dependency_metrics requires a HazardSchedule to evaluate "
+            "the SJD off-anchor mixture in the denominator."
         )
 
     a_table = jnp.asarray(anchor_table, dtype=jnp.float32)
@@ -46,29 +58,24 @@ def state_dependency_metrics(
     a_pred = jnp.take(a_table, pred_idx, axis=0)
 
     log_r = jump.logpdf(y, a_pred, t_img)
-    log_q = vp_logpdf(y, a_pred, t_img, beta)
-    log_ratio = (log_r - log_q).astype(jnp.float32)
-
-    ratio = jnp.exp(
-        jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
+    log_p = mixture_logpdf(
+        y=y,
+        anchor=a_pred,
+        t=t_img,
+        beta=beta,
+        hazard=hazard,
+        jump=jump,
+        tau_grid_size=int(tau_grid_size),
     )
-    mask = uncommitted_mask.astype(jnp.float32)
+    log_ratio = (log_r - log_p).astype(jnp.float32)
+    log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
 
+    mask = uncommitted_mask.astype(jnp.float32)
     log_ratio_mean = _masked_mean(log_ratio, mask)
     centered = log_ratio - log_ratio_mean
     log_ratio_std = jnp.sqrt(jnp.maximum(_masked_mean(centered * centered, mask), 0.0))
 
-    metrics: Dict[str, Array] = {
+    return {
         "state_dep/log_ratio_mean": log_ratio_mean,
         "state_dep/log_ratio_std": log_ratio_std,
-        "state_dep/log_ratio_abs_mean": _masked_mean(jnp.abs(log_ratio), mask),
-        "state_dep/ratio_mean": _masked_mean(ratio, mask),
     }
-
-    if hazard is not None:
-        lam_base = _expand_like(lam_off_star(hazard, t_img).astype(jnp.float32), ratio)
-        lam_mod = lam_base * ratio
-        metrics["state_dep/lam_base_mean"] = _masked_mean(lam_base, mask)
-        metrics["state_dep/lam_mod_mean"] = _masked_mean(lam_mod, mask)
-
-    return metrics

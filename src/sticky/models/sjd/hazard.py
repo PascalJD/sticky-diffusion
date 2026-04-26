@@ -389,14 +389,14 @@ def make_hazard_edm(
     return _make_common_terms(T=T, lam_fn=lam_fn, cum_fn=cum_fn, inv_cdf_fn=inv_cdf_fn)
 
 
-def lam_time_star(h: HazardSchedule, t: Array) -> Array:
+def lambda_time_star(h: HazardSchedule, t: Array) -> Array:
     r"""\lambda^*_time(t) from the SJD paper (Proposition 5.3)."""
     t = jnp.asarray(t, dtype=jnp.float32)
     M = h.surv(t)
     return h.lam(t) * M
 
 
-def lam_off_star(h: HazardSchedule, t: Array, eps: float = 1e-12) -> Array:
+def lambda_off_star(h: HazardSchedule, t: Array, eps: float = 1e-12) -> Array:
     r"""\lambda^*_off(t) from the SJD paper (Proposition 5.3)."""
     t = jnp.asarray(t, dtype=jnp.float32)
     M = h.surv(t)

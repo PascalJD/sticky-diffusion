@@ -16,10 +16,6 @@ SUDOKU_SJD_PROGRESS_COLUMNS = [
     "kind",
     "policy",
     "eta",
-    "predictor_corrector",
-    "gate_type",
-    "corrector_substeps",
-    "corrector_strength",
     "n_steps",
     "solve_rate",
     "cell_acc_unknown",
@@ -41,7 +37,6 @@ SUDOKU_SJD_PROGRESS_COLUMNS = [
     "sampling_gate_mean_committed",
     "sampling_frac_committed_pre_force",
     "sampling_frac_committed_final",
-    "sampling_fill_frac_by_final_jump",
     "sampling_wallclock_sec_per_board",
 ]
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from typing import Any, Tuple
 
 import jax
@@ -9,33 +8,16 @@ import jax.numpy as jnp
 from sticky.models.common.discrete_mixture import categorical_sample_from_probs, normalize_probs
 from sticky.rng import PRNGKey
 
-from .hazard import HazardSchedule, lam_off_star
+from .hazard import HazardSchedule, lambda_off_star
 from .jump import VPMatchedGaussianJump
 from .sdes import _expand_like, alpha_sigma
+from .corruption import mixture_logpdf
 
 
 Array = jnp.ndarray
 
 
-def _validate_intensity_mode(intensity_mode: str) -> None:
-    mode = str(intensity_mode).strip().lower()
-    if mode == "full":
-        return
-    if mode == "chunked":
-        warnings.warn(
-            "SJD intensity_mode='chunked' is deprecated and now aliases to the "
-            "full materialized backend; intensity_chunk_size is ignored.",
-            FutureWarning,
-            stacklevel=2,
-        )
-        return
-    raise ValueError(
-        f"Unknown intensity_mode={intensity_mode!r}. "
-        "Expected one of: full, chunked."
-    )
-
-
-def _sample_choice_from_probs(
+def _sample_anchor_from_probs(
     *,
     key: PRNGKey,
     choice_probs: Array,
@@ -53,7 +35,54 @@ def _sample_choice_from_probs(
     raise ValueError(f"Unknown alloc_mode={alloc_mode!r}")
 
 
-def _full_intensity_and_probs(
+def dhm_log_ratio(
+    *,
+    y: Array,
+    t_img: Array,
+    anchors: Any,
+    beta: Any,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    log_ratio_clip: float | None = 10.0,
+    tau_grid_size: int = 32,
+) -> Array:
+    """log r_a(y) - log p_t(y | a) per anchor a — the DHM target log-ratio.
+
+    Numerator:   log r_a(y) = log N(y; alpha(t) a, eta^2 sigma^2(t) I), the
+                 VP-matched un-sticking kernel of the SJD forward process.
+    Denominator: log p_t(y | a), the SJD off-anchor conditional (mixture over
+                 unstick times) computed by `mixture_logpdf` via tau-quadrature
+                 with `tau_grid_size` midpoint nodes.
+
+    Output shape: (B, *site_shape, L).
+    """
+    y = jnp.asarray(y, dtype=jnp.float32)
+    a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+
+    def per_anchor(a_l: Array) -> Array:
+        a_b = jnp.broadcast_to(a_l, y.shape)
+        log_r = jump.logpdf(y, a_b, t_img)
+        log_p = mixture_logpdf(
+            y=y,
+            anchor=a_b,
+            t=t_img,
+            beta=beta,
+            hazard=hazard,
+            jump=jump,
+            tau_grid_size=int(tau_grid_size),
+        )
+        return log_r - log_p
+
+    log_ratio = jax.vmap(per_anchor, in_axes=0)(a_table)
+    log_ratio = jnp.moveaxis(log_ratio, 0, -1)
+    if log_ratio_clip is not None:
+        log_ratio = jnp.clip(
+            log_ratio, -float(log_ratio_clip), float(log_ratio_clip)
+        )
+    return log_ratio
+
+
+def _full_hazard_and_allocation(
     *,
     logits: Array,
     y: Array,
@@ -63,15 +92,16 @@ def _full_intensity_and_probs(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     logit_temperature: float,
-    log_ratio_clip: float,
+    log_ratio_clip: float | None,
     eps: float,
     sitewise_lam_off: Array | None = None,
+    tau_grid_size: int = 32,
 ) -> Tuple[Array, Array]:
-    """Dense plugin implementation that materializes [B, S, L]-scale tensors.
+    """Dense plug-in implementation that materializes [B, S, L]-scale tensors.
 
-    When ``sitewise_lam_off`` is None, `lam_off_star(hazard, t_img)` is used
-    as a scalar per-example baseline broadcast to all sites (legacy behavior).
-    When provided (shape (B, *site_shape) or broadcastable), it replaces the
+    When ``sitewise_lam_off`` is None, ``lambda_off_star(hazard, t_img)`` is
+    used as a scalar per-example baseline broadcast to all sites. When
+    provided (shape (B, *site_shape) or broadcastable), it replaces the
     scalar `lam_off` per-site. Because the same log_lam_base value is added
     to every class/anchor entry at a site, the softmax-normalized
     ``choice_probs`` is invariant under this substitution — only ``lam_total``
@@ -87,17 +117,19 @@ def _full_intensity_and_probs(
     logp = jax.nn.log_softmax(logits, axis=-1).astype(jnp.float32)
     logp_flat = logp.reshape((B, -1, L))
 
-    log_ratio = anchor_log_ratio(
+    log_ratio = dhm_log_ratio(
         y=y,
         t_img=t_img,
         anchors=anchors,
         beta=beta,
         jump=jump,
         log_ratio_clip=log_ratio_clip,
+        hazard=hazard,
+        tau_grid_size=tau_grid_size,
     ).reshape((B, -1, L))
 
     if sitewise_lam_off is None:
-        lam_base = lam_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
+        lam_base = lambda_off_star(hazard, t_img).astype(jnp.float32)[:, None, None]
     else:
         sw = jnp.asarray(sitewise_lam_off, dtype=jnp.float32)
         if sw.shape[0] != B:
@@ -130,47 +162,7 @@ def _full_intensity_and_probs(
     return lam_total, normalize_probs(choice_probs)
 
 
-def anchor_log_ratio(
-    *,
-    y: Array,
-    t_img: Array,
-    anchors: Any,
-    beta: Any,
-    jump: VPMatchedGaussianJump,
-    log_ratio_clip: float | None = 10.0,
-) -> Array:
-    y = jnp.asarray(y, dtype=jnp.float32)
-    B = int(y.shape[0])
-    site_shape = y.shape[1:-1]
-    y_flat = y.reshape((B, -1, y.shape[-1]))
-
-    a = jnp.asarray(anchors.table_float, dtype=jnp.float32)
-    dot = jnp.einsum("bnd,ld->bnl", y_flat, a)
-    y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
-    a_norm2 = jnp.sum(a * a, axis=-1)[None, None, :]
-
-    alpha, sigma = alpha_sigma(beta, t_img)
-    alpha = alpha.astype(jnp.float32)[:, None, None]
-    sigma2 = jnp.square(sigma).astype(jnp.float32)[:, None, None]
-
-    eta = float(jump.eta)
-    std_floor = float(jump.std_floor)
-    var_q = jnp.maximum(sigma2, 1e-12)
-    var_r = jnp.maximum(
-        (eta * eta) * sigma2,
-        (std_floor * std_floor) + 1e-12,
-    )
-
-    dist2 = y_norm2 - 2.0 * alpha * dot + (alpha * alpha) * a_norm2
-    inv_r = 1.0 / var_r
-    inv_q = 1.0 / var_q
-    log_ratio = -0.5 * (int(a.shape[-1]) * jnp.log(var_r / var_q) + dist2 * (inv_r - inv_q))
-    if log_ratio_clip is not None:
-        log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))
-    return log_ratio.reshape((B,) + site_shape + (int(a.shape[0]),))
-
-
-def dhm_target_intensity(
+def dhm_target(
     *,
     y: Array,
     t_img: Array,
@@ -181,25 +173,31 @@ def dhm_target_intensity(
     jump: VPMatchedGaussianJump,
     log_ratio_clip: float = 10.0,
     eps: float = 1e-20,
+    tau_grid_size: int = 32,
 ) -> Array:
-    log_ratio = anchor_log_ratio(
+    """The DHM target intensity hat-lambda_t(y, x_0): a per-site scalar that
+    plug-in training matches in expectation. Uses the SJD off-anchor mixture
+    in the denominator (see `dhm_log_ratio`)."""
+    log_ratio = dhm_log_ratio(
         y=y,
         t_img=t_img,
         anchors=anchors,
         beta=beta,
         jump=jump,
         log_ratio_clip=log_ratio_clip,
+        hazard=hazard,
+        tau_grid_size=tau_grid_size,
     )
     gathered = jnp.take_along_axis(
         log_ratio,
         jnp.asarray(true_anchor_idx, dtype=jnp.int32)[..., None],
         axis=-1,
     )[..., 0]
-    lam_base = _expand_like(lam_off_star(hazard, t_img).astype(jnp.float32), gathered)
+    lam_base = _expand_like(lambda_off_star(hazard, t_img).astype(jnp.float32), gathered)
     return jnp.maximum(lam_base, jnp.asarray(eps, dtype=jnp.float32)) * jnp.exp(gathered)
 
 
-def plugin_intensity_and_probs(
+def plugin_hazard_and_allocation(
     *,
     logits: Array,
     y: Array,
@@ -209,21 +207,17 @@ def plugin_intensity_and_probs(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     logit_temperature: float = 1.0,
-    intensity_mode: str = "full",
-    log_ratio_clip: float = 10.0,
-    chunk_size: int = 256,
+    log_ratio_clip: float | None = 10.0,
     eps: float = 1e-20,
     sitewise_lam_off: Array | None = None,
+    tau_grid_size: int = 32,
 ) -> Tuple[Array, Array]:
-    """Compute total plugin intensity and per-anchor allocation probabilities.
+    """Total plug-in hazard backvec-lambda_t^star(y) and per-anchor allocation
+    pi_t^star(a | y), per Section 3.1 of the paper.
 
-    We intentionally keep only the full materialized backend for now. The old
-    chunked path is removed until the stable sampler behavior is validated, and
-    "chunked" is kept only as a deprecated alias for older eval configs.
+    Returns (lam_total, choice_probs).
     """
-    del chunk_size  # Deprecated compatibility knob; ignored by the full backend.
-    _validate_intensity_mode(intensity_mode)
-    return _full_intensity_and_probs(
+    return _full_hazard_and_allocation(
         logits=logits,
         y=y,
         t_img=t_img,
@@ -235,10 +229,11 @@ def plugin_intensity_and_probs(
         log_ratio_clip=log_ratio_clip,
         eps=eps,
         sitewise_lam_off=sitewise_lam_off,
+        tau_grid_size=tau_grid_size,
     )
 
 
-def plugin_intensity_and_choice(
+def plugin_hazard_and_anchor(
     *,
     key: PRNGKey,
     logits: Array,
@@ -251,14 +246,13 @@ def plugin_intensity_and_choice(
     alloc_mode: str,
     categorical_sampling_policy: str = "legacy_low",
     logit_temperature: float = 1.0,
-    intensity_mode: str = "full",
     log_ratio_clip: float = 10.0,
-    chunk_size: int = 256,
     eps: float = 1e-20,
     sitewise_lam_off: Array | None = None,
+    tau_grid_size: int = 32,
 ) -> Tuple[Array, Array]:
-    """Backward-compatible wrapper returning the sampled or argmax anchor."""
-    lam_total, choice_probs = plugin_intensity_and_probs(
+    """Wrapper returning (lam_total, sampled_anchor_index) per site."""
+    lam_total, choice_probs = plugin_hazard_and_allocation(
         logits=logits,
         y=y,
         t_img=t_img,
@@ -267,13 +261,12 @@ def plugin_intensity_and_choice(
         hazard=hazard,
         jump=jump,
         logit_temperature=logit_temperature,
-        intensity_mode=intensity_mode,
         log_ratio_clip=log_ratio_clip,
-        chunk_size=chunk_size,
         eps=eps,
         sitewise_lam_off=sitewise_lam_off,
+        tau_grid_size=tau_grid_size,
     )
-    a_idx = _sample_choice_from_probs(
+    a_idx = _sample_anchor_from_probs(
         key=key,
         choice_probs=choice_probs,
         alloc_mode=alloc_mode,

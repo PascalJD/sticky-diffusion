@@ -3,13 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 
 import jax.numpy as jnp
 
 from sticky.models.sjd.hazard import make_hazard_linear_time
 from sticky.models.sjd.jump import VPMatchedGaussianJump
-from sticky.models.sjd.plugin_intensity import plugin_intensity_and_probs
+from sticky.models.sjd.plugin_intensity import plugin_hazard_and_allocation
 from sticky.models.sjd.sdes import make_beta
 
 
@@ -45,10 +44,10 @@ def _plugin_inputs():
     return beta, hazard, jump, anchors, logits, y, t_img
 
 
-def test_plugin_intensity_full_returns_normalized_probs():
+def test_plugin_intensity_returns_normalized_probs():
     beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
 
-    lam_total, choice_probs = plugin_intensity_and_probs(
+    lam_total, choice_probs = plugin_hazard_and_allocation(
         logits=logits,
         y=y,
         t_img=t_img,
@@ -56,7 +55,6 @@ def test_plugin_intensity_full_returns_normalized_probs():
         beta=beta,
         hazard=hazard,
         jump=jump,
-        intensity_mode="full",
     )
 
     assert lam_total.shape == logits.shape[:-1]
@@ -70,44 +68,13 @@ def test_plugin_intensity_full_returns_normalized_probs():
     )
 
 
-def test_plugin_intensity_chunked_aliases_to_full():
-    beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
-
-    lam_full, probs_full = plugin_intensity_and_probs(
-        logits=logits,
-        y=y,
-        t_img=t_img,
-        anchors=anchors,
-        beta=beta,
-        hazard=hazard,
-        jump=jump,
-        intensity_mode="full",
-    )
-
-    with pytest.warns(FutureWarning, match="aliases to the full materialized backend"):
-        lam_alias, probs_alias = plugin_intensity_and_probs(
-            logits=logits,
-            y=y,
-            t_img=t_img,
-            anchors=anchors,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            intensity_mode="chunked",
-            chunk_size=1,
-        )
-
-    np.testing.assert_allclose(np.asarray(lam_alias), np.asarray(lam_full), atol=1e-6)
-    np.testing.assert_allclose(np.asarray(probs_alias), np.asarray(probs_full), atol=1e-6)
-
-
 def test_sitewise_lam_off_none_is_bit_identical_to_scalar():
     beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
-    lam_legacy, probs_legacy = plugin_intensity_and_probs(
+    lam_legacy, probs_legacy = plugin_hazard_and_allocation(
         logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
         hazard=hazard, jump=jump,
     )
-    lam_new, probs_new = plugin_intensity_and_probs(
+    lam_new, probs_new = plugin_hazard_and_allocation(
         logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
         hazard=hazard, jump=jump, sitewise_lam_off=None,
     )
@@ -118,21 +85,21 @@ def test_sitewise_lam_off_none_is_bit_identical_to_scalar():
 def test_sitewise_lam_off_preserves_choice_probs_when_uniform_per_site():
     """A per-site constant log_lam_base cancels out of softmax-over-anchors,
     so normalized choice_probs must match the scalar-broadcast baseline."""
-    from sticky.models.sjd.hazard import lam_off_star
+    from sticky.models.sjd.hazard import lambda_off_star
 
     beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
     # Build a (B, S) sitewise tensor equal to the scalar baseline broadcast,
     # then multiply per-site by a varying factor (still uniform over anchors).
-    scalar = lam_off_star(hazard, t_img).astype(jnp.float32)  # (B,)
+    scalar = lambda_off_star(hazard, t_img).astype(jnp.float32)  # (B,)
     B, S = logits.shape[0], logits.shape[1]
     varying = jnp.asarray(np.linspace(0.3, 3.0, S, dtype=np.float32))  # (S,)
     sitewise = scalar[:, None] * varying[None, :]  # (B, S)
 
-    lam_baseline, probs_baseline = plugin_intensity_and_probs(
+    lam_baseline, probs_baseline = plugin_hazard_and_allocation(
         logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
         hazard=hazard, jump=jump,
     )
-    lam_sw, probs_sw = plugin_intensity_and_probs(
+    lam_sw, probs_sw = plugin_hazard_and_allocation(
         logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
         hazard=hazard, jump=jump, sitewise_lam_off=sitewise,
     )
@@ -149,17 +116,18 @@ def test_sitewise_lam_off_preserves_choice_probs_when_uniform_per_site():
     )
 
 
-def test_plugin_intensity_rejects_unknown_mode():
+def test_plugin_hazard_and_allocation_normalizes_choice_probs():
+    """The plug-in's choice probabilities must normalize to 1 along the
+    anchor axis. Smoke check on the (now-singular) corrected SJD path."""
     beta, hazard, jump, anchors, logits, y, t_img = _plugin_inputs()
-
-    with pytest.raises(ValueError, match="Unknown intensity_mode"):
-        plugin_intensity_and_probs(
-            logits=logits,
-            y=y,
-            t_img=t_img,
-            anchors=anchors,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            intensity_mode="streaming",
-        )
+    lam_total, choice_probs = plugin_hazard_and_allocation(
+        logits=logits, y=y, t_img=t_img, anchors=anchors, beta=beta,
+        hazard=hazard, jump=jump, tau_grid_size=32,
+    )
+    assert lam_total.shape == logits.shape[:-1]
+    assert choice_probs.shape == logits.shape
+    np.testing.assert_allclose(
+        np.asarray(jnp.sum(choice_probs, axis=-1)),
+        np.ones(choice_probs.shape[:-1], dtype=np.float32),
+        atol=1e-6,
+    )

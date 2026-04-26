@@ -303,6 +303,7 @@ class AnchorTableConfig:
     order_weight: float = 1.0
     residual_weight: float = 1.0
     projection_seed: int | None = None
+    pretrained_path: str | None = None
     transform: AnchorTransformConfig = field(default_factory=AnchorTransformConfig)
 
 
@@ -397,6 +398,16 @@ def anchor_table_config_from_mapping(
                 model_cfg,
                 nested_key="projection_seed",
                 flat_key="anchor_projection_seed",
+                default=None,
+            )
+        ),
+        pretrained_path=(
+            lambda v: None if v is None else str(v)
+        )(
+            _resolve_anchor_value(
+                model_cfg,
+                nested_key="pretrained_path",
+                flat_key="anchor_pretrained_path",
                 default=None,
             )
         ),
@@ -582,10 +593,23 @@ def _build_anchor_base_table(
             rng=rng,
             dtype=dtype,
         )
+    elif family == "pretrained":
+        from sticky.models.sjd.pretrained_anchors import load_pretrained_anchor_table
+
+        if config.pretrained_path is None:
+            raise ValueError(
+                "anchor.pretrained_path must be set when anchor.family='pretrained'."
+            )
+        table = load_pretrained_anchor_table(
+            path=config.pretrained_path,
+            vocab_size=vocab_size,
+            anchor_dim=anchor_dim,
+            dtype=dtype,
+        )
     else:
         raise ValueError(
             f"Unknown anchor initializer {config.family!r}. Expected one of: "
-            "normal, ordered_normal, ordered_scalar, thermometer."
+            "normal, ordered_normal, ordered_scalar, thermometer, pretrained."
         )
 
     expected_shape = (vocab_size, anchor_dim)
