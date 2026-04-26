@@ -48,7 +48,7 @@ class StickyImagenet64(tfds.core.GeneratorBasedBuilder):
         "Download Imagenet64_train_part1.zip, Imagenet64_train_part2.zip, "
         "and Imagenet64_val.zip from https://image-net.org/download-images "
         "(requires a free academic login), unzip them into --manual-dir, "
-        "then run scripts/prepare_imagenet64.py."
+        "then run tools/prepare_imagenet64.py."
     )
 
     def _info(self) -> tfds.core.DatasetInfo:

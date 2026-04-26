@@ -90,7 +90,7 @@ def test_openwebtext_iterator_and_task_smoke(synthetic_text_tokens):
 
 
 def test_openwebtext_iterator_batch_shape_and_dtype_from_npy(tmp_path: Path):
-    """Regression: .npy files written by scripts/prepare_openwebtext.py are
+    """Regression: .npy files written by tools/prepare_openwebtext.py are
     consumed by the existing loader as mmap, with (batch_size, seq_len) int64
     batches across both train and val splits."""
     seq_len = 1024

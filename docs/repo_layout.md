@@ -10,13 +10,24 @@ single canonical source/config tree.
   - Hydra root grouped by concern: `dataset/`, `model/`, `sampler/`,
     `training/`, `eval/`, `runtime/`, `offline_eval/`, and `experiment/`.
   - Experiments are grouped under `experiment/cifar10/`, `experiment/imagenet64/`,
-    and `experiment/sudoku/`.
+    `experiment/openwebtext/`, and `experiment/sudoku/`.
   - Models are grouped under `model/backbone/`, `model/baseline/`, and `model/sjd/`.
 - `docs/`: repository, config, dataset, and baseline-extension notes.
 - `cluster/`
-  - Shell, launcher, and cluster scripts.
-  - `.sbatch` launchers stay here.
-- `tools/`: one-off Python utilities, reporting helpers, and data-prep scripts.
+  - Training launchers: `anvil_cadd_cifar10_train.sbatch`,
+    `anvil_imagenet64_train.sbatch`, `anvil_sudoku_train.sbatch`, and
+    `gautschi_imagenet64_train.sbatch`.
+  - Environment helpers: `anvil_python_env.sh`, `gauss_python_env.sh`,
+    `gautschi_python_env.sh`, `debug_python_env.sh`, and their Anvil debug
+    launcher.
+  - Submission entry points: `submit_anvil.sh`, `submit_imagenet64_all.sh`,
+    and `submit_gautschi_imagenet64_all.sh`.
+- `tools/`
+  - `prepare_imagenet64.py`: ImageNet 64x64 TFDS-cache builder.
+  - `prepare_openwebtext.py`: OpenWebText preprocessing.
+  - `prepare_sudoku_data.py`: Sudoku preprocessing.
+  - `extract_gpt2_embeddings.py`: exports the GPT-2 token embedding table for
+    the OpenWebText SJD anchor config.
 - `src/sticky/`
   - `cli/`: canonical train/eval entrypoints.
   - `core/`: shared path, metrics, sampling-loop, and runtime helpers.

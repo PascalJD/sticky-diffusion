@@ -8,8 +8,8 @@ validation (MDLM convention), and saves train/val splits as .npy files
 of shape [num_sequences, seq_len] at data/openwebtext/{train,val}.npy.
 
 Example:
-    python scripts/prepare_openwebtext.py
-    python scripts/prepare_openwebtext.py --out-dir data/openwebtext --seq-len 1024
+    python tools/prepare_openwebtext.py
+    python tools/prepare_openwebtext.py --out-dir data/openwebtext --seq-len 1024
 """
 from __future__ import annotations
 
