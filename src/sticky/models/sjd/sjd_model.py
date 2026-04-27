@@ -13,6 +13,12 @@ Array = jnp.ndarray
 class SJD(nn.Module):
     anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
+    # When True, the model maintains a learnable anchor_dim-sized bias
+    # vector that is added to y_t at uncommitted (noisy) site positions
+    # before the classifier sees it. The mask is supplied per-call via the
+    # `noisy_position_mask` kwarg of `__call__`. Defaults to False so
+    # existing tasks/checkpoints are unaffected.
+    use_noisy_input_bias: bool = False
 
     feature_dim: int = 128
     num_heads: int = 12
@@ -87,6 +93,13 @@ class SJD(nn.Module):
             adm_use_conv_skip=self.adm_use_conv_skip,
             adm_use_new_attention_order=self.adm_use_new_attention_order,
         )
+        if self.use_noisy_input_bias:
+            self.noisy_input_bias = self.param(
+                "noisy_input_bias",
+                nn.initializers.zeros,
+                (int(self.anchor_config.anchor_dim),),
+                jnp.float32,
+            )
 
     def embed(self, token_ids: Array) -> Array:
         return self.anchors(token_ids)
@@ -101,8 +114,24 @@ class SJD(nn.Module):
         *,
         cond=None,
         anchor_token_ids: Array | None = None,
+        noisy_position_mask: Array | None = None,
         train: bool = False,
     ):
         if anchor_token_ids is not None:
             _ = self.embed(anchor_token_ids)
-        return self.classifier(y_t, t=t, cond=cond, train=train)
+        cell_input = y_t
+        if self.use_noisy_input_bias:
+            if noisy_position_mask is None:
+                noisy_mask = jnp.zeros(cell_input.shape[:-1], dtype=jnp.bool_)
+            else:
+                noisy_mask = jnp.asarray(noisy_position_mask, dtype=jnp.bool_)
+                if noisy_mask.shape != cell_input.shape[:-1]:
+                    raise ValueError(
+                        "noisy_position_mask must match y_t without the "
+                        f"feature dimension, got {noisy_mask.shape} vs "
+                        f"{cell_input.shape[:-1]}."
+                    )
+            cell_input = cell_input + noisy_mask[..., None].astype(
+                cell_input.dtype
+            ) * self.noisy_input_bias.astype(cell_input.dtype)
+        return self.classifier(cell_input, t=t, cond=cond, train=train)

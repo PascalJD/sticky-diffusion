@@ -31,6 +31,7 @@ def ce_allocation_loss(
     time_sampling: str = "uniform",
     loss_weighting: str = "uniform",
     anchor_log_w: Optional[Array] = None,
+    pass_noisy_mask_to_model: bool = False,
 ) -> Tuple[Array, Metrics]:
     if hazard is None:
         raise ValueError("ce_allocation_loss requires a hazard schedule.")
@@ -89,7 +90,10 @@ def ce_allocation_loss(
     # is a no-op at those sites.
     x_in = jnp.where(committed[..., None], x0_anchor, x_t)
 
-    logits, _ = apply_fn(params, x_in, t_img)
+    if pass_noisy_mask_to_model:
+        logits, _ = apply_fn(params, x_in, t_img, ~committed)
+    else:
+        logits, _ = apply_fn(params, x_in, t_img)
     logp = jax.nn.log_softmax(logits, axis=-1)
 
     # NLL against the true token/anchor index.

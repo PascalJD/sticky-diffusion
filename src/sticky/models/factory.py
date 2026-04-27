@@ -380,6 +380,7 @@ def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
             vocab_size=vocab_size,
         ),
         learnable_anchors=anchor_learnable_from_mapping(cfg.model, default=True),
+        use_noisy_input_bias=bool(cfg.model.get("use_noisy_input_bias", False)),
         feature_dim=int(cfg.model.feature_dim),
         n_layers=int(cfg.model.n_layers),
         n_dit_layers=int(cfg.model.n_dit_layers),
