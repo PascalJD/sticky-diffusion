@@ -1,12 +1,17 @@
 # src/sticky/models/sjd/sjd_model.py
 from __future__ import annotations
 from collections.abc import Sequence
+from typing import Mapping, Optional
+
 import flax.linen as nn
 import jax.numpy as jnp
 
 from .anchors import AnchorTableConfig, TokenAnchors
 from .classifier import ContinuousClassifier
 from .joint_input import SudokuJointInputProj
+from .multi_axis_input import MultiAxisInputProj
+from .state_layout import StateLayout
+from .sudoku_structural import SudokuStructuralAdapter
 
 Array = jnp.ndarray
 
@@ -24,6 +29,17 @@ class SJD(nn.Module):
     # are apples-to-apples; defaults to False to preserve existing
     # checkpoints and the current behavior of cell-only tasks.
     cell_only_input_proj: bool = False
+
+    # Multi-axis state-space partitioning (Part B). When `state_layout` is
+    # set, the model exposes a `apply_layout` entry point that consumes a
+    # state dict {axis_name: array} and runs the joint sequence through
+    # MultiAxisInputProj before the classifier. The legacy `__call__`
+    # path is preserved unchanged for cell-only tasks. `use_sudoku_structural`
+    # toggles the SudokuStructuralAdapter (row/col/box/group_idx embeddings,
+    # init-zero) for layouts that share the Sudoku adjacency. Both default
+    # to None / False so existing tasks are byte-identical.
+    state_layout: Optional[StateLayout] = None
+    use_sudoku_structural: bool = False
 
     feature_dim: int = 128
     num_heads: int = 12
@@ -106,6 +122,24 @@ class SJD(nn.Module):
             self.cell_only_input_dense = nn.Dense(
                 int(self.feature_dim), name="cell_only_input_proj"
             )
+        if self.state_layout is not None:
+            anchored = self.state_layout.anchored_axes
+            for axis in anchored:
+                if int(axis.embedding_dim) != int(self.vocab_size):
+                    raise ValueError(
+                        f"SJD.state_layout: anchored axis {axis.name!r} has "
+                        f"embedding_dim={axis.embedding_dim}, but model "
+                        f"vocab_size={self.vocab_size}. They must match for "
+                        "the per-anchor logit head to align with the table."
+                    )
+            self.multi_axis_input = MultiAxisInputProj(
+                layout=self.state_layout,
+                feature_dim=self.feature_dim,
+            )
+            if self.use_sudoku_structural:
+                self.sudoku_structural = SudokuStructuralAdapter(
+                    feature_dim=self.feature_dim
+                )
 
     def embed(self, token_ids: Array) -> Array:
         return self.anchors(token_ids)
@@ -121,10 +155,15 @@ class SJD(nn.Module):
         cond=None,
         anchor_token_ids: Array | None = None,
         slack_y_t: Array | None = None,
+        state: Mapping[str, Array] | None = None,
         train: bool = False,
     ):
         if anchor_token_ids is not None:
             _ = self.embed(anchor_token_ids)
+        if state is not None:
+            return self.apply_layout(
+                state, t, cond=cond, train=train
+            )
         if slack_y_t is None:
             cell_input = y_t
             if self.cell_only_input_proj:
@@ -136,3 +175,32 @@ class SJD(nn.Module):
             )
         z = self.joint_input_proj(y_t, slack_y_t)
         return self.classifier(z, t=t, cond=cond, train=train)
+
+    def apply_layout(
+        self,
+        state: Mapping[str, Array],
+        t: Array,
+        *,
+        cond=None,
+        train: bool = False,
+    ):
+        """Multi-axis forward path. Returns (per_axis_logits, aux) where
+        `per_axis_logits` is a dict {axis_name: (B, site_count, vocab_size)}
+        with one entry per anchored axis (axes that contribute to NLL).
+        """
+        if self.state_layout is None:
+            raise ValueError(
+                "SJD.apply_layout requires `state_layout` to be set on the "
+                "module. Pass a StateLayout to construct the multi-axis path."
+            )
+        structural = (
+            self.sudoku_structural() if self.use_sudoku_structural else None
+        )
+        z = self.multi_axis_input(state, structural_offsets=structural)
+        logits, aux = self.classifier(z, t=t, cond=cond, train=train)
+        per_axis = {}
+        for axis in self.state_layout.axes:
+            if axis.contributes_to_nll:
+                sl = self.state_layout.slice_of(axis.name)
+                per_axis[axis.name] = logits[:, sl, :]
+        return per_axis, aux
