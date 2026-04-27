@@ -3,6 +3,7 @@ seed: 0
 
 num_train_steps: ${training.max_steps}
 ema_rate: 0.9999
+num_microbatches: 1
 
 log_every_steps: 500
 timing_warn_seconds: 30

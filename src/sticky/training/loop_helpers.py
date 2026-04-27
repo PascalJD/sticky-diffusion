@@ -294,6 +294,7 @@ def build_loop_context(
     timing_warn_seconds = float(cfg.training.get("timing_warn_seconds", 30.0))
     sync_train_step = bool(cfg.runtime.get("sync_train_step", False))
     pmap_prefetch_buffer_size = int(cfg.runtime.get("pmap_prefetch_buffer_size", 2))
+    num_microbatches = int(cfg.training.get("num_microbatches", 1))
 
     metrics_every_steps = int(cfg.training.get("metrics_every_steps", 0))
     save_final_metrics = bool(cfg.training.get("save_final_metrics", True))
@@ -428,7 +429,13 @@ def build_loop_context(
         ),
     )
 
-    train_step_fn = make_train_step_fn_fn(task=task, model=model, tx=tx, ema_rate=ema_rate)
+    train_step_fn = make_train_step_fn_fn(
+        task=task,
+        model=model,
+        tx=tx,
+        ema_rate=ema_rate,
+        num_microbatches=num_microbatches,
+    )
     eval_step_fn = build_eval_step_fn_fn(task=task, model=model)
 
     return LoopContext(
