@@ -52,6 +52,7 @@ class SudokuInpaintSJDSlackTask(Task):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
+    pass_noisy_mask_to_model: bool = False
     drop_remainder: bool = True
     shuffle: bool = True
     mmap: bool = True

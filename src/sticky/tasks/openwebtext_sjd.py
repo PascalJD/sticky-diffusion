@@ -36,6 +36,7 @@ class OpenWebTextSJDTask(Task):
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
     anchor_log_w: Optional[Array] = None
+    pass_noisy_mask_to_model: bool = False
     tokenizer_name: Optional[str] = None
     num_classes: int = -1
     drop_remainder: bool = True
@@ -105,16 +106,26 @@ class OpenWebTextSJDTask(Task):
             except Exception:
                 anchor_table = model.apply({"params": params}, method=model.anchor_table)
 
-        def apply_fn(p, xt, t_img):
+        def apply_fn(p, xt, t_img, noisy_position_mask=None):
+            extra_kwargs = {}
+            if noisy_position_mask is not None:
+                extra_kwargs["noisy_position_mask"] = noisy_position_mask
             if train:
                 return model.apply(
                     {"params": p},
                     xt,
                     t=t_img,
                     train=True,
+                    **extra_kwargs,
                     rngs={"dropout": key_dropout},
                 )
-            return model.apply({"params": p}, xt, t=t_img, train=False)
+            return model.apply(
+                {"params": p},
+                xt,
+                t=t_img,
+                train=False,
+                **extra_kwargs,
+            )
 
         loss, metrics = ce_allocation_loss(
             key=key_loss,
@@ -132,6 +143,7 @@ class OpenWebTextSJDTask(Task):
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
             anchor_log_w=self.anchor_log_w,
+            pass_noisy_mask_to_model=bool(self.pass_noisy_mask_to_model),
         )
 
         metrics = dict(metrics)

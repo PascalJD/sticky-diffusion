@@ -20,6 +20,7 @@ class SJD(nn.Module):
     anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
     enable_joint_input: bool = False
+    use_noisy_input_bias: bool = False
     # When True, project the cell-only input through an explicit Dense
     # (feature_dim) before handing it to the classifier. This makes the
     # cell-only path go through the same number of input projections as the
@@ -114,6 +115,13 @@ class SJD(nn.Module):
             adm_use_conv_skip=self.adm_use_conv_skip,
             adm_use_new_attention_order=self.adm_use_new_attention_order,
         )
+        if self.use_noisy_input_bias:
+            self.noisy_input_bias = self.param(
+                "noisy_input_bias",
+                nn.initializers.zeros,
+                (int(self.anchor_config.anchor_dim),),
+                jnp.float32,
+            )
         if self.enable_joint_input:
             self.joint_input_proj = SudokuJointInputProj(
                 feature_dim=self.feature_dim
@@ -154,6 +162,7 @@ class SJD(nn.Module):
         *,
         cond=None,
         anchor_token_ids: Array | None = None,
+        noisy_position_mask: Array | None = None,
         slack_y_t: Array | None = None,
         state: Mapping[str, Array] | None = None,
         train: bool = False,
@@ -166,6 +175,20 @@ class SJD(nn.Module):
             )
         if slack_y_t is None:
             cell_input = y_t
+            if self.use_noisy_input_bias:
+                if noisy_position_mask is None:
+                    noisy_mask = jnp.zeros(cell_input.shape[:-1], dtype=jnp.bool_)
+                else:
+                    noisy_mask = jnp.asarray(noisy_position_mask, dtype=jnp.bool_)
+                    if noisy_mask.shape != cell_input.shape[:-1]:
+                        raise ValueError(
+                            "noisy_position_mask must match y_t without the "
+                            f"feature dimension, got {noisy_mask.shape} vs "
+                            f"{cell_input.shape[:-1]}."
+                        )
+                cell_input = cell_input + noisy_mask[..., None].astype(
+                    cell_input.dtype
+                ) * self.noisy_input_bias.astype(cell_input.dtype)
             if self.cell_only_input_proj:
                 cell_input = self.cell_only_input_dense(cell_input)
             return self.classifier(cell_input, t=t, cond=cond, train=train)
