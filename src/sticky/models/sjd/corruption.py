@@ -23,6 +23,7 @@ def sample_pair(
     beta,
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
+    log_w_per_site: Array | None = None,
 ) -> Tuple[Array, Array]:
     """Draw a SJD-corrupted pair (X_t, never_unstuck_mask) per Algorithm 1.
 
@@ -37,6 +38,11 @@ def sample_pair(
     ----------
     x0_anchor : shape (B, *site_shape, d).
     t         : shape (B,).
+    log_w_per_site : optional shape (B, *site_shape). When provided, the forward
+        hazard becomes lambda_t(a) = beta(t) * exp(log_w_per_site), so per the
+        flux identity S_a(t) = S(t)^{w(a)} and tau is drawn from the truncated
+        weighted density. When None, behavior is bit-identical to the
+        anchor-agnostic baseline.
 
     Returns
     -------
@@ -65,6 +71,20 @@ def sample_pair(
     )
     t_b = jnp.broadcast_to(t.reshape((B,) + site_pad), (B,) + site_shape)
 
+    if log_w_per_site is not None:
+        log_w_b = jnp.asarray(log_w_per_site, dtype=jnp.float32)
+        if log_w_b.shape != (B,) + site_shape:
+            raise ValueError(
+                f"log_w_per_site must have shape {(B,) + site_shape}, "
+                f"got {log_w_b.shape}"
+            )
+        # S_a(t) = S(t)^{w(a)} ; w(a) = exp(log_w_per_site).
+        log_S_t_b = jnp.log(jnp.maximum(surv_t_b, jnp.asarray(1e-30, dtype=jnp.float32)))
+        w_b = jnp.exp(log_w_b)
+        log_S_a_t_b = w_b * log_S_t_b
+        surv_t_b = jnp.exp(log_S_a_t_b)
+        cdf_t_b = -jnp.expm1(log_S_a_t_b)
+
     u_unstuck = jax.random.uniform(
         k_unstuck, shape=(B,) + site_shape, dtype=jnp.float32
     )
@@ -74,7 +94,18 @@ def sample_pair(
         k_tau, shape=(B,) + site_shape, dtype=jnp.float32,
         minval=0.0, maxval=1.0,
     )
-    tau = hazard.inv_cdf(u_tau * cdf_t_b)
+    if log_w_per_site is None:
+        tau = hazard.inv_cdf(u_tau * cdf_t_b)
+    else:
+        # B(tau) = -log(1 - U * (1 - S_a(t))) / w(a).  Pre-divide so the
+        # existing inv_cdf (which inverts the *base* schedule's 1 - S) works
+        # unchanged: feed it u_eff_baseline = 1 - exp(-B(tau)).
+        u_eff_a = u_tau * cdf_t_b
+        B_target = -jnp.log1p(-u_eff_a) / jnp.maximum(
+            w_b, jnp.asarray(1e-12, dtype=jnp.float32)
+        )
+        u_eff_baseline = -jnp.expm1(-B_target)
+        tau = hazard.inv_cdf(u_eff_baseline)
 
     mean, std = mixture_component_mean_std(
         anchor=x0_anchor,
@@ -154,17 +185,22 @@ def mixture_logpdf(
     jump: VPMatchedGaussianJump,
     tau_grid_size: int = 32,
     tau_grid: str = "uniform",
+    log_w_anchor: float | Array = 0.0,
 ) -> Array:
     """log p_t^ac(y | a) by 1-D log-sum-exp quadrature.
 
     Discretizes
-        p_t^ac(y | a) = int_0^t lam(tau) S(tau) (r_tau * K_{tau->t})(y | a) dtau
+        p_t^ac(y | a) = int_0^t lam_tau(a) S_a(tau) (r_tau * K_{tau->t})(y | a) dtau
     on a per-example tau-grid via streaming online log-sum-exp through
     ``jax.lax.scan``: peak memory is O(B * site_size) instead of the
     O(tau_grid_size * B * site_size) of a stacked ``logsumexp``. With
     ``tau_grid='uniform'`` the midpoint rule is used (tau_grid_size nodes at
     (i + 0.5) * t / tau_grid_size). With ``tau_grid='simpson'`` composite Simpson's
     rule is used and ``tau_grid_size`` must be odd.
+
+    Frequency-weighted hazards: ``log_w_anchor`` is log w(a) where the forward
+    hazard is lambda_tau(a) = beta(tau) * w(a) and S_a(tau) = S(tau)^{w(a)}.
+    Default 0.0 reproduces the anchor-agnostic integrand bit-exactly.
 
     Output shape matches ``mixture_component_logpdf``: (B, *site_shape).
     """
@@ -185,6 +221,11 @@ def mixture_logpdf(
     )
     log_S_nodes = -jnp.asarray(hazard.cum(nodes), dtype=jnp.float32)
 
+    # log w(a) and w(a) shaped to broadcast against the per-example weight
+    # tensor of shape (B, *site_pad). For scalar 0.0 these are also scalars.
+    log_w_a_arr = jnp.asarray(log_w_anchor, dtype=jnp.float32)
+    w_a_arr = jnp.exp(log_w_a_arr)
+
     # mixture_component_logpdf returns shape y.shape[:-1] = (B, *site_shape).
     out_shape = y.shape[:-1]
     site_pad = (1,) * (len(out_shape) - 1)
@@ -195,7 +236,11 @@ def mixture_logpdf(
             y=y, anchor=anchor, t=t, tau=tau_i,
             beta=beta, eta=eta, std_floor=std_floor,
         )
-        weight_i = (log_w_i + log_lam_i + log_S_i).reshape((-1,) + site_pad)
+        # Reshape per-tau scalars to (B, *site_pad), then add the per-anchor
+        # log w(a) and the w(a)-scaled log S(tau).
+        prefix_i = (log_w_i + log_lam_i).reshape((-1,) + site_pad)
+        log_S_i_b = log_S_i.reshape((-1,) + site_pad)
+        weight_i = prefix_i + log_w_a_arr + log_S_i_b * w_a_arr
         log_x = weight_i + log_p_i
         m_new, l_new = _online_lse_step(carry[0], carry[1], log_x)
         return (m_new, l_new), None
@@ -233,6 +278,12 @@ def classifier_induced_score(
     t = jnp.asarray(t, dtype=jnp.float32)
     anchor_logits = jnp.asarray(anchor_logits, dtype=jnp.float32)
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    # `effective_log_w` is the AnchorTable property; duck-typed namespaces
+    # (used in some tests) may not provide it — fall back to zeros.
+    _eff_log_w = getattr(anchors, "effective_log_w", None)
+    if _eff_log_w is None:
+        _eff_log_w = jnp.zeros((int(a_table.shape[0]),), dtype=jnp.float32)
+    log_w_table = jnp.asarray(_eff_log_w, dtype=jnp.float32)  # (L,)
 
     B = int(y.shape[0])
     site_shape = y.shape[1:-1]
@@ -261,6 +312,13 @@ def classifier_induced_score(
         jnp.maximum(lam_nodes, jnp.asarray(1e-30, dtype=jnp.float32))
     )
     log_S = -jnp.asarray(hazard.cum(nodes), dtype=jnp.float32)
+
+    # Per-anchor weighting: lambda_tau(a) = beta(tau) * w(a) and
+    # S_a(tau) = S(tau)^{w(a)}. log_w_a_3 and w_a_3 broadcast as (1, 1, L).
+    # When anchors.log_w is None (or zeros), these collapse to 0 and 1, so the
+    # integrand is unchanged from the anchor-agnostic baseline.
+    log_w_a_3 = log_w_table[None, None, :]
+    w_a_3 = jnp.exp(log_w_a_3)
 
     # v_t(tau_i): (tau_grid_size, B), variance of the mixture component at tau_i.
     alpha_tau, sigma_tau = alpha_sigma(beta, nodes)
@@ -298,7 +356,11 @@ def classifier_induced_score(
         log_N_i = -0.5 * (
             d * (log_2pi + jnp.log(v_i_b)) + dist2 / v_i_b
         )  # (B, S, L)
-        weight_i = (log_w_i + log_lam_i + log_S_i)[:, None, None]  # (B, 1, 1)
+        # Per-anchor weighted integrand: log[w_q,i * beta(tau_i) * w(a) *
+        # S(tau_i)^{w(a)}] = (log_h_i + log_lam_i) + log_w_a + w(a)*log_S_i.
+        prefix_i = (log_w_i + log_lam_i)[:, None, None]  # (B, 1, 1)
+        log_S_i_b = log_S_i[:, None, None]  # (B, 1, 1)
+        weight_i = prefix_i + log_w_a_3 + log_S_i_b * w_a_3  # (B, 1, L)
         log_x = weight_i + log_N_i  # (B, S, L)
         m_carry, l_carry, n_carry = carry
         m_new = jnp.maximum(m_carry, log_x)

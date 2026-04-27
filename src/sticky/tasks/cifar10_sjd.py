@@ -50,6 +50,7 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
+    anchor_log_w: Optional[Array] = None
 
     # data augmentation
     augment_enabled: bool = True
@@ -116,6 +117,7 @@ class CIFAR10SJDTask(TFDSDiscreteImageTaskBase):
             T=float(self.T),
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
+            anchor_log_w=self.anchor_log_w,
         )
 
         return loss, metrics

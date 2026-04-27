@@ -36,6 +36,7 @@ class SudokuInpaintSJDTask(Task):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
+    anchor_log_w: Optional[Array] = None
     drop_remainder: bool = True
     shuffle: bool = True
     mmap: bool = True
@@ -175,6 +176,7 @@ class SudokuInpaintSJDTask(Task):
             given_mask=clue_mask,
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
+            anchor_log_w=self.anchor_log_w,
         )
 
         metrics = dict(metrics)

@@ -1,0 +1,6 @@
+# Anchor-agnostic hazard: lambda_t(a) = beta(t). Default — bit-exact baseline.
+enabled: false
+log_w_path: null
+smoothing_alpha: 1.0
+normalize_mean: true
+clip: [0.1, 10.0]
