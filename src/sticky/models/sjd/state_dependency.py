@@ -29,6 +29,7 @@ def state_dependency_metrics(
     hazard: Optional[HazardSchedule] = None,
     log_ratio_clip: float = 10.0,
     tau_grid_size: int = 32,
+    anchor_log_w: Optional[Array] = None,
 ) -> Dict[str, Array]:
     """Active-mask mean/std of the DHM log-ratio log r_a(y) - log p_t(y|a).
 
@@ -38,6 +39,11 @@ def state_dependency_metrics(
     where the denominator is the SJD off-anchor conditional p_t(y|a) computed
     by `mixture_logpdf` via tau-quadrature (Appendix C.1/C.2). The numerator is
     `jump.logpdf` (the VP-matched un-sticking kernel r_a).
+
+    Under a frequency-weighted hazard ``lambda_tau(a) = beta(tau) * w(a)``, the
+    denominator's integrand picks up ``w(a)`` and ``S(tau)^{w(a)}``; pass
+    ``anchor_log_w`` (shape (K,) = log w over the vocab) so the metric tracks
+    the same log-ratio the model actually trains on.
 
     Returns exactly two keys, per the Prompt B whitelist:
       state_dep/log_ratio_mean, state_dep/log_ratio_std.
@@ -57,6 +63,13 @@ def state_dependency_metrics(
     pred_idx = jnp.argmax(logits, axis=-1).astype(jnp.int32)
     a_pred = jnp.take(a_table, pred_idx, axis=0)
 
+    if anchor_log_w is not None:
+        log_w_per_site = jnp.take(
+            jnp.asarray(anchor_log_w, dtype=jnp.float32), pred_idx, axis=0
+        )
+    else:
+        log_w_per_site = jnp.float32(0.0)
+
     log_r = jump.logpdf(y, a_pred, t_img)
     log_p = mixture_logpdf(
         y=y,
@@ -66,6 +79,7 @@ def state_dependency_metrics(
         hazard=hazard,
         jump=jump,
         tau_grid_size=int(tau_grid_size),
+        log_w_anchor=log_w_per_site,
     )
     log_ratio = (log_r - log_p).astype(jnp.float32)
     log_ratio = jnp.clip(log_ratio, -float(log_ratio_clip), float(log_ratio_clip))

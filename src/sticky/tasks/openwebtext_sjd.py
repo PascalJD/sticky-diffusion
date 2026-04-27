@@ -35,6 +35,7 @@ class OpenWebTextSJDTask(Task):
     state_dep_log_ratio_clip: float = 10.0
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
+    anchor_log_w: Optional[Array] = None
     tokenizer_name: Optional[str] = None
     num_classes: int = -1
     drop_remainder: bool = True
@@ -130,6 +131,7 @@ class OpenWebTextSJDTask(Task):
             given_mask=None,
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
+            anchor_log_w=self.anchor_log_w,
         )
 
         metrics = dict(metrics)

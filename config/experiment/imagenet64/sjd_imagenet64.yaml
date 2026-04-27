@@ -6,6 +6,7 @@ defaults:
   - /runtime: default
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
   - /forward/jump: vp_matched
   - /sampler/cifar10@sampler: sjd_cifar10
   - /eval@_global_.eval: imagenet64

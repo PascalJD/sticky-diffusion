@@ -6,6 +6,7 @@ defaults:
   - /runtime: default
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
   - /forward/jump: vp_matched
   - /sampler/sudoku@sampler: sjd_sudoku
   - /eval@_global_.eval: sudoku_sjd

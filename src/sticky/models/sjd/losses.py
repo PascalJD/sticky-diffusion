@@ -30,6 +30,7 @@ def ce_allocation_loss(
     given_mask: Optional[Array] = None,
     time_sampling: str = "uniform",
     loss_weighting: str = "uniform",
+    anchor_log_w: Optional[Array] = None,
 ) -> Tuple[Array, Metrics]:
     if hazard is None:
         raise ValueError("ce_allocation_loss requires a hazard schedule.")
@@ -66,8 +67,17 @@ def ce_allocation_loss(
     # SJD-paired corruption: x_t ~ N(alpha(t) a, v_t(tau) I) with tau drawn
     # from the truncated lam(tau)*S(tau) density on (0, t); never_unstuck_mask
     # marks sites where the particle had not unstuck by t (x_t == x0_anchor).
+    if anchor_log_w is not None:
+        log_w_per_site = jnp.take(
+            jnp.asarray(anchor_log_w, dtype=jnp.float32),
+            jnp.asarray(x0_idx, dtype=jnp.int32),
+            axis=0,
+        )
+    else:
+        log_w_per_site = None
     x_t, never_unstuck_mask = sample_pair(
-        key_vp, x0_anchor, t_img, beta, hazard, jump
+        key_vp, x0_anchor, t_img, beta, hazard, jump,
+        log_w_per_site=log_w_per_site,
     )
 
     # never_unstuck_mask is the canonical commit mask: an independent
@@ -143,6 +153,7 @@ def ce_allocation_loss(
             jump=jump,
             hazard=hazard,
             log_ratio_clip=float(state_dep_log_ratio_clip),
+            anchor_log_w=anchor_log_w,
         )
         metrics["state_dep/log_ratio_mean"] = sd["state_dep/log_ratio_mean"]
         metrics["state_dep/log_ratio_std"] = sd["state_dep/log_ratio_std"]

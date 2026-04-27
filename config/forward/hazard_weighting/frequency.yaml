@@ -1,0 +1,10 @@
+# Frequency-weighted hazard: lambda_t(a) = beta(t) * w(a) where
+# w(a) = -log p_0(a) (precomputed). Override `log_w_path` per dataset.
+enabled: true
+# .npz with key `log_w` (shape (vocab_size,)) — see tools/compute_anchor_frequencies.py.
+log_w_path: data/anchors/openwebtext_log_w.npz
+# These four mirror the precompute-script flags so the runtime config records
+# what weights were used; they are not consumed if log_w_path is provided.
+smoothing_alpha: 1.0
+normalize_mean: true
+clip: [0.1, 10.0]

@@ -72,11 +72,16 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
 
 
 def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
+    from sticky.models.sjd.freq_weighting import load_anchor_log_w
+
     beta = hydra.utils.instantiate(cfg.forward.beta)
     hazard_cfg = cfg.forward.get("hazard", None)
     hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
     jump_cfg = cfg.forward.get("jump", None)
     jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
+    hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
+    vocab_size = int(cfg.dataset.get("vocab_size"))
+    anchor_log_w = load_anchor_log_w(hazard_weighting_cfg, vocab_size=vocab_size)
     return {
         "beta": beta,
         "hazard": hazard,
@@ -91,6 +96,7 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         ),
         "time_sampling": str(cfg.training.get("time_sampling", "uniform")),
         "loss_weighting": str(cfg.training.get("loss_weighting", "uniform")),
+        "anchor_log_w": anchor_log_w,
     }
 
 

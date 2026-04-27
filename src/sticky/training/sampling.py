@@ -156,6 +156,7 @@ def build_sampling_fns(
             beta = hydra.utils.instantiate(cfg.forward.beta)
         hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
         jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
+        anchor_log_w = getattr(task, "anchor_log_w", None)
 
         sampler_cfg = _sjd_sampler_cfg_from_dict(
             _base_sampler_spec_from_cfg(cfg.sampler, sample_timesteps=sample_timesteps)
@@ -163,7 +164,10 @@ def build_sampling_fns(
 
         def _sample_images_sjd(params, rng, batch_size: int):
             a_table = model.apply({"params": params}, method=model.anchor_table)
-            anchors = AnchorTable(table_float=a_table)
+            if anchor_log_w is not None:
+                anchors = AnchorTable(table_float=a_table, log_w=anchor_log_w)
+            else:
+                anchors = AnchorTable(table_float=a_table)
             return sjd_sampling.simple_generate(
                 rng=rng,
                 params=params,
@@ -280,6 +284,7 @@ def build_multi_fid_sampling_fns(
         beta = hydra.utils.instantiate(cfg.forward.beta)
     hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
     jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
+    anchor_log_w = getattr(task, "anchor_log_w", None)
 
     # Base sampler spec from the experiment config.
     base_spec: dict = _base_sampler_spec_from_cfg(
@@ -309,7 +314,10 @@ def build_multi_fid_sampling_fns(
         def _make_sample_fn(sc):
             def _sample(params, rng):
                 a_table = model.apply({"params": params}, method=model.anchor_table)
-                anchors = AnchorTable(table_float=a_table)
+                if anchor_log_w is not None:
+                    anchors = AnchorTable(table_float=a_table, log_w=anchor_log_w)
+                else:
+                    anchors = AnchorTable(table_float=a_table)
                 return sjd_sampling.simple_generate(
                     rng=rng,
                     params=params,
