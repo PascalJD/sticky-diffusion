@@ -49,7 +49,33 @@ def make_wrapped_eval_step(
     return jax.jit(lambda p, b, r: eval_step_fn(p, r, b, axis_name=None))
 
 
-def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rate: float):
+def _microbatch_slice(
+    batch: Dict[str, Array],
+    *,
+    idx: Array,
+    microbatch_size: int,
+) -> Dict[str, Array]:
+    out: Dict[str, Array] = {}
+    offset = idx * int(microbatch_size)
+    for key, value in batch.items():
+        starts = (offset,) + (0,) * (value.ndim - 1)
+        sizes = (int(microbatch_size),) + tuple(value.shape[1:])
+        out[key] = jax.lax.dynamic_slice(value, starts, sizes)
+    return out
+
+
+def make_train_step_fn(
+    *,
+    task,
+    model,
+    tx: optax.GradientTransformation,
+    ema_rate: float,
+    num_microbatches: int = 1,
+):
+    num_microbatches = int(num_microbatches)
+    if num_microbatches <= 0:
+        raise ValueError(f"num_microbatches must be positive, got {num_microbatches}.")
+
     def loss_and_metrics(params, rng, batch, train: bool):
         return task.loss_fn(
             rng=rng,
@@ -63,9 +89,49 @@ def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rat
         rng, step_rng = jax.random.split(state.rng)
         if axis_name is not None:
             step_rng = jax.random.fold_in(step_rng, jax.lax.axis_index(axis_name))
-        (loss, metrics), grads = jax.value_and_grad(loss_and_metrics, has_aux=True)(
-            state.params, step_rng, batch, True
-        )
+
+        grad_fn = jax.value_and_grad(loss_and_metrics, has_aux=True)
+        if num_microbatches <= 1:
+            (loss, metrics), grads = grad_fn(state.params, step_rng, batch, True)
+            microbatch_size = int(next(iter(batch.values())).shape[0])
+        else:
+            batch_size = int(next(iter(batch.values())).shape[0])
+            if batch_size % num_microbatches != 0:
+                raise ValueError(
+                    "Batch size must be divisible by training.num_microbatches, got "
+                    f"batch_size={batch_size} num_microbatches={num_microbatches}."
+                )
+            microbatch_size = batch_size // num_microbatches
+
+            def compute_microbatch(microbatch_idx):
+                mb = _microbatch_slice(
+                    batch,
+                    idx=microbatch_idx,
+                    microbatch_size=microbatch_size,
+                )
+                mb_rng = jax.random.fold_in(step_rng, microbatch_idx)
+                return grad_fn(state.params, mb_rng, mb, True)
+
+            (loss, metrics), grads = compute_microbatch(jnp.asarray(0, dtype=jnp.int32))
+
+            def accumulate_microbatch(microbatch_idx, carry):
+                grad_accum, loss_accum, metrics_accum = carry
+                (mb_loss, mb_metrics), mb_grads = compute_microbatch(microbatch_idx)
+                grad_accum = jax.tree.map(jnp.add, grad_accum, mb_grads)
+                loss_accum = loss_accum + mb_loss
+                metrics_accum = jax.tree.map(jnp.add, metrics_accum, mb_metrics)
+                return grad_accum, loss_accum, metrics_accum
+
+            grads, loss, metrics = jax.lax.fori_loop(
+                1,
+                num_microbatches,
+                accumulate_microbatch,
+                (grads, loss, metrics),
+            )
+            inv_microbatches = 1.0 / float(num_microbatches)
+            grads = jax.tree.map(lambda x: x * inv_microbatches, grads)
+            loss = loss * inv_microbatches
+            metrics = jax.tree.map(lambda x: x * inv_microbatches, metrics)
 
         if axis_name is not None:
             grads = jax.lax.pmean(grads, axis_name=axis_name)
@@ -95,6 +161,14 @@ def make_train_step_fn(*, task, model, tx: optax.GradientTransformation, ema_rat
         )
         metrics = dict(metrics)
         metrics["train/loss"] = loss
+        metrics["train/num_microbatches"] = jnp.asarray(
+            num_microbatches,
+            dtype=jnp.float32,
+        )
+        metrics["train/microbatch_size"] = jnp.asarray(
+            microbatch_size,
+            dtype=jnp.float32,
+        )
         return new_state, metrics
 
     return train_step_fn
