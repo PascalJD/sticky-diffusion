@@ -1,0 +1,34 @@
+# Slack-aware Sudoku SJD sampler defaults.
+# Identical to sjd_sudoku.yaml plus slack-axis-specific knobs.
+T: ${oc.select:forward.beta.T, 1.0}
+n_steps: 50
+sampling_grid: uniform
+
+alloc_mode: argmax
+score_from_classifier: true
+score_scale: 1.0
+logit_temperature: 1.0
+categorical_sampling_policy: exact
+
+hazard_mode: plugin
+log_ratio_clip: 10.0
+
+init_std: 1.0
+eps_denom: 1e-12
+rng_fold: 4
+
+force_classify_at_end: true
+refresh_logits_after_em_step: false
+
+metrics_count_nfe: true
+
+# --- Slack-axis specific knobs (Phase 4) ----------------------------------
+# slack_init_std: VP terminal scale used to initialize y_slacks at t=T.
+#   Defaults to init_std when null, which mirrors the cell-axis terminal.
+# project_after_step: the A2 cheap projection. After the Euler step + cell
+#   commits at each step, overwrite slacks with compute_slack_from_cells of
+#   the post-commit soft cell state. Set to false to ablate the projection
+#   and let slacks evolve under VP only.
+slack:
+  init_std: null
+  project_after_step: true

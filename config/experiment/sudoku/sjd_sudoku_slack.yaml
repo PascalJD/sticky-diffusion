@@ -1,10 +1,7 @@
 # Slack-augmented board-level SJD Sudoku experiment.
-# Differs from sjd_sudoku.yaml only in the model entry, anchor family
-# (simplex_vertex), backbone sequence length (108), and enable_joint_input.
-# We keep the existing sjd_sudoku sampler defaults so config interpolation
-# resolves, but override training.eval_every_steps to a large value: the
-# Phase 4 sampler is not implemented yet and will raise NotImplementedError
-# if invoked. Use a small max_steps override to verify correctness.
+# Differs from sjd_sudoku.yaml in the model entry, anchor family
+# (simplex_vertex), backbone sequence length (108), enable_joint_input,
+# and the sampler entry (sjd_sudoku_slack with the slack-aware sampler).
 defaults:
   - /dataset: sudoku_shah_board
   - /model/sjd@model: sjd_sudoku_inpaint_slack
@@ -13,7 +10,8 @@ defaults:
   - /forward/beta: vp_linear
   - /forward/hazard: poly_alpha
   - /forward/jump: vp_matched
-  - /sampler/sudoku@sampler: sjd_sudoku
+  - /sampler/sudoku@sampler: sjd_sudoku_slack
+  - /eval@_global_.eval: sudoku_sjd
   - /training: sudoku_sjd
   - _self_
 
@@ -28,7 +26,33 @@ forward:
   jump:
     eta: 0.97
 
-# Disable mid-training eval (no slack-aware sampler in Phase 3).
 training:
-  eval_every_steps: 100000
-  checkpoint_every_steps: 100000
+  eval_every_steps: 5000
+  checkpoint_every_steps: 5000
+
+# The slack-aware sampler implements the policy-mode runs (see
+# `conditional_generate_with_slack` in `models/sjd/board_sampling.py`).
+# The sampler-mode run (`predictor_only`, which routes through
+# `models/sjd/sampling.conditional_generate_board`) is not yet slack-aware,
+# so we drop it from the eval mix and pick a policy entry as the primary.
+eval:
+  sudoku_primary_sampler_label: predictor_only
+  sudoku_eval_sjd_runs:
+    linear_survival:
+      kind: policy
+      policy: linear_survival
+      n_steps: 50
+      sampling_grid: uniform
+      eta: 1.00
+    plugin_hazard_eta_0p97:
+      kind: policy
+      policy: plugin_hazard
+      n_steps: 50
+      sampling_grid: uniform
+      eta: 0.97
+    predictor_only:
+      kind: policy
+      policy: plugin_hazard
+      n_steps: 50
+      sampling_grid: uniform
+      eta: 0.97

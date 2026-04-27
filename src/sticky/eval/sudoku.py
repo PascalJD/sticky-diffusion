@@ -779,11 +779,13 @@ def build_sudoku_eval_logger(
         ("mdlm", "mdlm_sudoku"),
         ("mdm", "mdm_sudoku_inpaint"),
         ("sjd", "sjd_sudoku_inpaint"),
+        ("sjd", "sjd_sudoku_inpaint_slack"),
     }:
         raise ValueError(
             "Sudoku evaluator only supports board-level Sudoku inpaint tasks: "
             "('mdlm', 'mdlm_sudoku'), ('mdm', 'mdm_sudoku_inpaint'), "
-            "or ('sjd', 'sjd_sudoku_inpaint')."
+            "('sjd', 'sjd_sudoku_inpaint'), "
+            "or ('sjd', 'sjd_sudoku_inpaint_slack')."
         )
 
     prefix = str(eval_cfg.get("prefix", "eval"))
@@ -896,7 +898,57 @@ def build_sudoku_eval_logger(
 
             return _sample_conditional
 
+        # Detect whether the trained model is the slack-augmented variant.
+        # We check the model's enable_joint_input flag; when true, dispatch
+        # policy-mode runs to the slack-aware predictor sampler that also
+        # diffuses 27 unanchored constraint-slack sites alongside the cells.
+        _slack_model = bool(getattr(model, "enable_joint_input", False))
+        _slack_sampler_cfg = cfg.sampler.get("slack", None) if _slack_model else None
+        _slack_init_std = (
+            None
+            if _slack_sampler_cfg is None
+            else (
+                None
+                if _slack_sampler_cfg.get("init_std", None) in (None, "null")
+                else float(_slack_sampler_cfg.get("init_std"))
+            )
+        )
+        _slack_project_after_step = (
+            True if _slack_sampler_cfg is None
+            else bool(_slack_sampler_cfg.get("project_after_step", True))
+        )
+
         def _build_sjd_policy_eval_fn(policy_spec: dict[str, Any]):
+            if _slack_model:
+                @jax.jit
+                def _sample_conditional(params, rng, known_tokens, known_mask):
+                    a_table = model.apply({"params": params}, method=model.anchor_table)
+                    anchors = AnchorTable(table_float=a_table)
+                    return sjd_board_sampling.conditional_generate_with_slack(
+                        rng,
+                        params=params,
+                        model=model,
+                        anchors=anchors,
+                        beta=task.beta,
+                        hazard=task.hazard,
+                        jump=task.jump,
+                        known_tokens=known_tokens,
+                        known_token_mask=known_mask,
+                        n_steps=int(policy_spec["n_steps"]),
+                        policy=str(policy_spec["policy"]),
+                        sampling_grid=str(policy_spec["sampling_grid"]),
+                        logit_temperature=float(policy_spec["logit_temperature"]),
+                        log_ratio_clip=float(policy_spec["log_ratio_clip"]),
+                        init_std=float(policy_spec["init_std"]),
+                        slack_init_std=_slack_init_std,
+                        project_slacks_after_step=_slack_project_after_step,
+                        stochastic_k=bool(policy_spec.get("stochastic_k", False)),
+                        eta=float(policy_spec["eta"]),
+                        return_diagnostics=True,
+                    )
+
+                return _sample_conditional
+
             @jax.jit
             def _sample_conditional(params, rng, known_tokens, known_mask):
                 a_table = model.apply({"params": params}, method=model.anchor_table)

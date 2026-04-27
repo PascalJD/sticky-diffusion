@@ -33,7 +33,16 @@ def test_sjd_sudoku_slack_experiment_composes():
     assert cfg.experiment.model.anchor.learnable is False
     assert cfg.experiment.model.anchor.transform.equalize_row_norms is False
     assert cfg.experiment.training.name == "sudoku_sjd"
-    assert cfg.experiment.training.eval_every_steps == 100000
+    # Phase 4: eval is re-enabled; the slack-aware sampler runs end-to-end.
+    assert cfg.experiment.training.eval_every_steps == 5000
+    assert cfg.experiment.training.checkpoint_every_steps == 5000
+    # Slack-axis sampler knobs are now plumbed through.
+    assert cfg.experiment.sampler.slack.project_after_step is True
+    # The eval mix is policy-only (no slack-aware predictor_only sampler yet).
+    assert "predictor_only" in cfg.experiment.eval.sudoku_eval_sjd_runs
+    assert (
+        cfg.experiment.eval.sudoku_eval_sjd_runs.predictor_only.kind == "policy"
+    )
 
 
 def test_slack_task_and_model_build_from_composed_config():
