@@ -83,7 +83,7 @@ def test_loss_passes_slack_through_to_loss(monkeypatch):
         captured.update(kwargs)
         return (
             jnp.asarray(0.5, dtype=jnp.float32),
-            {"loss/slack_l2_to_ones": jnp.asarray(0.0, dtype=jnp.float32)},
+            {"loss/slack_residual_l2": jnp.asarray(0.0, dtype=jnp.float32)},
         )
 
     monkeypatch.setattr(task_mod, "ce_allocation_loss_with_slack", _fake_loss_with_slack)
@@ -157,7 +157,7 @@ def test_loss_fn_traces_under_jit(monkeypatch):
         del kwargs
         return (
             jnp.asarray(0.0, dtype=jnp.float32),
-            {"loss/slack_l2_to_ones": jnp.asarray(0.0, dtype=jnp.float32)},
+            {"loss/slack_residual_l2": jnp.asarray(0.0, dtype=jnp.float32)},
         )
 
     monkeypatch.setattr(task_mod, "ce_allocation_loss_with_slack", _fake_loss_with_slack)

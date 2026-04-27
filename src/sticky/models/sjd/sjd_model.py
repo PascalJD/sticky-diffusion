@@ -15,6 +15,15 @@ class SJD(nn.Module):
     anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
     enable_joint_input: bool = False
+    # When True, project the cell-only input through an explicit Dense
+    # (feature_dim) before handing it to the classifier. This makes the
+    # cell-only path go through the same number of input projections as the
+    # joint (slack-augmented) path, which routes cell features through
+    # SudokuJointInputProj.cell_proj. Use this flag in baseline configs that
+    # are compared against the slack-augmented model so the architectures
+    # are apples-to-apples; defaults to False to preserve existing
+    # checkpoints and the current behavior of cell-only tasks.
+    cell_only_input_proj: bool = False
 
     feature_dim: int = 128
     num_heads: int = 12
@@ -93,6 +102,10 @@ class SJD(nn.Module):
             self.joint_input_proj = SudokuJointInputProj(
                 feature_dim=self.feature_dim
             )
+        if self.cell_only_input_proj:
+            self.cell_only_input_dense = nn.Dense(
+                int(self.feature_dim), name="cell_only_input_proj"
+            )
 
     def embed(self, token_ids: Array) -> Array:
         return self.anchors(token_ids)
@@ -113,7 +126,10 @@ class SJD(nn.Module):
         if anchor_token_ids is not None:
             _ = self.embed(anchor_token_ids)
         if slack_y_t is None:
-            return self.classifier(y_t, t=t, cond=cond, train=train)
+            cell_input = y_t
+            if self.cell_only_input_proj:
+                cell_input = self.cell_only_input_dense(cell_input)
+            return self.classifier(cell_input, t=t, cond=cond, train=train)
         if not self.enable_joint_input:
             raise ValueError(
                 "slack_y_t was provided but enable_joint_input=False on SJD."

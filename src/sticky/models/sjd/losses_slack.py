@@ -160,8 +160,21 @@ def ce_allocation_loss_with_slack(
         metrics["state_dep/log_ratio_mean"] = nan
         metrics["state_dep/log_ratio_std"] = nan
 
-    metrics["loss/slack_l2_to_ones"] = jnp.mean(
-        jnp.linalg.norm(slack_x_t - jnp.ones_like(slack_x_t), axis=-1)
-    )
+    # Per-coordinate residual against the VP-marginal mean alpha(t) * slack_x0.
+    # We report the per-coordinate root-mean-square — an unbiased estimator
+    # of sqrt(E[r^2]) = sigma(t) for a Gaussian residual, regardless of t.
+    # This replaces the earlier `slack_l2_to_ones` metric, which was
+    # uninformative (it collapsed toward alpha(t) * sqrt(d) at large t purely
+    # because the VP mean shrinks toward 0, even though nothing was wrong).
+    alpha_t_slack, sigma_t_slack = alpha_sigma(beta, t_img)
+    alpha_t_b = alpha_t_slack[:, None, None]
+    slack_residual = slack_x_t - alpha_t_b * slack_x0
+    # Per-batch-element RMS over (group, dim) ≈ sigma(t_b) for a VP residual,
+    # then average over the batch ≈ E_t[sigma(t)] = `loss/slack_sigma_t_mean`.
+    # Scalar-RMS-across-the-whole-batch would converge to sqrt(E[sigma^2(t)])
+    # (by Jensen), which is uniformly higher and harder to interpret.
+    per_b_mse = jnp.mean(jnp.square(slack_residual), axis=(1, 2))  # (B,)
+    metrics["loss/slack_residual_l2"] = jnp.mean(jnp.sqrt(per_b_mse))
+    metrics["loss/slack_sigma_t_mean"] = jnp.mean(sigma_t_slack)
 
     return loss, metrics

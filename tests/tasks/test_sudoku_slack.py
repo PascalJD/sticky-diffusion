@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from sticky.data.sudoku import compute_slack_vectors
-from sticky.data.sudoku.slack import GROUPS
+from sticky.data.sudoku.slack import GROUPS, compute_slack_from_cells
 
 
 def _valid_solution() -> np.ndarray:
@@ -53,6 +54,45 @@ def test_compute_slack_vectors_batch_independence():
 def test_compute_slack_vectors_rejects_wrong_shape():
     with pytest.raises(ValueError, match=r"\(B, 81\)"):
         compute_slack_vectors(np.zeros((3, 80), dtype=np.int32))
+
+
+def test_compute_slack_from_cells_simplex_vertices_returns_ones():
+    """Cells set to one-hot of a valid Sudoku solution must project back to
+    the all-ones slack tensor (each group has exactly one of each digit)."""
+    solution = _valid_solution()  # (1, 81)
+    digits = solution[0] - 1  # (81,) in 0..8
+    one_hot = np.eye(9, dtype=np.float32)[digits]  # (81, 9)
+    cell_state = one_hot[None, :, :]  # (1, 81, 9)
+    slack = compute_slack_from_cells(cell_state)
+    assert slack.shape == (1, 27, 9)
+    np.testing.assert_array_equal(
+        np.asarray(slack), np.ones((1, 27, 9), dtype=np.float32)
+    )
+
+
+def test_compute_slack_from_cells_works_on_jax_arrays():
+    solution = _valid_solution()
+    digits = solution[0] - 1
+    one_hot = np.eye(9, dtype=np.float32)[digits]
+    cell_state = jnp.asarray(one_hot[None, :, :])
+    slack = compute_slack_from_cells(cell_state)
+    np.testing.assert_array_equal(
+        np.asarray(slack), np.ones((1, 27, 9), dtype=np.float32)
+    )
+
+
+def test_compute_slack_from_cells_is_linear_in_cell_state():
+    """sum over a group is linear: T(2x) = 2 T(x)."""
+    rng = np.random.default_rng(0)
+    cell_state = rng.standard_normal((3, 81, 9)).astype(np.float32)
+    s_x = compute_slack_from_cells(cell_state)
+    s_2x = compute_slack_from_cells(2.0 * cell_state)
+    np.testing.assert_allclose(np.asarray(s_2x), 2.0 * np.asarray(s_x), rtol=1e-5)
+
+
+def test_compute_slack_from_cells_rejects_wrong_shape():
+    with pytest.raises(ValueError, match=r"\(B, 81, 9\)"):
+        compute_slack_from_cells(np.zeros((1, 81, 8), dtype=np.float32))
 
 
 def test_iterator_emits_slack_x0(monkeypatch):

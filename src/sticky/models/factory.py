@@ -381,6 +381,7 @@ def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
         ),
         learnable_anchors=anchor_learnable_from_mapping(cfg.model, default=True),
         enable_joint_input=bool(cfg.model.get("enable_joint_input", False)),
+        cell_only_input_proj=bool(cfg.model.get("cell_only_input_proj", False)),
         feature_dim=int(cfg.model.feature_dim),
         n_layers=int(cfg.model.n_layers),
         n_dit_layers=int(cfg.model.n_dit_layers),

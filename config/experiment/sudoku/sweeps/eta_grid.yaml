@@ -1,0 +1,30 @@
+# Recommended eta-sweep grid for the Sudoku slack-augmented vs cell-only
+# comparison. The default in `sjd_sudoku.yaml` and `sjd_sudoku_slack.yaml`
+# is forward.jump.eta=0.97; the variance deficit (1 - eta^2) ~= 0.06 there is
+# small enough that the spatial factor r_a / p^ac is nearly the identity at
+# every t, so we can't tell from a single point whether the eta < 1 mechanism
+# is providing useful signal. This sweep pins down that question.
+#
+# Run as:
+#   PYTHONPATH=src python -m sticky.cli.train \
+#     experiment=sudoku/sjd_sudoku --multirun \
+#     forward.jump.eta=0.5,0.7,0.85,0.97,1.0
+#   PYTHONPATH=src python -m sticky.cli.train \
+#     experiment=sudoku/sjd_sudoku_slack --multirun \
+#     forward.jump.eta=0.5,0.7,0.85,0.97,1.0
+#
+# Note (Part A4): for an apples-to-apples baseline-vs-slack comparison, also
+# set `model.cell_only_input_proj=true` on the cell-only experiment so its
+# input pipeline matches the slack-augmented joint path's cell_proj Dense.
+#
+# This file is documentation; it is NOT a loadable Hydra group. To consume
+# the sweep declaratively from a Hydra sweeper, override
+# `hydra.sweeper.params.forward.jump.eta` with the etas listed below.
+
+eta_values: [0.5, 0.7, 0.85, 0.97, 1.0]
+notes:
+  - "eta=1.0 disables the spatial factor (r_a / p^ac collapses to identity)."
+  - "eta=0.97 is the current default; small variance deficit."
+  - "eta in {0.5, 0.7, 0.85} probes increasingly state-dependent kernels."
+  - "Pair each eta with `model.cell_only_input_proj=true` on the cell-only"
+  - "  experiment to keep the input projection chain symmetric."

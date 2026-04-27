@@ -4,7 +4,7 @@ Composes the experiment config, builds the task and model, and runs a
 single training step on a synthetic Sudoku batch. Verifies that:
   * cell_x_t.shape == (B, 81, 9) and slack_x_t.shape == (B, 27, 9)
   * The classifier produces (B, 108, 9) logits
-  * loss/slack_l2_to_ones is small at small t
+  * loss/slack_residual_l2 ≈ sigma(t) (the per-coordinate VP residual)
   * state_dep/log_ratio_* is finite
   * Gradients flow through the joint-input projection params
 
@@ -147,7 +147,8 @@ def test_one_step_metrics_have_expected_keys_and_shapes():
         "loss/acc_top1",
         "loss/frac_active",
         "loss/frac_never_unstuck",
-        "loss/slack_l2_to_ones",
+        "loss/slack_residual_l2",
+        "loss/slack_sigma_t_mean",
         "t/mean",
         "t/std",
         "state_dep/log_ratio_mean",

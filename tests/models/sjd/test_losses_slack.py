@@ -72,7 +72,8 @@ def test_loss_returns_finite_metrics_with_full_diagnostics():
         "loss/acc_top1",
         "loss/frac_active",
         "loss/frac_never_unstuck",
-        "loss/slack_l2_to_ones",
+        "loss/slack_residual_l2",
+        "loss/slack_sigma_t_mean",
         "t/mean",
         "t/std",
         "state_dep/log_ratio_mean",
@@ -103,16 +104,13 @@ def test_loss_value_matches_uniform_baseline_for_zero_logits():
     )
 
 
-def test_slack_l2_to_ones_grows_with_t():
-    """At very small t, slack_x_t ~ slack_x0 = ones, so L2-to-ones is small.
-    Compare two batches: one with t small, one with t large.
-
-    We achieve this by running with kappa large vs small to force different
-    t-distributions? Actually `t_img` here is U(0, T), so we can't directly
-    select t. Instead, take a deterministic check via a fresh helper-style
-    smoke test: assert the metric is non-negative and finite (it always is).
-    """
-    inputs = _make_inputs(B=32)
+def test_slack_residual_l2_metric_matches_sigma_t():
+    """The residual = slack_x_t - alpha(t) * slack_x0 has per-coordinate std
+    sigma(t). Per-row L2 / sqrt(d) is therefore an unbiased estimate of
+    sigma(t), and averaging over a large enough batch + over the U(0, T)
+    time distribution should converge to E[sigma(t)] which the loss reports
+    as `loss/slack_sigma_t_mean`."""
+    inputs = _make_inputs(B=2048)
     captured: dict = {}
     _, metrics = ce_allocation_loss_with_slack(
         key=jax.random.PRNGKey(0),
@@ -120,8 +118,41 @@ def test_slack_l2_to_ones_grows_with_t():
         apply_fn=_make_apply_fn(captured),
         **inputs,
     )
-    assert float(metrics["loss/slack_l2_to_ones"]) >= 0.0
-    assert np.isfinite(float(metrics["loss/slack_l2_to_ones"]))
+    measured = float(metrics["loss/slack_residual_l2"])
+    expected = float(metrics["loss/slack_sigma_t_mean"])
+    assert measured >= 0.0
+    np.testing.assert_allclose(measured, expected, atol=0.02)
+
+
+def test_slack_residual_l2_matches_known_sigma_at_fixed_time(monkeypatch):
+    """Force t = 0.5 deterministically and check the per-coordinate residual
+    std equals sigma(0.5) within Monte Carlo noise."""
+    from sticky.models.sjd import losses_slack as ls
+    from sticky.models.sjd.sdes import alpha_sigma
+
+    inputs = _make_inputs(B=4096)
+    fixed_t = jnp.full((4096,), 0.5, dtype=jnp.float32)
+
+    real_uniform = jax.random.uniform
+
+    def patched_uniform(key, shape, *, minval=0.0, maxval=1.0, dtype=jnp.float32):
+        if shape == (4096,) and float(maxval) == 1.0 and float(minval) == 0.0:
+            return fixed_t
+        return real_uniform(key, shape, minval=minval, maxval=maxval, dtype=dtype)
+
+    monkeypatch.setattr(jax.random, "uniform", patched_uniform)
+
+    captured: dict = {}
+    _, metrics = ls.ce_allocation_loss_with_slack(
+        key=jax.random.PRNGKey(0),
+        params={},
+        apply_fn=_make_apply_fn(captured),
+        **inputs,
+    )
+    _, sigma_at_t = alpha_sigma(inputs["beta"], jnp.asarray([0.5], dtype=jnp.float32))
+    expected_sigma = float(sigma_at_t[0])
+    measured = float(metrics["loss/slack_residual_l2"])
+    np.testing.assert_allclose(measured, expected_sigma, atol=0.02)
 
 
 def test_given_mask_excludes_clue_sites_from_loss():
