@@ -150,6 +150,15 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     )
 
 
+def _build_sjd_sudoku_inpaint_slack_task(cfg: DictConfig):
+    from sticky.tasks.sudoku_inpaint_sjd_slack import SudokuInpaintSJDSlackTask
+
+    return SudokuInpaintSJDSlackTask(
+        **_sudoku_board_dataset_kwargs(cfg),
+        **_sjd_schedule_kwargs(cfg),
+    )
+
+
 def _build_openwebtext_sjd_task(cfg: DictConfig):
     from sticky.tasks.openwebtext_sjd import OpenWebTextSJDTask
 
@@ -192,6 +201,7 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "sjd_cifar10": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_cifar10"),
     "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),
     "sjd_sudoku_inpaint": _build_sjd_sudoku_inpaint_task,
+    "sjd_sudoku_inpaint_slack": _build_sjd_sudoku_inpaint_slack_task,
     "openwebtext_sjd": _build_openwebtext_sjd_task,
 }
 

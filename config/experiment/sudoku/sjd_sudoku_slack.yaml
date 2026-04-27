@@ -1,0 +1,34 @@
+# Slack-augmented board-level SJD Sudoku experiment.
+# Differs from sjd_sudoku.yaml only in the model entry, anchor family
+# (simplex_vertex), backbone sequence length (108), and enable_joint_input.
+# We keep the existing sjd_sudoku sampler defaults so config interpolation
+# resolves, but override training.eval_every_steps to a large value: the
+# Phase 4 sampler is not implemented yet and will raise NotImplementedError
+# if invoked. Use a small max_steps override to verify correctness.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint_slack
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/jump: vp_matched
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint_slack
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97
+
+# Disable mid-training eval (no slack-aware sampler in Phase 3).
+training:
+  eval_every_steps: 100000
+  checkpoint_every_steps: 100000

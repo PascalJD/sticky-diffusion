@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+# TODO (Phase 4 — slack-aware sampler): the slack-augmented Sudoku SJD task
+# (SudokuInpaintSJDSlackTask, model.enable_joint_input=True) is NOT yet
+# supported by this sampler. To add it:
+#   * Initialize slack at t=T from the VP terminal N(0, init_std), not (1,...,1).
+#   * Diffuse the 27 slack sites under the classifier-induced score alongside
+#     cells, but NEVER sample sticky jumps for slack sites (their per-anchor
+#     rate is undefined; treat them as pure-SDE always).
+#   * Read out the predicted Sudoku from the cell sites (positions 0..80) only.
+# See docs/plans/task-augment-the-agile-popcorn.md for the full design.
+# Until this is done, training proceeds with eval disabled in the new
+# experiment config; calling reverse_sample / conditional_generate with a
+# slack-aware model will silently feed missing slack input and crash.
+
 from dataclasses import replace
 from typing import Any
 

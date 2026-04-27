@@ -167,13 +167,25 @@ def init_state(cfg: DictConfig, model, rng: PRNGKey):
         )
         dummy_t = jnp.zeros((batch_size,), dtype=jnp.float32)
         dummy_ids = jnp.zeros(tuple(dummy_z.shape[:-1]), dtype=jnp.int32)
-        variables = model.init(
-            {"params": rng_params},
-            dummy_z,
-            dummy_t,
-            anchor_token_ids=dummy_ids,
-            train=False,
-        )
+        if bool(getattr(model, "enable_joint_input", False)):
+            # Sudoku slack-augmented SJD: init the joint-input projection too.
+            dummy_slack = jnp.zeros((batch_size, 27, anchor_dim), dtype=jnp.float32)
+            variables = model.init(
+                {"params": rng_params},
+                dummy_z,
+                dummy_t,
+                anchor_token_ids=dummy_ids,
+                slack_y_t=dummy_slack,
+                train=False,
+            )
+        else:
+            variables = model.init(
+                {"params": rng_params},
+                dummy_z,
+                dummy_t,
+                anchor_token_ids=dummy_ids,
+                train=False,
+            )
 
     else:
         raise ValueError(f"Unknown model.name={name!r} for init")

@@ -1,0 +1,30 @@
+defaults:
+  - /model/backbone@_here_: gpt2_like_sudoku_inpaint_slack_6m
+  - /model/anchor@anchor: simplex_vertex
+  - _self_
+
+# Slack-augmented board-level SJD model. Cells use 9-dim simplex-vertex
+# anchors; 27 constraint-slack sites (rows/cols/boxes) live in X_A and never
+# stick. The joint length-108 sequence is consumed by the GPT2-like backbone.
+name: sjd
+
+num_heads: 12
+use_attn_dropout: true
+mlp_type: gelu
+depth_scaled_init: false
+cond_type: adaln
+time_features: t
+model_sharding: false
+
+# Activate the SudokuJointInputProj submodule on SJD.
+enable_joint_input: true
+
+anchor:
+  family: simplex_vertex
+  dim: 9
+  learnable: false
+  transform:
+    scale: 1.0
+    whiten: false
+    center_columns: false
+    equalize_row_norms: false

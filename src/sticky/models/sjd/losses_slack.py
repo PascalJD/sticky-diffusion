@@ -41,6 +41,7 @@ def ce_allocation_loss_with_slack(
     given_mask: Optional[Array] = None,
     time_sampling: str = "uniform",
     loss_weighting: str = "uniform",
+    anchor_log_w: Optional[Array] = None,
 ) -> Tuple[Array, Metrics]:
     if hazard is None:
         raise ValueError("ce_allocation_loss_with_slack requires a hazard schedule.")
@@ -85,8 +86,17 @@ def ce_allocation_loss_with_slack(
     else:
         t_img = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=float(T))
 
+    if anchor_log_w is not None:
+        log_w_per_site = jnp.take(
+            jnp.asarray(anchor_log_w, dtype=jnp.float32),
+            jnp.asarray(x0_idx, dtype=jnp.int32),
+            axis=0,
+        )
+    else:
+        log_w_per_site = None
     cell_x_t, never_unstuck_mask = sample_pair(
-        key_vp_cell, x0_anchor, t_img, beta, hazard, jump
+        key_vp_cell, x0_anchor, t_img, beta, hazard, jump,
+        log_w_per_site=log_w_per_site,
     )
     slack_x_t = sample_slack_pair(key_vp_slack, slack_x0, t_img, beta)
 
