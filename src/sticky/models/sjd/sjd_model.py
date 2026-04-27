@@ -6,6 +6,7 @@ import jax.numpy as jnp
 
 from .anchors import AnchorTableConfig, TokenAnchors
 from .classifier import ContinuousClassifier
+from .joint_input import SudokuJointInputProj
 
 Array = jnp.ndarray
 
@@ -13,6 +14,7 @@ Array = jnp.ndarray
 class SJD(nn.Module):
     anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
+    enable_joint_input: bool = False
 
     feature_dim: int = 128
     num_heads: int = 12
@@ -87,6 +89,10 @@ class SJD(nn.Module):
             adm_use_conv_skip=self.adm_use_conv_skip,
             adm_use_new_attention_order=self.adm_use_new_attention_order,
         )
+        if self.enable_joint_input:
+            self.joint_input_proj = SudokuJointInputProj(
+                feature_dim=self.feature_dim
+            )
 
     def embed(self, token_ids: Array) -> Array:
         return self.anchors(token_ids)
@@ -101,8 +107,16 @@ class SJD(nn.Module):
         *,
         cond=None,
         anchor_token_ids: Array | None = None,
+        slack_y_t: Array | None = None,
         train: bool = False,
     ):
         if anchor_token_ids is not None:
             _ = self.embed(anchor_token_ids)
-        return self.classifier(y_t, t=t, cond=cond, train=train)
+        if slack_y_t is None:
+            return self.classifier(y_t, t=t, cond=cond, train=train)
+        if not self.enable_joint_input:
+            raise ValueError(
+                "slack_y_t was provided but enable_joint_input=False on SJD."
+            )
+        z = self.joint_input_proj(y_t, slack_y_t)
+        return self.classifier(z, t=t, cond=cond, train=train)
