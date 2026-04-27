@@ -11,6 +11,7 @@ from .boards import (
     string_to_board,
 )
 from .download import ensure_sudoku_data_available
+from .slack import compute_slack_vectors
 
 __all__ = [
     "ensure_sudoku_data_available",
@@ -22,6 +23,7 @@ __all__ = [
     "build_clue_board",
     "build_clue_mask",
     "build_board_batch",
+    "compute_slack_vectors",
     "get_sudoku_board_num_examples",
     "make_sudoku_board_iterator",
 ]

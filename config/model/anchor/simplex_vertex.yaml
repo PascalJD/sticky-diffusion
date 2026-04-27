@@ -1,0 +1,8 @@
+defaults:
+  - transform: default
+  - _self_
+
+# 9-dim simplex-vertex anchors for Sudoku: table is exactly I_9, non-learnable.
+family: simplex_vertex
+dim: 9
+learnable: false

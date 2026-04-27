@@ -608,6 +608,13 @@ def _build_anchor_base_table(
             rng=rng,
             dtype=dtype,
         )
+    elif family == "simplex_vertex":
+        if anchor_dim != vocab_size:
+            raise ValueError(
+                "simplex_vertex anchors require anchor_dim == vocab_size, "
+                f"got anchor_dim={anchor_dim}, vocab_size={vocab_size}."
+            )
+        table = jnp.eye(vocab_size, dtype=dtype)
     elif family == "pretrained":
         from sticky.models.sjd.pretrained_anchors import load_pretrained_anchor_table
 
@@ -624,7 +631,8 @@ def _build_anchor_base_table(
     else:
         raise ValueError(
             f"Unknown anchor initializer {config.family!r}. Expected one of: "
-            "normal, ordered_normal, ordered_scalar, thermometer, pretrained."
+            "normal, ordered_normal, ordered_scalar, thermometer, "
+            "simplex_vertex, pretrained."
         )
 
     expected_shape = (vocab_size, anchor_dim)
@@ -779,6 +787,7 @@ class AnchorTable:
     """Frozen view of an anchor table for sampling."""
 
     table_float: Array
+    log_w: Array | None = None
 
     @property
     def L(self) -> int:
@@ -787,6 +796,15 @@ class AnchorTable:
     @property
     def d(self) -> int:
         return int(self.table_float.shape[1])
+
+    @property
+    def effective_log_w(self) -> Array:
+        # Frequency-weighted hazard: log of the per-anchor weight w(a) such that
+        # lambda_t(a) = beta(t) * exp(log_w[a]). Default zeros => w(a) == 1, i.e.
+        # the anchor-agnostic baseline lambda_t(a) = beta(t).
+        if self.log_w is None:
+            return jnp.zeros((int(self.table_float.shape[0]),), dtype=jnp.float32)
+        return jnp.asarray(self.log_w, dtype=jnp.float32)
 
 
 def clamp_known_state(

@@ -7,6 +7,7 @@ import numpy as np
 
 from .download import ensure_sudoku_data_available
 from .paths import SUDOKU_DATA_URL, resolve_data_file
+from .slack import compute_slack_vectors
 
 
 SUDOKU_NUM_CELLS = 81
@@ -272,9 +273,11 @@ class SudokuBoardBatchIterator:
         rows = np.asarray(self._table[batch_idx], dtype=np.int32)
         board_batch = build_board_batch(rows, include_strings=self._include_strings)
         solution_board = np.asarray(board_batch["solution_board"], dtype=np.int32)
+        slack_x0 = compute_slack_vectors(solution_board)
         return {
             **dict(board_batch),
             "image": solution_board,
+            "slack_x0": slack_x0,
         }
 
 
