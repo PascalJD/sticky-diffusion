@@ -278,19 +278,26 @@ def classifier_induced_score(
     t = jnp.asarray(t, dtype=jnp.float32)
     anchor_logits = jnp.asarray(anchor_logits, dtype=jnp.float32)
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    per_position = a_table.ndim == 3
     # `effective_log_w` is the AnchorTable property; duck-typed namespaces
     # (used in some tests) may not provide it — fall back to zeros.
     _eff_log_w = getattr(anchors, "effective_log_w", None)
     if _eff_log_w is None:
-        _eff_log_w = jnp.zeros((int(a_table.shape[0]),), dtype=jnp.float32)
+        L_default = int(a_table.shape[-2] if per_position else a_table.shape[0])
+        _eff_log_w = jnp.zeros((L_default,), dtype=jnp.float32)
     log_w_table = jnp.asarray(_eff_log_w, dtype=jnp.float32)  # (L,)
 
     B = int(y.shape[0])
     site_shape = y.shape[1:-1]
     d = int(y.shape[-1])
-    L = int(a_table.shape[0])
+    L = int(a_table.shape[-2] if per_position else a_table.shape[0])
     y_flat = y.reshape((B, -1, d))  # (B, S, d)
     S = int(y_flat.shape[1])
+    if per_position and int(a_table.shape[0]) != S:
+        raise ValueError(
+            f"classifier_induced_score: per-position a_table P={a_table.shape[0]} "
+            f"!= flat site size S={S}."
+        )
 
     probs = jax.nn.softmax(anchor_logits, axis=-1)
     probs_flat = probs.reshape((B, S, L))
@@ -333,9 +340,14 @@ def classifier_induced_score(
     v = jnp.maximum(v, jnp.square(jnp.asarray(std_floor, dtype=jnp.float32)))
 
     # ||y - alpha(t) a||^2 over (b, s, l).
-    dot = jnp.einsum("bsd,ld->bsl", y_flat, a_table)
+    if per_position:
+        # a_table: (S, L, d) where S == P.
+        dot = jnp.einsum("bsd,sld->bsl", y_flat, a_table)
+        a_norm2 = jnp.sum(a_table * a_table, axis=-1)[None, :, :]  # (1, S, L)
+    else:
+        dot = jnp.einsum("bsd,ld->bsl", y_flat, a_table)
+        a_norm2 = jnp.sum(a_table * a_table, axis=-1)[None, None, :]  # (1, 1, L)
     y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
-    a_norm2 = jnp.sum(a_table * a_table, axis=-1)[None, None, :]
     alpha_t_3 = alpha_t[:, None, None]  # (B, 1, 1)
     dist2 = (
         y_norm2
@@ -383,6 +395,9 @@ def classifier_induced_score(
     # Score = -sum_l P_theta(a_l | y, t) e[b, s, l] (y - alpha(t) a_l).
     coeff = probs_flat * e  # (B, S, L)
     coeff_total = jnp.sum(coeff, axis=-1, keepdims=True)  # (B, S, 1)
-    weighted_anchor_sum = jnp.einsum("bsl,ld->bsd", coeff, a_table)
+    if per_position:
+        weighted_anchor_sum = jnp.einsum("bsl,sld->bsd", coeff, a_table)
+    else:
+        weighted_anchor_sum = jnp.einsum("bsl,ld->bsd", coeff, a_table)
     score_flat = -(coeff_total * y_flat - alpha_t_3 * weighted_anchor_sum)
     return score_flat.reshape(y.shape)

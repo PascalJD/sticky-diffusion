@@ -79,13 +79,27 @@ def dhm_log_ratio(
     """
     y = jnp.asarray(y, dtype=jnp.float32)
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    if a_table.ndim == 3:
+        # Per-position is sequence-only: y must be (B, P, d). The vmap path
+        # below relies on `jnp.broadcast_to((P, d), y.shape)` succeeding,
+        # which requires y to have exactly one site axis matching P.
+        P = int(a_table.shape[0])
+        if len(y.shape) != 3 or int(y.shape[1]) != P:
+            raise ValueError(
+                f"dhm_log_ratio: per-position a_table requires y of shape "
+                f"(B, P, d) with P={P}; got y.shape={tuple(y.shape)}."
+            )
     # Tolerate duck-typed namespaces that lack effective_log_w.
     _eff_log_w = getattr(anchors, "effective_log_w", None)
     if _eff_log_w is None:
-        _eff_log_w = jnp.zeros((int(a_table.shape[0]),), dtype=jnp.float32)
+        L_default = int(a_table.shape[-2] if a_table.ndim == 3 else a_table.shape[0])
+        _eff_log_w = jnp.zeros((L_default,), dtype=jnp.float32)
     log_w_table = jnp.asarray(_eff_log_w, dtype=jnp.float32)  # (L,)
 
     def per_anchor(a_l: Array, log_w_l: Array) -> Array:
+        # a_l is shape (d,) for a global table or (P, d) for a per-position
+        # table; jnp.broadcast_to handles both because (P, d) is a
+        # right-aligned suffix of y.shape = (B, P, d).
         a_b = jnp.broadcast_to(a_l, y.shape)
         log_r = jump.logpdf(y, a_b, t_img)
         log_p = mixture_logpdf(
@@ -100,7 +114,12 @@ def dhm_log_ratio(
         )
         return log_r - log_p
 
-    log_ratio = jax.vmap(per_anchor, in_axes=(0, 0))(a_table, log_w_table)
+    if a_table.ndim == 3:
+        # (P, L, d): vmap over the L axis; per_anchor receives (P, d) slices.
+        log_ratio = jax.vmap(per_anchor, in_axes=(1, 0))(a_table, log_w_table)
+    else:
+        # (L, d): vmap over the L axis; per_anchor receives (d,) slices.
+        log_ratio = jax.vmap(per_anchor, in_axes=(0, 0))(a_table, log_w_table)
     log_ratio = jnp.moveaxis(log_ratio, 0, -1)
     if log_ratio_clip is not None:
         log_ratio = jnp.clip(

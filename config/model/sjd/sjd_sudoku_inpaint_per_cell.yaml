@@ -1,0 +1,17 @@
+defaults:
+  - /model/backbone@_here_: gpt2_like_sudoku_inpaint_6m
+  - /model/anchor@anchor: normal_normalized_per_cell
+  - _self_
+
+# Per-cell variant of the Shah-board Sudoku model: each of the 81 cells has
+# its own learnable 9-anchor block. Backbone, optimizer, sampler config are
+# unchanged from sjd_sudoku_inpaint.yaml.
+name: sjd
+
+num_heads: 12
+use_attn_dropout: true
+mlp_type: gelu
+depth_scaled_init: false
+cond_type: adaln
+time_features: t
+model_sharding: false

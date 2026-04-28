@@ -146,10 +146,12 @@ class SudokuInpaintSJDTask(Task):
         x0_anchor = model.apply({"params": params}, x0_idx, method=model.embed)
         anchor_table = None
         if bool(self.log_state_dependency):
-            try:
-                anchor_table = params["anchors"]["table"]
-            except Exception:
-                anchor_table = model.apply({"params": params}, method=model.anchor_table)
+            # Always use the normalized view (model.anchor_table). Reading
+            # params["anchors"]["table"] returns the raw underlying parameter,
+            # which differs from what the model sees whenever
+            # normalize_at_use=True (e.g., the per-cell config). The cost is
+            # just the normalization op on the existing param.
+            anchor_table = model.apply({"params": params}, method=model.anchor_table)
 
         def apply_fn(p, xt, t_img, noisy_position_mask=None):
             extra_kwargs = {}

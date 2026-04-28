@@ -61,7 +61,19 @@ def state_dependency_metrics(
 
     a_table = jnp.asarray(anchor_table, dtype=jnp.float32)
     pred_idx = jnp.argmax(logits, axis=-1).astype(jnp.int32)
-    a_pred = jnp.take(a_table, pred_idx, axis=0)
+    if a_table.ndim == 3:
+        # Per-position table (P, V, d). Site axis must equal P; gather
+        # (s_idx, pred_idx[..., s]) → a_pred shape (..., P, d).
+        P = int(a_table.shape[0])
+        if int(pred_idx.shape[-1]) != P:
+            raise ValueError(
+                f"state_dependency_metrics: per-position a_table P={P} != "
+                f"flat site size {int(pred_idx.shape[-1])}."
+            )
+        s_idx = jnp.broadcast_to(jnp.arange(P), pred_idx.shape)
+        a_pred = a_table[s_idx, pred_idx]
+    else:
+        a_pred = jnp.take(a_table, pred_idx, axis=0)
 
     if anchor_log_w is not None:
         log_w_per_site = jnp.take(

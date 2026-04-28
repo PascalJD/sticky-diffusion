@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from sticky.models.common.discrete_mixture import normalize_probs
 
-from .anchors import AnchorTable, clamp_known_state
+from .anchors import AnchorTable, clamp_known_state, gather_anchor_at_label
 from .plugin_intensity import plugin_hazard_and_allocation
 from .sampler import make_sampling_time_grid
 from .sdes import _expand_like, alpha_sigma
@@ -157,8 +157,17 @@ def _classifier_mean(
     probs: Array,
     anchor_table: AnchorTable,
 ) -> Array:
+    table = jnp.asarray(anchor_table.table_float, dtype=jnp.float32)
+    if table.ndim == 3:
+        # Per-position (P, V, d). probs: (B, *site_shape, V); the flat site
+        # axis must equal P.
+        P = int(table.shape[0])
+        V = int(probs.shape[-1])
+        flat_probs = probs.reshape((-1, P, V))
+        mu = jnp.einsum("bpv,pvd->bpd", flat_probs, table)
+        return mu.reshape(probs.shape[:-1] + (anchor_table.d,))
     flat_probs = probs.reshape((-1, probs.shape[-1]))
-    mu = flat_probs @ jnp.asarray(anchor_table.table_float, dtype=jnp.float32)
+    mu = flat_probs @ table
     return mu.reshape(probs.shape[:-1] + (anchor_table.d,))
 
 
@@ -329,7 +338,9 @@ def conditional_generate(
         )
 
         proposal_idx = jnp.argmax(choice_probs, axis=-1).astype(jnp.int32)
-        proposal_vec = anchors.table_float[proposal_idx]
+        proposal_vec = gather_anchor_at_label(
+            jnp.asarray(anchors.table_float, dtype=jnp.float32), proposal_idx
+        )
         committed_idx = jnp.where(selected, proposal_idx, committed_idx)
         committed_mask = committed_mask | selected
         y = jnp.where(selected[..., None], proposal_vec, y)

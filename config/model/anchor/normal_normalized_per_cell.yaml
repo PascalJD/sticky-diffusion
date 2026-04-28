@@ -1,0 +1,13 @@
+defaults:
+  - transform: default
+  - _self_
+
+# Per-cell variant of normal_normalized: each of the n_positions cells gets
+# its own (V, d) anchor block
+family: normal
+dim: 64
+learnable: true
+seed: 0
+init_std: 0.001
+normalize_at_use: true
+n_positions: 81

@@ -19,7 +19,7 @@ from sticky.models.common.discrete_mixture import (
 )
 from sticky.rng import PRNGKey
 
-from .anchors import clamp_known_state
+from .anchors import clamp_known_state, gather_anchor_at_label
 from .corruption import classifier_induced_score
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
@@ -28,6 +28,10 @@ from .sdes import _expand_like
 
 
 Array = jnp.ndarray
+
+
+# Back-compat alias for tests importing the previous private name.
+_gather_committed_anchor = gather_anchor_at_label
 
 
 @dataclass(frozen=True)
@@ -115,8 +119,13 @@ def reverse_sample(
       3. Sample one stay/commit transition for uncommitted sites.
     """
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
-    L = int(a_table.shape[0])
-    d = int(a_table.shape[1])
+    if a_table.ndim == 3:
+        # Per-position table (P, L, d).
+        L = int(a_table.shape[1])
+        d = int(a_table.shape[2])
+    else:
+        L = int(a_table.shape[0])
+        d = int(a_table.shape[1])
     if float(cfg.logit_temperature) <= 0.0:
         raise ValueError(f"logit_temperature must be > 0, got {cfg.logit_temperature}")
     time_grid = make_sampling_time_grid(
@@ -289,7 +298,9 @@ def reverse_sample(
                 jump_mask = jnp.where(is_last_step, ~committed, jump_mask)
 
         k_idx = jnp.where(jump_mask, a_idx, k_idx)
-        y = jnp.where(jump_mask[..., None], a_table[a_idx], y)
+        y = jnp.where(
+            jump_mask[..., None], gather_anchor_at_label(a_table, a_idx), y
+        )
         committed = committed | jump_mask
 
         return (

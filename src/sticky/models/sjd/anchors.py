@@ -216,10 +216,15 @@ def _build_normal_table(
     seed: int | None,
     rng: Array | None,
     dtype: jnp.dtype,
+    n_positions: int = 1,
 ) -> Array:
     key = _resolve_random_key(seed=seed, rng=rng, context="normal anchors")
+    if n_positions <= 1:
+        shape: tuple[int, ...] = (vocab_size, anchor_dim)
+    else:
+        shape = (int(n_positions), vocab_size, anchor_dim)
     return (
-        jax.random.normal(key, (vocab_size, anchor_dim), dtype=dtype)
+        jax.random.normal(key, shape, dtype=dtype)
         * jnp.asarray(float(init_std), dtype=dtype)
     )
 
@@ -312,6 +317,10 @@ class AnchorTableConfig:
     # When enabled, the AnchorTransformConfig knobs `equalize_row_norms`,
     # `target_row_norm`, and `scale` become redundant.
     normalize_at_use: bool = False
+    # When >1, the anchor table is per-position: shape (n_positions, V, d).
+    # The n_positions axis must equal the flat site length at consumption
+    # time. Only family='normal' with normalize_at_use=True is supported here.
+    n_positions: int = 1
 
 
 @dataclass(frozen=True)
@@ -482,6 +491,17 @@ def anchor_table_config_from_mapping(
                 default=False,
             )
         ),
+        n_positions=_ensure_positive_int(
+            "n_positions",
+            int(
+                _resolve_anchor_value(
+                    model_cfg,
+                    nested_key="n_positions",
+                    flat_key="anchor_n_positions",
+                    default=1,
+                )
+            ),
+        ),
     )
 
 
@@ -505,9 +525,18 @@ def apply_anchor_transforms(
     include_scale: bool = True,
 ) -> Array:
     table = jnp.asarray(table, dtype=jnp.float32)
+    if table.ndim == 3:
+        # Per-position table (P, V, d): apply the transform to each (V, d)
+        # slice independently. Whitening uses the per-slice covariance,
+        # equalize_row_norms uses the per-slice mean row norm.
+        return jax.vmap(
+            lambda t: apply_anchor_transforms(
+                t, transform, include_scale=include_scale
+            )
+        )(table)
     if table.ndim != 2:
         raise ValueError(
-            f"Anchor tables must have rank 2, got shape={tuple(table.shape)}."
+            f"Anchor tables must have rank 2 or 3, got shape={tuple(table.shape)}."
         )
 
     if table.shape[1] <= 1:
@@ -571,6 +600,21 @@ def _build_anchor_base_table(
     family = _normalize_anchor_family(config.family)
     vocab_size = _ensure_positive_int("vocab_size", int(config.vocab_size))
     anchor_dim = _ensure_positive_int("anchor_dim", int(config.anchor_dim))
+    n_positions = _ensure_positive_int("n_positions", int(config.n_positions))
+
+    if n_positions > 1:
+        if family != "normal":
+            raise ValueError(
+                f"n_positions>1 is only supported for family='normal' "
+                f"(got family={family!r}). The supported per-position config is "
+                f"normal_normalized: family='normal' with normalize_at_use=True."
+            )
+        if not config.normalize_at_use:
+            raise ValueError(
+                "n_positions>1 with family='normal' requires normalize_at_use=True "
+                "(the normal_normalized preset). A raw learnable normal table "
+                "without runtime L2 normalization is not stable per-position."
+            )
 
     if family == "ordered_scalar":
         if anchor_dim != 1:
@@ -587,6 +631,7 @@ def _build_anchor_base_table(
             seed=config.seed,
             rng=rng,
             dtype=dtype,
+            n_positions=n_positions,
         )
     elif family == "ordered_normal":
         table = _build_ordered_normal_table(
@@ -627,13 +672,22 @@ def _build_anchor_base_table(
             "normal, ordered_normal, ordered_scalar, thermometer, pretrained."
         )
 
-    expected_shape = (vocab_size, anchor_dim)
+    expected_shape: tuple[int, ...] = (
+        (n_positions, vocab_size, anchor_dim) if n_positions > 1 else (vocab_size, anchor_dim)
+    )
     if tuple(table.shape) != expected_shape:
         raise ValueError(
             f"Anchor family {config.family!r} produced shape {tuple(table.shape)}, "
             f"expected {expected_shape}."
         )
     return table.astype(dtype)
+
+
+def _expected_anchor_shape(config: AnchorTableConfig) -> tuple[int, ...]:
+    V = int(config.vocab_size)
+    d = int(config.anchor_dim)
+    P = int(config.n_positions)
+    return (P, V, d) if P > 1 else (V, d)
 
 
 def build_anchor_table_views(
@@ -653,7 +707,7 @@ def build_anchor_table_views(
         config.transform,
         include_scale=True,
     )
-    expected_shape = (int(config.vocab_size), int(config.anchor_dim))
+    expected_shape = _expected_anchor_shape(config)
     for stage_name, table in (
         ("raw", raw),
         ("transformed", transformed),
@@ -680,7 +734,7 @@ def build_anchor_table(
     views = build_anchor_table_views(config, dtype=dtype, rng=rng)
     table = views.final
 
-    expected_shape = (int(config.vocab_size), int(config.anchor_dim))
+    expected_shape = _expected_anchor_shape(config)
     if tuple(table.shape) != expected_shape:
         raise ValueError(
             "Anchor transform pipeline changed the anchor table shape from "
@@ -721,7 +775,7 @@ def make_anchor_initializer(
             init_std=float(init_std),
         )
 
-    expected = (int(config.vocab_size), int(config.anchor_dim))
+    expected = _expected_anchor_shape(config)
 
     def _init(key, shape, dtype=jnp.float32):
         if tuple(shape) != expected:
@@ -753,18 +807,40 @@ class TokenAnchors(nn.Module):
         scale = jnp.sqrt(jnp.asarray(table.shape[-1], dtype=table.dtype))
         return unit * scale
 
+    def _param_shape(self) -> tuple[int, ...]:
+        P = int(self.config.n_positions)
+        V = int(self.config.vocab_size)
+        d = int(self.config.anchor_dim)
+        return (V, d) if P <= 1 else (P, V, d)
+
     @nn.compact
     def __call__(self, ids: Array) -> Array:
         table = self.param(
             "table",
             make_anchor_initializer(config=self.config),
-            (int(self.config.vocab_size), int(self.config.anchor_dim)),
+            self._param_shape(),
             jnp.float32,
         )
         if not self.learnable:
             table = jax.lax.stop_gradient(table)
         table = self._normalize(table)
-        return jnp.take(table, ids, axis=0)
+        if table.ndim == 2:
+            return jnp.take(table, ids, axis=0)
+        # table: (P, V, d), ids: (..., P). Each leading axis is independent;
+        # the trailing axis indexes positions and must match P.
+        P = int(table.shape[0])
+        if int(ids.shape[-1]) != P:
+            raise ValueError(
+                f"TokenAnchors received ids with last-axis size {ids.shape[-1]} "
+                f"but anchor table is configured for n_positions={P}. The "
+                f"classifier input must be flat-indexed over the same P positions."
+            )
+        s_idx = jnp.arange(P)
+        # Broadcast advanced-index: leading axes from ids, position from s_idx,
+        # label from ids; result shape = ids.shape + (d,).
+        ids_i = jnp.asarray(ids, dtype=jnp.int32)
+        s_idx_b = jnp.broadcast_to(s_idx, ids_i.shape)
+        return table[s_idx_b, ids_i]
 
     def table_float(self) -> Array:
         table = self.get_variable("params", "table")
@@ -776,27 +852,68 @@ class TokenAnchors(nn.Module):
 
 @struct.dataclass
 class AnchorTable:
-    """Frozen view of an anchor table for sampling."""
+    """Frozen view of an anchor table for sampling.
+
+    The underlying tensor is rank-2 (V, d) for a global table or rank-3
+    (P, V, d) for a per-position table; ``per_position`` distinguishes them.
+    """
 
     table_float: Array
     log_w: Array | None = None
 
     @property
+    def per_position(self) -> bool:
+        return self.table_float.ndim == 3
+
+    @property
+    def n_positions(self) -> int:
+        return int(self.table_float.shape[0]) if self.per_position else 1
+
+    @property
     def L(self) -> int:
-        return int(self.table_float.shape[0])
+        return (
+            int(self.table_float.shape[1])
+            if self.per_position
+            else int(self.table_float.shape[0])
+        )
 
     @property
     def d(self) -> int:
-        return int(self.table_float.shape[1])
+        return int(self.table_float.shape[-1])
 
     @property
     def effective_log_w(self) -> Array:
         # Frequency-weighted hazard: log of the per-anchor weight w(a) such that
         # lambda_t(a) = beta(t) * exp(log_w[a]). Default zeros => w(a) == 1, i.e.
         # the anchor-agnostic baseline lambda_t(a) = beta(t).
+        # Shape is (L,) regardless of per_position — frequency weighting is
+        # per-label, not per-position.
         if self.log_w is None:
-            return jnp.zeros((int(self.table_float.shape[0]),), dtype=jnp.float32)
+            return jnp.zeros((self.L,), dtype=jnp.float32)
         return jnp.asarray(self.log_w, dtype=jnp.float32)
+
+
+def gather_anchor_at_label(a_table: Array, idx: Array) -> Array:
+    """Gather one anchor per site, transparently for global or per-position tables.
+
+    a_table: (V, d) for a global table, or (P, V, d) for a per-position one.
+    idx:     (..., S) of int32 anchor labels. For per-position tables, the
+             trailing axis must equal P.
+    Returns: (..., S, d) anchors at the chosen labels.
+    """
+    idx_i = jnp.asarray(idx, dtype=jnp.int32)
+    if a_table.ndim == 3:
+        P = int(a_table.shape[0])
+        if int(idx_i.shape[-1]) != P:
+            raise ValueError(
+                f"gather_anchor_at_label: idx trailing axis "
+                f"({int(idx_i.shape[-1])}) must equal a_table.shape[0]={P} "
+                "for per-position anchors."
+            )
+        s_idx = jnp.arange(P)
+        s_idx_b = jnp.broadcast_to(s_idx, idx_i.shape)
+        return a_table[s_idx_b, idx_i]
+    return a_table[idx_i]
 
 
 def clamp_known_state(
@@ -810,8 +927,9 @@ def clamp_known_state(
 ) -> tuple[Array, Array, Array]:
     if known_mask is None or known_idx is None:
         return y, committed, k_idx
-    known_vec = a_table[jnp.asarray(known_idx, dtype=jnp.int32)]
+    known_idx_i = jnp.asarray(known_idx, dtype=jnp.int32)
+    known_vec = gather_anchor_at_label(a_table, known_idx_i)
     y = jnp.where(known_mask[..., None], known_vec, y)
     committed = jnp.where(known_mask, True, committed)
-    k_idx = jnp.where(known_mask, known_idx, k_idx)
+    k_idx = jnp.where(known_mask, known_idx_i, k_idx)
     return y, committed, k_idx

@@ -120,6 +120,54 @@ def test_sjd_sudoku_train_and_eval_configs_compose():
     assert callable(maybe_eval)
 
 
+def test_sjd_sudoku_per_cell_config_composes():
+    """Per-cell anchors variant uses normal_normalized_per_cell with n_positions=81."""
+    cfg = _compose(
+        config_name="config.yaml",
+        overrides=[
+            "experiment=sudoku/sjd_sudoku_per_cell",
+            "eval=sudoku_sjd",
+        ],
+    )
+
+    assert cfg.experiment.task.name == "sjd_sudoku_inpaint"
+    assert cfg.experiment.dataset.name == "sudoku_shah_board"
+    assert cfg.experiment.model.name == "sjd"
+    assert cfg.experiment.model.sequence_max_length == 81
+    assert cfg.experiment.model.anchor.family == "normal"
+    assert cfg.experiment.model.anchor.dim == 64
+    assert cfg.experiment.model.anchor.learnable is True
+    assert cfg.experiment.model.anchor.normalize_at_use is True
+    assert cfg.experiment.model.anchor.n_positions == 81
+    assert cfg.experiment.training.name == "sudoku_sjd"
+
+    task = build_task(cfg.experiment)
+    model = build_model(
+        cfg.experiment,
+        data_shape=task.spec.data_shape,
+        vocab_size=task.spec.vocab_size,
+    )
+    assert task.spec.vocab_size == 9
+    assert task.spec.data_shape == (81,)
+    # Materialize the model params and confirm the anchor table is rank-3
+    # with shape (81, 9, 64).
+    import jax
+    import jax.numpy as jnp
+
+    rng = jax.random.PRNGKey(0)
+    y_t = jnp.zeros((1, 81, 64), dtype=jnp.float32)
+    t = jnp.zeros((1,), dtype=jnp.float32)
+    token_ids = jnp.zeros((1, 81), dtype=jnp.int32)
+    variables = model.init(
+        {"params": rng, "dropout": rng},
+        y_t,
+        t,
+        anchor_token_ids=token_ids,
+    )
+    table = variables["params"]["anchors"]["table"]
+    assert tuple(table.shape) == (81, 9, 64)
+
+
 def _disabled_test_sjd_sudoku_report_config_composes():
     """Removed in the config cleanup: sudoku_sjd_report eval profile deleted."""
     cfg = _compose(
