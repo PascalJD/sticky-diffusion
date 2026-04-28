@@ -5,7 +5,12 @@ defaults:
 name: sudoku_sjd
 
 num_train_steps: ${training.max_steps}
-num_train_epochs: 0
+# 300 epochs to match Train-for-the-Worst (Kim et al. 2025), Appendix D.2:
+# 6M GPT-2-like backbone, batch=128, LR=1e-3, 300 epochs on the Shah Sudoku
+# train split. The resolver in loop_helpers.derives num_train_steps from this
+# at run time and overwrites cfg.training.num_train_steps so the LR cosine
+# schedule sees the correct horizon. Set to 0 to fall back to max_steps.
+num_train_epochs: 300
 best_update_on_equal: true
 
 log_every_steps: 500
