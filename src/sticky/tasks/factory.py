@@ -98,7 +98,7 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "loss_weighting": str(cfg.training.get("loss_weighting", "uniform")),
         "anchor_log_w": anchor_log_w,
         "pass_noisy_mask_to_model": bool(
-            cfg.model.get("use_noisy_input_bias", False)
+            cfg.get("model", {}).get("use_noisy_input_bias", False)
         ),
     }
 
