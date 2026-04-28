@@ -779,6 +779,7 @@ class AnchorTable:
     """Frozen view of an anchor table for sampling."""
 
     table_float: Array
+    log_w: Array | None = None
 
     @property
     def L(self) -> int:
@@ -787,6 +788,15 @@ class AnchorTable:
     @property
     def d(self) -> int:
         return int(self.table_float.shape[1])
+
+    @property
+    def effective_log_w(self) -> Array:
+        # Frequency-weighted hazard: log of the per-anchor weight w(a) such that
+        # lambda_t(a) = beta(t) * exp(log_w[a]). Default zeros => w(a) == 1, i.e.
+        # the anchor-agnostic baseline lambda_t(a) = beta(t).
+        if self.log_w is None:
+            return jnp.zeros((int(self.table_float.shape[0]),), dtype=jnp.float32)
+        return jnp.asarray(self.log_w, dtype=jnp.float32)
 
 
 def clamp_known_state(
