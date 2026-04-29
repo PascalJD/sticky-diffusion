@@ -1,6 +1,6 @@
 defaults:
   - /model/backbone@_here_: adm_unet
-  - /model/anchor@anchor: thermometer
+  - /model/anchor@anchor: normal_normalized
   - _self_
 
 # Canonical SJD model for CIFAR-10.
@@ -13,3 +13,4 @@ depth_scaled_init: true
 cond_type: adaln_zero
 time_features: t
 model_sharding: false
+use_noisy_input_bias: false
