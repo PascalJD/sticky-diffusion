@@ -59,6 +59,9 @@ def _load_tokens(path: Path) -> np.ndarray:
     raise ValueError(f"Unsupported token file extension: {path}")
 
 
+_BINCOUNT_CHUNK_TOKENS = 100_000_000
+
+
 def _tally_counts(paths: Iterable[Path], vocab_size: int) -> np.ndarray:
     counts = np.zeros((int(vocab_size),), dtype=np.int64)
     for p in paths:
@@ -68,12 +71,14 @@ def _tally_counts(paths: Iterable[Path], vocab_size: int) -> np.ndarray:
         flat = np.asarray(tokens).reshape(-1)
         if flat.size == 0:
             continue
-        if int(flat.min()) < 0 or int(flat.max()) >= int(vocab_size):
-            raise ValueError(
-                f"{p}: tokens out of range [0, {vocab_size}); "
-                f"min={int(flat.min())} max={int(flat.max())}"
-            )
-        counts += np.bincount(flat, minlength=int(vocab_size))[: int(vocab_size)]
+        for i in range(0, int(flat.size), _BINCOUNT_CHUNK_TOKENS):
+            block = np.asarray(flat[i : i + _BINCOUNT_CHUNK_TOKENS], dtype=np.int64)
+            if int(block.min()) < 0 or int(block.max()) >= int(vocab_size):
+                raise ValueError(
+                    f"{p}: tokens out of range [0, {vocab_size}); "
+                    f"chunk min={int(block.min())} max={int(block.max())}"
+                )
+            counts += np.bincount(block, minlength=int(vocab_size))[: int(vocab_size)]
     return counts
 
 
