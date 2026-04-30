@@ -10,7 +10,8 @@ name: cadd
 cont_time: true
 timesteps: 512
 discrete_schedule_type: linear  # alpha(t)=1-t
-schedule_eps: 0.0
+schedule_eps: 1e-3
+antithetic_time_sampling: true
 
 use_attn_dropout: true
 

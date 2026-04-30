@@ -348,11 +348,25 @@ class CADD(nn.Module):
         )
         return z_t * mask  # 0 for unmasked positions
 
-    def _cross_entropy_on_masked(self, *, logits: Array, x0: Array, x_t: Array) -> tuple[Array, dict[str, Array]]:
-        """Compute -log p(x0 | x_t, z_t) restricted to masked positions."""
+    def _cross_entropy_on_masked(
+        self,
+        *,
+        logits: Array,
+        x0: Array,
+        x_t: Array,
+        t: Array,
+    ) -> tuple[Array, dict[str, Array]]:
+        """MDLM continuous-time CE bound on masked positions (Eq. 4.14 / 4.17)."""
         mask = masked_core.masked_positions(x_t, mask_token_id=self.mask_token_id)
-        per_ex = masked_core.masked_cross_entropy_sums(logits, x0, mask=mask)
-        loss = jnp.mean(per_ex)
+        masked_neg_ce = masked_core.masked_logprob_sums(logits, x0, mask=mask)
+        # alpha'(t) / (1 - alpha(t)): non-positive, multiplied by non-positive
+        # log-prob sum to yield a positive loss. Requires schedule_eps > 0.
+        weight = masked_core.masked_dgamma_times_alpha(
+            t,
+            schedule_fn_type=self.discrete_schedule_type,
+            eps=self.schedule_eps,
+        )
+        loss = jnp.mean(weight * masked_neg_ce)
 
         metrics = {
             "loss_ce": loss,
@@ -385,7 +399,7 @@ class CADD(nn.Module):
         # Model prediction.
         logits = self.predict_logits(z_tilde, t, cond=cond_emb, train=train)
 
-        loss, metrics = self._cross_entropy_on_masked(logits=logits, x0=x, x_t=x_t)
+        loss, metrics = self._cross_entropy_on_masked(logits=logits, x0=x, x_t=x_t, t=t)
         metrics["loss"] = loss
         metrics["t_mean"] = jnp.mean(t)
 
