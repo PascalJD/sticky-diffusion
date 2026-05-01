@@ -1,0 +1,34 @@
+# Recommended SJD sampler-policy sweep for the Sudoku table. Each row of
+# the table corresponds to one policy (plus an eta value, see eta_grid.yaml).
+#
+# Run as:
+#   PYTHONPATH=src python -m sticky.cli.train --multirun \
+#     experiment=sudoku/sjd_sudoku \
+#     forward.jump.eta=1.0,0.7 \
+#     sampler.policy=plugin_hazard,plugin_hazard_topk_margin
+#
+# Policy semantics (see src/sticky/models/sjd/board_sampling.py):
+#   * linear_survival             — MDLM-equivalent reference (kim2025).
+#                                   Time-only count from alpha schedule;
+#                                   uniform site selection.
+#   * linear_topk_margin          — MDLM count + top-margin selection
+#                                   (kim2025 strongest baseline).
+#   * plugin_hazard               — SJD: count AND selection from the plug-in
+#                                   commit rate p_commit_i = 1 - exp(-lambda_i*dt).
+#                                   Cells the dynamics want to commit fast win.
+#   * plugin_hazard_topk_margin   — SJD "best of both": count from the
+#                                   plug-in (state-dependent), selection from
+#                                   top-margin of the plug-in allocation
+#                                   (which-digit confidence). Tests whether
+#                                   the state-dependent commit rate adds to a
+#                                   hand-designed top-margin schedule.
+#
+# This file is documentation; it is NOT a loadable Hydra group. To consume
+# the sweep declaratively from a Hydra sweeper, override
+# `hydra.sweeper.params.sampler.policy` with the policies listed below.
+
+policies:
+  - linear_survival                  # MDLM-equivalent reference (kim2025)
+  - linear_topk_margin               # MDLM + top-margin (kim2025 strongest)
+  - plugin_hazard                    # SJD: rate AND selection from plug-in
+  - plugin_hazard_topk_margin        # SJD: rate from plug-in, selection from margin
