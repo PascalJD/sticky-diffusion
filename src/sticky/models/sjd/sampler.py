@@ -97,7 +97,7 @@ def reverse_sample(
     key: PRNGKey,
     *,
     params: Any,
-    apply_model: Callable[[Any, Array, Array], Tuple[Array, Any]],
+    apply_model: Callable[[Any, Array, Array, Array | None], Tuple[Array, Any]],
     anchors: Any,
     beta: Any,
     hazard: HazardSchedule,
@@ -175,6 +175,19 @@ def reverse_sample(
     frac_committed_pre_force = jnp.asarray(0.0, dtype=jnp.float32)
     nfe_total = jnp.asarray(0.0, dtype=jnp.float32)
 
+    def _apply_model_with_noisy_mask(
+        p,
+        y_state: Array,
+        t_img_state: Array,
+        noisy_position_mask: Array,
+    ):
+        try:
+            return apply_model(p, y_state, t_img_state, noisy_position_mask)
+        except TypeError:
+            # Backward compatibility for legacy call sites/tests that only
+            # provide apply_model(params, y, t_img).
+            return apply_model(p, y_state, t_img_state)
+
     def step_fn(i: int, carry):
         (
             key,
@@ -200,7 +213,12 @@ def reverse_sample(
             key, k_eps, k_u, k_a = jax.random.split(key, 4)
 
         y_for_model = y
-        logits_score, _ = apply_model(params, y_for_model, t_img)
+        logits_score, _ = _apply_model_with_noisy_mask(
+            params,
+            y_for_model,
+            t_img,
+            ~committed,
+        )
         if cfg.metrics_count_nfe:
             nfe_total = nfe_total + 1.0
         score, bt = _predictive_stats(logits_score, y_for_model, t_img)
@@ -216,7 +234,12 @@ def reverse_sample(
         if cfg.refresh_logits_after_em_step:
             refreshed_t_img = _broadcast_time_to_batch(next_t_scalar, batch_size)
             refreshed_y = y
-            refreshed_logits, _ = apply_model(params, refreshed_y, refreshed_t_img)
+            refreshed_logits, _ = _apply_model_with_noisy_mask(
+                params,
+                refreshed_y,
+                refreshed_t_img,
+                ~committed,
+            )
             if cfg.metrics_count_nfe:
                 nfe_total = nfe_total + 1.0
             jump_t_img = refreshed_t_img
@@ -325,7 +348,12 @@ def reverse_sample(
         k_filled = k_idx
     else:
         t0 = jnp.zeros((batch_size,), dtype=jnp.float32)
-        logits_end, _ = apply_model(params, y, t0)
+        logits_end, _ = _apply_model_with_noisy_mask(
+            params,
+            y,
+            t0,
+            ~committed,
+        )
         if cfg.metrics_count_nfe:
             nfe_total = nfe_total + 1.0
         key, k_end = jax.random.split(key)

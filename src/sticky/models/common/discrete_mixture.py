@@ -128,7 +128,7 @@ def _categorical_sample_exact_from_logits(rng: Array, logits: Array) -> Array:
 
 def normalize_probs(probs: Array) -> Array:
     probs = jnp.asarray(probs, dtype=jnp.float32)
-    probs = jnp.clip(probs, min=0.0)
+    probs = jnp.clip(probs, a_min=0.0)
     total = jnp.sum(probs, axis=-1, keepdims=True)
     fallback_idx = jnp.full(probs.shape[:-1], probs.shape[-1] - 1, dtype=jnp.int32)
     fallback = jax.nn.one_hot(fallback_idx, probs.shape[-1], dtype=probs.dtype)
@@ -177,8 +177,8 @@ def _prepare_change_and_stay_probs(
     else:
         change_prob = _broadcast_prob(change_prob, like=like)
 
-    stay_prob = jnp.clip(stay_prob, min=0.0, max=1.0)
-    change_prob = jnp.clip(change_prob, min=0.0, max=1.0)
+    stay_prob = jnp.clip(stay_prob, a_min=0.0, a_max=1.0)
+    change_prob = jnp.clip(change_prob, a_min=0.0, a_max=1.0)
     return stay_prob, change_prob
 
 

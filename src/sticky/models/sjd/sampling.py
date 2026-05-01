@@ -28,8 +28,17 @@ def simple_generate(
 
     shape_tup: Tuple[int, ...] = tuple(int(x) for x in shape)
 
-    def apply_model(p, y, t_img):
-        return model.apply({"params": p}, y, t=t_img, train=False)
+    def apply_model(p, y, t_img, noisy_position_mask=None):
+        extra_kwargs = {}
+        if noisy_position_mask is not None:
+            extra_kwargs["noisy_position_mask"] = noisy_position_mask
+        return model.apply(
+            {"params": p},
+            y,
+            t=t_img,
+            train=False,
+            **extra_kwargs,
+        )
 
     return reverse_sample(
         rng,

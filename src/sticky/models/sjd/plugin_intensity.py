@@ -11,7 +11,7 @@ from sticky.rng import PRNGKey
 from .hazard import HazardSchedule, lambda_off_star
 from .jump import VPMatchedGaussianJump
 from .sdes import _expand_like, alpha_sigma
-from .corruption import mixture_logpdf
+from .corruption import mixture_logpdf_all_anchors, vp_jump_logpdf_all_anchors
 
 
 Array = jnp.ndarray
@@ -79,29 +79,20 @@ def dhm_log_ratio(
     """
     y = jnp.asarray(y, dtype=jnp.float32)
     a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
-    # Tolerate duck-typed namespaces that lack effective_log_w.
-    _eff_log_w = getattr(anchors, "effective_log_w", None)
-    if _eff_log_w is None:
-        _eff_log_w = jnp.zeros((int(a_table.shape[0]),), dtype=jnp.float32)
-    log_w_table = jnp.asarray(_eff_log_w, dtype=jnp.float32)  # (L,)
 
-    def per_anchor(a_l: Array, log_w_l: Array) -> Array:
-        a_b = jnp.broadcast_to(a_l, y.shape)
-        log_r = jump.logpdf(y, a_b, t_img)
-        log_p = mixture_logpdf(
-            y=y,
-            anchor=a_b,
-            t=t_img,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            tau_grid_size=int(tau_grid_size),
-            log_w_anchor=log_w_l,
-        )
-        return log_r - log_p
-
-    log_ratio = jax.vmap(per_anchor, in_axes=(0, 0))(a_table, log_w_table)
-    log_ratio = jnp.moveaxis(log_ratio, 0, -1)
+    log_r = vp_jump_logpdf_all_anchors(
+        y=y, t=t_img, a_table=a_table, jump=jump,
+    )
+    log_p = mixture_logpdf_all_anchors(
+        y=y,
+        t=t_img,
+        anchors=anchors,
+        beta=beta,
+        hazard=hazard,
+        jump=jump,
+        tau_grid_size=int(tau_grid_size),
+    )
+    log_ratio = log_r - log_p
     if log_ratio_clip is not None:
         log_ratio = jnp.clip(
             log_ratio, -float(log_ratio_clip), float(log_ratio_clip)

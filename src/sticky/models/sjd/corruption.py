@@ -176,6 +176,150 @@ def _online_lse_step(
     return m_new, l_new
 
 
+def _squared_distance_all_anchors(
+    y: Array, a_table: Array, alpha_t: Array
+) -> Array:
+    """``||y - alpha(t) a_l||^2`` for every anchor a_l, shape ``(B, *site_shape, L)``.
+
+    Computed via ``||y||^2 - 2 alpha (y . a) + alpha^2 ||a||^2`` so no
+    ``(B, *site_shape, L, d)`` intermediate is materialized — the ``d``-axis is
+    contracted by a single matmul.
+    """
+    B = y.shape[0]
+    d = y.shape[-1]
+    site_shape = y.shape[1:-1]
+    L = a_table.shape[0]
+    y_flat = y.reshape((B, -1, d))
+    dot = jnp.einsum("bsd,ld->bsl", y_flat, a_table)
+    y_norm2 = jnp.sum(y_flat * y_flat, axis=-1, keepdims=True)
+    a_norm2 = jnp.sum(a_table * a_table, axis=-1)[None, None, :]
+    alpha_3 = alpha_t[:, None, None]
+    dist2_flat = (
+        y_norm2 - 2.0 * alpha_3 * dot + (alpha_3 * alpha_3) * a_norm2
+    )
+    return dist2_flat.reshape((B,) + site_shape + (L,))
+
+
+def vp_jump_logpdf_all_anchors(
+    y: Array, t: Array, a_table: Array, jump: VPMatchedGaussianJump
+) -> Array:
+    """``log r_a(y) = log N(y; alpha(t) a, eta^2 sigma^2(t) I_d)`` for every anchor.
+
+    Returns shape ``(B, *site_shape, L)`` without expanding the ``d``-axis.
+    """
+    y = jnp.asarray(y, dtype=jnp.float32)
+    t = jnp.asarray(t, dtype=jnp.float32)
+    a_table = jnp.asarray(a_table, dtype=jnp.float32)
+    eta = float(jump.eta)
+    std_floor = float(jump.std_floor)
+    d = int(y.shape[-1])
+
+    alpha_t, sigma_t = alpha_sigma(jump.beta, t)
+    alpha_t = alpha_t.astype(jnp.float32)
+    sigma_t = sigma_t.astype(jnp.float32)
+
+    var = jnp.maximum(
+        jnp.square(eta * sigma_t),
+        jnp.square(jnp.asarray(std_floor, dtype=jnp.float32)),
+    )
+    log_2pi = jnp.log(jnp.asarray(2.0 * jnp.pi, dtype=jnp.float32))
+
+    dist2 = _squared_distance_all_anchors(y, a_table, alpha_t)
+    site_pad = (1,) * (y.ndim - 2)
+    var_b = var.reshape((-1,) + site_pad + (1,))
+    return -0.5 * (
+        d * (log_2pi + jnp.log(var_b)) + dist2 / (var_b + 1e-12)
+    )
+
+
+def mixture_logpdf_all_anchors(
+    y: Array,
+    t: Array,
+    anchors,
+    beta,
+    hazard: HazardSchedule,
+    jump: VPMatchedGaussianJump,
+    tau_grid_size: int = 32,
+    tau_grid: str = "uniform",
+) -> Array:
+    """``log p_t^ac(y | a_l)`` for every anchor a_l, shape ``(B, *site_shape, L)``.
+
+    Same tau-quadrature integrand as ``mixture_logpdf`` but vectorized over L:
+    the L-axis is added to the streaming online-LSE carry so peak memory stays
+    at one ``(B, *site_shape, L)`` tensor (no stacked tau-components).
+
+    Frequency-weighted hazards: ``anchors.effective_log_w`` (shape ``(L,)``) is
+    forwarded as ``log w(a)`` per anchor; the integrand carries the same
+    ``log w(a) + w(a) * log S(tau)`` factors as the per-anchor `mixture_logpdf`.
+    """
+    y = jnp.asarray(y, dtype=jnp.float32)
+    t = jnp.asarray(t, dtype=jnp.float32)
+    a_table = jnp.asarray(anchors.table_float, dtype=jnp.float32)
+    _eff = getattr(anchors, "effective_log_w", None)
+    if _eff is None:
+        _eff = jnp.zeros((int(a_table.shape[0]),), dtype=jnp.float32)
+    log_w_table = jnp.asarray(_eff, dtype=jnp.float32)
+
+    eta = float(jump.eta)
+    std_floor = float(jump.std_floor)
+    d = int(y.shape[-1])
+    L = int(a_table.shape[0])
+
+    nodes, log_w_q = _build_quadrature(
+        t=t, tau_grid_size=int(tau_grid_size), tau_grid=str(tau_grid)
+    )
+    lam_nodes = jnp.asarray(hazard.lam(nodes), dtype=jnp.float32)
+    log_lam = jnp.log(
+        jnp.maximum(lam_nodes, jnp.asarray(1e-30, dtype=jnp.float32))
+    )
+    log_S = -jnp.asarray(hazard.cum(nodes), dtype=jnp.float32)
+
+    alpha_t, sigma_t = alpha_sigma(beta, t)
+    alpha_t = alpha_t.astype(jnp.float32)
+    sigma_t = sigma_t.astype(jnp.float32)
+    alpha_tau, sigma_tau = alpha_sigma(beta, nodes)
+    alpha_tau = alpha_tau.astype(jnp.float32)
+    sigma_tau = sigma_tau.astype(jnp.float32)
+
+    deficit = (
+        (1.0 - eta * eta)
+        * jnp.square(alpha_t[None, :] / alpha_tau)
+        * jnp.square(sigma_tau)
+    )
+    v = jnp.maximum(
+        jnp.square(sigma_t)[None, :] - deficit,
+        jnp.square(jnp.asarray(std_floor, dtype=jnp.float32)),
+    )
+
+    dist2 = _squared_distance_all_anchors(y, a_table, alpha_t)
+
+    site_pad = (1,) * (y.ndim - 2)
+    log_2pi = jnp.log(jnp.asarray(2.0 * jnp.pi, dtype=jnp.float32))
+    log_w_a = log_w_table.reshape((1,) + site_pad + (L,))
+    w_a = jnp.exp(log_w_a)
+
+    out_shape = dist2.shape
+
+    def step(carry, x):
+        log_w_q_i, log_lam_i, log_S_i, v_i = x
+        v_b = v_i.reshape((-1,) + site_pad + (1,))
+        log_N = -0.5 * (
+            d * (log_2pi + jnp.log(v_b)) + dist2 / v_b
+        )
+        prefix = (log_w_q_i + log_lam_i).reshape((-1,) + site_pad + (1,))
+        log_S_b = log_S_i.reshape((-1,) + site_pad + (1,))
+        weight = prefix + log_w_a + log_S_b * w_a
+        log_x = weight + log_N
+        m_new, l_new = _online_lse_step(carry[0], carry[1], log_x)
+        return (m_new, l_new), None
+
+    m_init = jnp.full(out_shape, -jnp.inf, dtype=jnp.float32)
+    l_init = jnp.zeros(out_shape, dtype=jnp.float32)
+    xs = (log_w_q, log_lam, log_S, v)
+    (m_final, l_final), _ = jax.lax.scan(step, (m_init, l_init), xs)
+    return m_final + jnp.log(l_final)
+
+
 def mixture_logpdf(
     y: Array,
     anchor: Array,

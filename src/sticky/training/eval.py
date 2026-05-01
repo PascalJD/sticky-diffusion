@@ -5,6 +5,7 @@ import zlib
 from typing import Any, Dict, Optional
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 from omegaconf import DictConfig
 
@@ -61,6 +62,14 @@ def _extract_images(cfg: DictConfig, out):
         imgs = out
     imgs = jax.block_until_ready(imgs)
     return np.clip(to_numpy(imgs), 0, 255).astype(np.uint8)
+
+
+def _extract_samples(cfg: DictConfig, out):
+    if str(cfg.model.name) == "sjd":
+        samples = out.k_filled
+    else:
+        samples = out
+    return to_numpy(jax.block_until_ready(samples))
 
 
 def _compute_joint_fid_is(
@@ -234,7 +243,9 @@ def build_eval_logger(
             while len(lines) < num_samples:
                 sample_rng = jax.random.fold_in(base_rng, batch_idx)
                 samples = sample_images_fid_jit(params_for_sampling, sample_rng)
-                sample_np = np.asarray(to_numpy(jax.block_until_ready(samples)))
+                sample_np = np.asarray(_extract_samples(cfg, samples))
+                if sample_np.ndim == 0:
+                    sample_np = sample_np[None]
                 remaining = num_samples - len(lines)
                 sample_np = sample_np[: min(remaining, batch_size)]
 
@@ -257,11 +268,15 @@ def build_eval_logger(
                 lines.extend(rendered)
                 batch_idx += 1
 
+            final_lines = lines[:num_samples]
             out_path = output_dir / f"{output_prefix}_step_{int(step_i):07d}.txt"
             out_path.write_text(
-                "\n".join(lines[:num_samples]) + "\n",
+                "\n".join(final_lines) + "\n",
                 encoding="utf-8",
             )
+            print("[eval] Generated text samples:", flush=True)
+            for idx, line in enumerate(final_lines, start=1):
+                print(f"[eval][sample {idx}] {line}", flush=True)
             print(
                 f"[eval] Wrote {num_samples} text samples to {out_path}",
                 flush=True,

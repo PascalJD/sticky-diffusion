@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import zlib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import jax
+import numpy as np
 from flax.training import checkpoints
 from omegaconf import DictConfig, OmegaConf
 
@@ -468,6 +470,79 @@ def _collect_sjd_sampler_probe_metrics(
     return mean_metrics
 
 
+def _maybe_anchor_table(params: Any):
+    try:
+        anchors = params.get("anchors", None)
+    except Exception:
+        anchors = None
+    if anchors is None:
+        return None
+    try:
+        return anchors.get("table", None)
+    except Exception:
+        return None
+
+
+def _array_crc32_hex(value: Any) -> Optional[str]:
+    try:
+        arr = np.asarray(jax.device_get(value))
+        return f"{zlib.crc32(arr.tobytes()) & 0xFFFFFFFF:08x}"
+    except Exception:
+        return None
+
+
+def _anchor_stats_payload(anchor_table: Any) -> Optional[Dict[str, Any]]:
+    if anchor_table is None:
+        return None
+    arr = np.asarray(jax.device_get(anchor_table), dtype=np.float32)
+    if arr.ndim != 2:
+        return {
+            "shape": list(arr.shape),
+            "ndim": int(arr.ndim),
+            "crc32": _array_crc32_hex(arr),
+        }
+
+    row_norms = np.linalg.norm(arr, axis=1)
+    head = arr[0, : min(8, arr.shape[1])].astype(np.float32).tolist() if arr.shape[0] > 0 else []
+    return {
+        "shape": [int(arr.shape[0]), int(arr.shape[1])],
+        "dtype": str(arr.dtype),
+        "crc32": _array_crc32_hex(arr),
+        "mean": float(arr.mean()),
+        "std": float(arr.std()),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+        "row_norm_mean": float(row_norms.mean()),
+        "row_norm_std": float(row_norms.std()),
+        "row0_head": [float(x) for x in head],
+    }
+
+
+def _build_checkpoint_sanity_payload(
+    *,
+    state_template,
+    params_for_eval,
+    param_source: str,
+) -> Dict[str, Any]:
+    template_anchor = _maybe_anchor_table(state_template.params)
+    loaded_anchor = _maybe_anchor_table(params_for_eval)
+
+    template_crc = _array_crc32_hex(template_anchor)
+    loaded_crc = _array_crc32_hex(loaded_anchor)
+
+    return {
+        "param_source": str(param_source),
+        "template_anchor_crc32": template_crc,
+        "loaded_anchor_crc32": loaded_crc,
+        "anchor_matches_init_template": (
+            None
+            if template_crc is None or loaded_crc is None
+            else bool(template_crc == loaded_crc)
+        ),
+        "loaded_anchor": _anchor_stats_payload(loaded_anchor),
+    }
+
+
 def run_offline_checkpoint_eval(
     *,
     cfg: DictConfig,
@@ -528,6 +603,12 @@ def run_offline_checkpoint_eval(
             )
         params_for_eval = state.params
         param_source = "live"
+
+    checkpoint_sanity = _build_checkpoint_sanity_payload(
+        state_template=state_template,
+        params_for_eval=params_for_eval,
+        param_source=param_source,
+    )
 
     eval_cfg_local = _clone_eval_cfg(eval_cfg)
     eval_cfg_local.run_at_end = True
@@ -766,6 +847,7 @@ def run_offline_checkpoint_eval(
             ),
         },
         "metrics": metrics,
+        "checkpoint_sanity": checkpoint_sanity,
     }
     if run_context_payload is not None:
         payload["run_context"] = {
@@ -795,6 +877,20 @@ def run_offline_checkpoint_eval(
     print(
         "[offline-eval] "
         f"checkpoint={selected_ckpt} step={restored_step} param_source={param_source}",
+        flush=True,
+    )
+    loaded_anchor = checkpoint_sanity.get("loaded_anchor", None)
+    if isinstance(loaded_anchor, dict):
+        print(
+            "[offline-eval] "
+            f"anchor_crc32={loaded_anchor.get('crc32')} "
+            f"shape={loaded_anchor.get('shape')} "
+            f"row_norm_mean={loaded_anchor.get('row_norm_mean')}",
+            flush=True,
+        )
+    print(
+        "[offline-eval] "
+        f"anchor_matches_init_template={checkpoint_sanity.get('anchor_matches_init_template')}",
         flush=True,
     )
     print(
