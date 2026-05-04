@@ -12,6 +12,23 @@ from sticky.core.paths import resolve_against_original_cwd
 Array = jnp.ndarray
 
 
+def hazard_weighting_mode(cfg_hazard_weighting: Any) -> str:
+    """Return one of {"none", "frequency", "learned"} for a hazard_weighting cfg.
+
+    The ``mode`` key disambiguates the three Hydra configs explicitly. For
+    backward compatibility with checkpoints/configs predating ``mode``, fall
+    back to the legacy inference: ``enabled=true`` ⇒ ``frequency``, else
+    ``none``.
+    """
+    if cfg_hazard_weighting is None:
+        return "none"
+    mode = getattr(cfg_hazard_weighting, "mode", None)
+    if mode in ("none", "frequency", "learned"):
+        return str(mode)
+    enabled = bool(getattr(cfg_hazard_weighting, "enabled", False))
+    return "frequency" if enabled else "none"
+
+
 def load_anchor_log_w(cfg_hazard_weighting: Any, vocab_size: int) -> Optional[Array]:
     """Resolve a cfg.forward.hazard_weighting block to a (vocab_size,) log_w array.
 

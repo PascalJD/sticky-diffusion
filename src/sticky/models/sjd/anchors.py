@@ -738,6 +738,8 @@ class TokenAnchors(nn.Module):
 
     config: AnchorTableConfig
     learnable: bool = True
+    learnable_log_w: bool = False
+    log_w_init: Any = None
 
     def _normalize(self, table: Array) -> Array:
         """Apply CDCD-style L2-normalize-then-scale-by-sqrt(d), if enabled.
@@ -753,6 +755,14 @@ class TokenAnchors(nn.Module):
         scale = jnp.sqrt(jnp.asarray(table.shape[-1], dtype=table.dtype))
         return unit * scale
 
+    def _recenter_log_w(self, log_w: Array) -> Array:
+        # β(t) absorbs additive shifts to log_w, leaving the parameter free
+        # to drift along an unidentifiable direction. Subtract the mean every
+        # forward use so gradients only push log_w along identifiable
+        # directions.
+        log_w = log_w.astype(jnp.float32)
+        return log_w - jnp.mean(log_w)
+
     @nn.compact
     def __call__(self, ids: Array) -> Array:
         table = self.param(
@@ -764,6 +774,21 @@ class TokenAnchors(nn.Module):
         if not self.learnable:
             table = jax.lax.stop_gradient(table)
         table = self._normalize(table)
+        if self.learnable_log_w:
+            log_w_init = self.log_w_init
+
+            def _log_w_initializer(key, shape, dtype=jnp.float32):
+                del key
+                if log_w_init is not None:
+                    return jnp.asarray(log_w_init, dtype=dtype).reshape(shape)
+                return jnp.zeros(shape, dtype=dtype)
+
+            self.param(
+                "log_w",
+                _log_w_initializer,
+                (int(self.config.vocab_size),),
+                jnp.float32,
+            )
         return jnp.take(table, ids, axis=0)
 
     def table_float(self) -> Array:
@@ -772,6 +797,12 @@ class TokenAnchors(nn.Module):
             table = jax.lax.stop_gradient(table)
         table = self._normalize(table)
         return table.astype(jnp.float32)
+
+    def log_w_float(self) -> Array | None:
+        if not self.learnable_log_w:
+            return None
+        log_w = self.get_variable("params", "log_w")
+        return self._recenter_log_w(log_w)
 
 
 @struct.dataclass

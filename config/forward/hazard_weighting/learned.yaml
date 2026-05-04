@@ -1,0 +1,15 @@
+# Learned hazard weighting: lambda_t(a) = beta(t) * w(a) where log w(a) is a
+# trainable Flax parameter living at params["anchors"]["log_w"]. The runtime
+# subtracts the per-step mean of log_w on every forward use so β(t) cannot
+# absorb arbitrary additive shifts.
+mode: learned
+enabled: true
+# zeros: start from w(a) ≡ 1 (anchor-agnostic baseline at step 0).
+# frequency: initialize from the same .npz used by hazard_weighting=frequency
+# (requires log_w_path). The loaded array is mean-shifted to zero before init
+# so step 0 reproduces the frozen frequency path bit-exactly.
+init: zeros
+log_w_path: null
+smoothing_alpha: 1.0
+normalize_mean: true
+clip: [0.1, 10.0]

@@ -37,6 +37,7 @@ class SudokuInpaintSJDTask(Task):
     time_sampling: str = "uniform"
     loss_weighting: str = "uniform"
     anchor_log_w: Optional[Array] = None
+    learn_log_w: bool = False
     pass_noisy_mask_to_model: bool = False
     drop_remainder: bool = True
     shuffle: bool = True
@@ -172,6 +173,11 @@ class SudokuInpaintSJDTask(Task):
                 **extra_kwargs,
             )
 
+        if self.learn_log_w:
+            anchor_log_w = model.apply({"params": params}, method=model.anchor_log_w)
+        else:
+            anchor_log_w = self.anchor_log_w
+
         loss, metrics = ce_allocation_loss(
             key=key_loss,
             params=params,
@@ -187,7 +193,7 @@ class SudokuInpaintSJDTask(Task):
             given_mask=clue_mask,
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
-            anchor_log_w=self.anchor_log_w,
+            anchor_log_w=anchor_log_w,
             pass_noisy_mask_to_model=bool(self.pass_noisy_mask_to_model),
         )
 

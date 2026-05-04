@@ -72,7 +72,10 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
 
 
 def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
-    from sticky.models.sjd.freq_weighting import load_anchor_log_w
+    from sticky.models.sjd.freq_weighting import (
+        hazard_weighting_mode,
+        load_anchor_log_w,
+    )
 
     beta = hydra.utils.instantiate(cfg.forward.beta)
     hazard_cfg = cfg.forward.get("hazard", None)
@@ -81,7 +84,15 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
-    anchor_log_w = load_anchor_log_w(hazard_weighting_cfg, vocab_size=vocab_size)
+    hw_mode = hazard_weighting_mode(hazard_weighting_cfg)
+    if hw_mode == "learned":
+        # log_w lives in `params` under "anchors/log_w"; the task reads it from
+        # there inside loss_fn so gradients can flow.
+        anchor_log_w = None
+        learn_log_w = True
+    else:
+        anchor_log_w = load_anchor_log_w(hazard_weighting_cfg, vocab_size=vocab_size)
+        learn_log_w = False
     return {
         "beta": beta,
         "hazard": hazard,
@@ -97,6 +108,7 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "time_sampling": str(cfg.training.get("time_sampling", "uniform")),
         "loss_weighting": str(cfg.training.get("loss_weighting", "uniform")),
         "anchor_log_w": anchor_log_w,
+        "learn_log_w": learn_log_w,
         "pass_noisy_mask_to_model": bool(
             cfg.get("model", {}).get("use_noisy_input_bias", False)
         ),

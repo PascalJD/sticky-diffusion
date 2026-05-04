@@ -157,6 +157,7 @@ def build_sampling_fns(
         hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
         jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
         anchor_log_w = getattr(task, "anchor_log_w", None)
+        learn_log_w = bool(getattr(task, "learn_log_w", False))
 
         sampler_cfg = _sjd_sampler_cfg_from_dict(
             _base_sampler_spec_from_cfg(cfg.sampler, sample_timesteps=sample_timesteps)
@@ -164,8 +165,14 @@ def build_sampling_fns(
 
         def _sample_images_sjd(params, rng, batch_size: int):
             a_table = model.apply({"params": params}, method=model.anchor_table)
-            if anchor_log_w is not None:
-                anchors = AnchorTable(table_float=a_table, log_w=anchor_log_w)
+            if learn_log_w:
+                log_w_for_table = model.apply(
+                    {"params": params}, method=model.anchor_log_w
+                )
+            else:
+                log_w_for_table = anchor_log_w
+            if log_w_for_table is not None:
+                anchors = AnchorTable(table_float=a_table, log_w=log_w_for_table)
             else:
                 anchors = AnchorTable(table_float=a_table)
             return sjd_sampling.simple_generate(

@@ -367,11 +367,34 @@ def _build_d3pm(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 
 def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
     del data_shape
+    import jax.numpy as jnp
+
     from sticky.models.sjd.anchors import (
         anchor_learnable_from_mapping,
         anchor_table_config_from_mapping,
     )
+    from sticky.models.sjd.freq_weighting import (
+        hazard_weighting_mode,
+        load_anchor_log_w,
+    )
     from sticky.models.sjd.sjd_model import SJD
+
+    hw_cfg = cfg.get("forward", {}).get("hazard_weighting", None)
+    hw_mode = hazard_weighting_mode(hw_cfg)
+    learnable_log_w = hw_mode == "learned"
+    log_w_init = None
+    if learnable_log_w:
+        init = str(getattr(hw_cfg, "init", "zeros"))
+        if init == "frequency":
+            loaded = load_anchor_log_w(hw_cfg, vocab_size=int(vocab_size))
+            if loaded is None:
+                raise ValueError(
+                    "hazard_weighting=learned init=frequency requires "
+                    "enabled=true and a valid log_w_path."
+                )
+            # Match the runtime mean-zero re-centering so the at-init forward
+            # pass reproduces the frozen `frequency` path bit-exactly.
+            log_w_init = loaded - jnp.mean(loaded)
 
     return SJD(
         vocab_size=vocab_size,
@@ -380,6 +403,8 @@ def _build_sjd(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int)
             vocab_size=vocab_size,
         ),
         learnable_anchors=anchor_learnable_from_mapping(cfg.model, default=True),
+        learnable_log_w=learnable_log_w,
+        log_w_init=log_w_init,
         use_noisy_input_bias=bool(cfg.model.get("use_noisy_input_bias", False)),
         feature_dim=int(cfg.model.feature_dim),
         n_layers=int(cfg.model.n_layers),

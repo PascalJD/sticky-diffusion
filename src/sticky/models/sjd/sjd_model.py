@@ -1,6 +1,7 @@
 # src/sticky/models/sjd/sjd_model.py
 from __future__ import annotations
 from collections.abc import Sequence
+from typing import Any
 import flax.linen as nn
 import jax.numpy as jnp
 
@@ -13,6 +14,8 @@ Array = jnp.ndarray
 class SJD(nn.Module):
     anchor_config: AnchorTableConfig
     learnable_anchors: bool = True
+    learnable_log_w: bool = False
+    log_w_init: Any = None
     # When True, the model maintains a learnable anchor_dim-sized bias
     # vector that is added to y_t at uncommitted (noisy) site positions
     # before the classifier sees it. The mask is supplied per-call via the
@@ -61,6 +64,8 @@ class SJD(nn.Module):
         self.anchors = TokenAnchors(
             config=self.anchor_config,
             learnable=self.learnable_anchors,
+            learnable_log_w=self.learnable_log_w,
+            log_w_init=self.log_w_init,
         )
         self.classifier = ContinuousClassifier(
             n_layers=self.n_layers,
@@ -106,6 +111,9 @@ class SJD(nn.Module):
 
     def anchor_table(self) -> Array:
         return self.anchors.table_float()
+
+    def anchor_log_w(self) -> Array | None:
+        return self.anchors.log_w_float()
 
     def __call__(
         self,
