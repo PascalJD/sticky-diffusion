@@ -120,6 +120,10 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "loss_weighting": loss_weighting,
         "anchor_log_w": anchor_log_w,
         "learn_log_w": learn_log_w,
+        "t_floor": float(cfg.training.get("t_floor", 1e-3)),
+        "log_anchor_log_w_stats": bool(
+            cfg.training.get("log_anchor_log_w_stats", True)
+        ),
         "pass_noisy_mask_to_model": bool(
             cfg.get("model", {}).get("use_noisy_input_bias", False)
         ),

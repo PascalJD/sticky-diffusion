@@ -200,3 +200,112 @@ def test_hazard_deriv_none_fallback_runs():
     assert loss.dtype == jnp.float32
     assert bool(jnp.isfinite(loss))
     assert bool(jnp.isfinite(metrics["t/mean"]))
+
+
+def test_t_floor_caps_hazard_deriv_max_weight():
+    """With t clamped to [t_floor, T-t_floor] and a +2 entry in log_w, the
+    pre-normalization w_t stays bounded — no late-decimal blow-ups that could
+    crush the batch mean and zero-out gradients on the rest of the batch.
+    """
+    K = 8
+    T = 1.0
+    t_floor = 1e-3
+    log_w = jnp.zeros((K,), dtype=jnp.float32).at[0].set(2.0)
+
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=T)
+    hazard = make_hazard_linear_time(beta, kappa=1.5)
+
+    B, seq_len = 64, 4
+    # Bias x0_idx toward anchor 0 (the +2 entry) so the worst case dominates.
+    x0_idx = jnp.zeros((B, seq_len), dtype=jnp.int32)
+    target_like = jnp.zeros((B, seq_len), dtype=jnp.float32)
+
+    # Worst-case t inputs: every example sits at the floor.
+    t_at_floor = jnp.full((B,), t_floor, dtype=jnp.float32)
+    w_t = _hazard_deriv_weights(
+        t_img=t_at_floor, beta=beta, hazard=hazard,
+        anchor_log_w=log_w, x0_idx=x0_idx, target_like=target_like,
+    )
+    max_w = float(jnp.max(w_t))
+    assert max_w < 1e3, (
+        f"t_floor=1e-3 should bound max w_t under 1e3 with +2 anchor, "
+        f"got max={max_w:.2f}"
+    )
+
+    # Sanity: without the floor (t one decade smaller), the same setup
+    # comfortably exceeds 1e3 — confirms the test is exercising the regime.
+    t_below = jnp.full((B,), 1e-5, dtype=jnp.float32)
+    w_t_below = _hazard_deriv_weights(
+        t_img=t_below, beta=beta, hazard=hazard,
+        anchor_log_w=log_w, x0_idx=x0_idx, target_like=target_like,
+    )
+    assert float(jnp.max(w_t_below)) > 1e3, (
+        "regression: regime check expected max w_t > 1e3 without the floor"
+    )
+
+
+def test_ce_allocation_loss_t_floor_clamps_t_img():
+    """The t_floor kwarg actually clamps the sampled t_img. Verify by reading
+    t/mean and t/std from the metrics — neither should reach the unclamped
+    [0, T) range when t_floor is large.
+    """
+    kw = _toy(anchor_log_w=None)
+    loss, metrics = ce_allocation_loss(
+        key=jax.random.PRNGKey(17),
+        loss_weighting="hazard_deriv",
+        t_floor=0.4,           # huge floor → t restricted to [0.4, 0.6]
+        **kw,
+    )
+    assert bool(jnp.isfinite(loss))
+    # Mean of uniform[0.4, 0.6] is 0.5; clamped uniform[0, 1] also lands near
+    # 0.5 because the bulk of mass is in the interior. Use a generous range.
+    assert 0.35 < float(metrics["t/mean"]) < 0.65, (
+        f"t/mean={float(metrics['t/mean']):.3f} suggests t_floor was not applied"
+    )
+
+
+def test_log_w_diagnostics_emitted_when_anchor_log_w_present():
+    """All four log_w/* metrics appear, are scalar, and finite when log_w is
+    threaded through the loss; absent when log_anchor_log_w_stats=False."""
+    K = 8
+    log_w = jax.random.normal(
+        jax.random.PRNGKey(21), (K,), dtype=jnp.float32
+    )
+    kw = _toy(K=K, anchor_log_w=log_w)
+
+    _, metrics_on = ce_allocation_loss(
+        key=jax.random.PRNGKey(22),
+        loss_weighting="hazard_deriv",
+        log_anchor_log_w_stats=True,
+        **kw,
+    )
+    expected = ("log_w/mean", "log_w/std", "log_w/range", "log_w/top1_minus_bot1")
+    for name in expected:
+        assert name in metrics_on, f"missing diagnostic: {name}"
+        val = metrics_on[name]
+        assert val.shape == (), f"{name} should be a scalar, got shape {val.shape}"
+        assert bool(jnp.isfinite(val)), f"{name} is non-finite"
+
+    # Off path: keys absent, baseline metrics still present.
+    _, metrics_off = ce_allocation_loss(
+        key=jax.random.PRNGKey(22),
+        loss_weighting="hazard_deriv",
+        log_anchor_log_w_stats=False,
+        **kw,
+    )
+    for name in expected:
+        assert name not in metrics_off, f"unexpected diagnostic when disabled: {name}"
+    assert "loss" in metrics_off
+
+
+def test_log_w_diagnostics_absent_when_anchor_log_w_none():
+    """The diagnostics block is gated on anchor_log_w being non-None."""
+    kw = _toy(anchor_log_w=None)
+    _, metrics = ce_allocation_loss(
+        key=jax.random.PRNGKey(23),
+        loss_weighting="hazard_deriv",
+        log_anchor_log_w_stats=True,
+        **kw,
+    )
+    for name in ("log_w/mean", "log_w/std", "log_w/range", "log_w/top1_minus_bot1"):
+        assert name not in metrics, f"unexpected diagnostic when log_w is None: {name}"

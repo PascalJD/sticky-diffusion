@@ -69,6 +69,8 @@ def ce_allocation_loss(
     loss_weighting: str = "uniform",
     anchor_log_w: Optional[Array] = None,
     pass_noisy_mask_to_model: bool = False,
+    t_floor: float = 1e-3,
+    log_anchor_log_w_stats: bool = True,
 ) -> Tuple[Array, Metrics]:
     if hazard is None:
         raise ValueError("ce_allocation_loss requires a hazard schedule.")
@@ -101,6 +103,15 @@ def ce_allocation_loss(
         t_img = jnp.concatenate([t_half, t_complement], axis=0)[:B]
     else:
         t_img = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=float(T))
+
+    # Clamp t away from {0, T}. The hazard_deriv weight ~ 1/t at t→0 and is
+    # amplified by w(a) when log_w is non-uniform, so a single very-small-t
+    # draw can spike the batch mean and crush gradient signal on the rest.
+    # Default 1e-3 keeps existing baselines (which mostly use uniform/alpha_deriv
+    # weighting) qualitatively unchanged.
+    t_floor_f = float(t_floor)
+    t_ceil_f = float(T) - t_floor_f
+    t_img = jnp.clip(t_img, t_floor_f, t_ceil_f)
 
     # SJD-paired corruption: x_t ~ N(alpha(t) a, v_t(tau) I) with tau drawn
     # from the truncated lam(tau)*S(tau) density on (0, t); never_unstuck_mask
@@ -193,6 +204,18 @@ def ce_allocation_loss(
         "t/mean": jnp.mean(t_img),
         "t/std": jnp.std(t_img),
     }
+
+    # log_w/* track the per-anchor weight used in the hazard_deriv path.
+    # mean is a sanity check on the runtime mean-zero recentering; std/range
+    # tell us whether log_w is moving over training.
+    if (anchor_log_w is not None) and bool(log_anchor_log_w_stats):
+        lw = jnp.asarray(anchor_log_w, dtype=jnp.float32)
+        lw_max = jnp.max(lw)
+        lw_min = jnp.min(lw)
+        metrics["log_w/mean"] = jnp.mean(lw)
+        metrics["log_w/std"] = jnp.std(lw)
+        metrics["log_w/range"] = lw_max - lw_min
+        metrics["log_w/top1_minus_bot1"] = lw_max - lw_min
 
     # state_dep/log_ratio_{mean,std} are always emitted when both jump and
     # anchor_table are available (the active-mask diagnostic on the DHM

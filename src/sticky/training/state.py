@@ -85,11 +85,23 @@ def _path_keys(path: Sequence[Any]) -> tuple[Any, ...]:
     )
 
 
-def _sjd_optimizer_labels(params: Any):
+def _sjd_optimizer_labels(params: Any, *, anchors_learnable: bool):
     def _label(path, _leaf):
-        return "frozen" if _path_keys(path) == ("anchors", "table") else "trainable"
+        keys = _path_keys(path)
+        if keys == ("anchors", "table"):
+            return "trainable" if anchors_learnable else "frozen"
+        if keys == ("anchors", "log_w"):
+            return "log_w"
+        return "trainable"
 
     return jax.tree_util.tree_map_with_path(_label, params)
+
+
+def _params_have_log_w(params: Any) -> bool:
+    anchors = params.get("anchors", None) if hasattr(params, "get") else None
+    if anchors is None:
+        return False
+    return "log_w" in anchors
 
 
 def make_optimizer(cfg: DictConfig, params: Any):
@@ -101,17 +113,32 @@ def make_optimizer(cfg: DictConfig, params: Any):
         weight_decay=float(cfg.optim.weight_decay),
     )
     base_tx: optax.GradientTransformation = adamw_tx
-    if (
-        str(cfg.model.name) == "sjd"
-        and not anchor_learnable_from_mapping(cfg.model, default=True)
-    ):
-        base_tx = optax.multi_transform(
-            {
-                "trainable": adamw_tx,
-                "frozen": optax.set_to_zero(),
-            },
-            _sjd_optimizer_labels(params),
-        )
+    if str(cfg.model.name) == "sjd":
+        anchors_learnable = anchor_learnable_from_mapping(cfg.model, default=True)
+        learn_log_w = _params_have_log_w(params)
+        if (not anchors_learnable) or learn_log_w:
+            log_w_multiplier = float(
+                cfg.training.get("log_w_lr_multiplier", 100.0)
+            )
+            # log_w needs a much larger LR than the classifier (the gradient
+            # through the SJD ELBO prefactor is ~O(1e-3) per coordinate).
+            # Plain Adam, no weight decay — we don't want to shrink log_w.
+            log_w_lr_schedule = lambda step: log_w_multiplier * lr_schedule(step)
+            log_w_tx = optax.adam(
+                learning_rate=log_w_lr_schedule,
+                b1=0.9,
+                b2=float(cfg.optim.b2),
+            )
+            base_tx = optax.multi_transform(
+                {
+                    "trainable": adamw_tx,
+                    "frozen": optax.set_to_zero(),
+                    "log_w": log_w_tx,
+                },
+                _sjd_optimizer_labels(
+                    params, anchors_learnable=anchors_learnable
+                ),
+            )
 
     grad_clip_norm = float(cfg.optim.get("grad_clip_norm", 0.0))
     if grad_clip_norm > 0.0:

@@ -38,6 +38,8 @@ class SudokuInpaintSJDTask(Task):
     loss_weighting: str = "uniform"
     anchor_log_w: Optional[Array] = None
     learn_log_w: bool = False
+    t_floor: float = 1e-3
+    log_anchor_log_w_stats: bool = True
     pass_noisy_mask_to_model: bool = False
     drop_remainder: bool = True
     shuffle: bool = True
@@ -194,6 +196,8 @@ class SudokuInpaintSJDTask(Task):
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),
             anchor_log_w=anchor_log_w,
+            t_floor=float(self.t_floor),
+            log_anchor_log_w_stats=bool(self.log_anchor_log_w_stats),
             pass_noisy_mask_to_model=bool(self.pass_noisy_mask_to_model),
         )
 

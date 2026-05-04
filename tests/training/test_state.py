@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from sticky.rng import ensure_prng_key, legacy_prng_key_data, make_rng
-from sticky.training.state import init_state
+from sticky.training.state import init_state, make_optimizer
 
 
 class _DummyDiscreteModel:
@@ -110,3 +110,84 @@ def test_init_state_returns_typed_rng_key():
 
     assert state.rng.shape == ()
     assert jax.random.key_data(state.rng).shape == (2,)
+
+
+def test_make_optimizer_routes_log_w_through_separate_chain():
+    """make_optimizer routes params['anchors']['log_w'] through its own Adam
+    with LR ≈ multiplier × base_lr. Verifies the multi_transform routing — at
+    step 1 with g=1 everywhere and weight_decay=0, both Adam and AdamW produce
+    update ≈ −lr, so the per-leaf update ratio equals the LR ratio.
+    """
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "sjd", "learnable_anchors": True, "classes": -1},
+            "optim": {
+                "warmup_steps": 0,
+                "learning_rate": 1e-4,
+                "b2": 0.999,
+                "weight_decay": 0.0,
+                "lr_schedule": "warmup_constant",
+                "grad_clip_norm": 0.0,
+            },
+            "training": {
+                "num_train_steps": 100,
+                "max_steps": 100,
+                "log_w_lr_multiplier": 100.0,
+            },
+        }
+    )
+    params = {
+        "anchors": {
+            "table": jnp.zeros((4, 2), dtype=jnp.float32),
+            "log_w": jnp.zeros((4,), dtype=jnp.float32),
+        },
+        "classifier": {"W": jnp.zeros((2, 4), dtype=jnp.float32)},
+    }
+    tx = make_optimizer(cfg, params)
+    state = tx.init(params)
+    grads = jax.tree_util.tree_map(jnp.ones_like, params)
+    updates, _ = tx.update(grads, state, params)
+
+    log_w_step = float(jnp.mean(jnp.abs(updates["anchors"]["log_w"])))
+    classifier_step = float(jnp.mean(jnp.abs(updates["classifier"]["W"])))
+    assert classifier_step > 0.0, "classifier update is zero — multi_transform misrouted"
+    ratio = log_w_step / classifier_step
+    assert 90.0 < ratio < 110.0, (
+        f"expected log_w step ~100x classifier step, got ratio={ratio:.3f}"
+    )
+
+
+def test_make_optimizer_log_w_lr_multiplier_overridable():
+    cfg = OmegaConf.create(
+        {
+            "model": {"name": "sjd", "learnable_anchors": True, "classes": -1},
+            "optim": {
+                "warmup_steps": 0,
+                "learning_rate": 1e-4,
+                "b2": 0.999,
+                "weight_decay": 0.0,
+                "lr_schedule": "warmup_constant",
+                "grad_clip_norm": 0.0,
+            },
+            "training": {
+                "num_train_steps": 10,
+                "max_steps": 10,
+                "log_w_lr_multiplier": 25.0,
+            },
+        }
+    )
+    params = {
+        "anchors": {
+            "table": jnp.zeros((4, 2), dtype=jnp.float32),
+            "log_w": jnp.zeros((4,), dtype=jnp.float32),
+        },
+        "classifier": {"W": jnp.zeros((2, 4), dtype=jnp.float32)},
+    }
+    tx = make_optimizer(cfg, params)
+    state = tx.init(params)
+    grads = jax.tree_util.tree_map(jnp.ones_like, params)
+    updates, _ = tx.update(grads, state, params)
+    ratio = float(jnp.mean(jnp.abs(updates["anchors"]["log_w"]))) / float(
+        jnp.mean(jnp.abs(updates["classifier"]["W"]))
+    )
+    assert 22.0 < ratio < 28.0, f"expected ~25x with multiplier=25, got {ratio:.3f}"
