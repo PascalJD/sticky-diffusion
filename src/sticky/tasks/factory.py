@@ -93,6 +93,17 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     else:
         anchor_log_w = load_anchor_log_w(hazard_weighting_cfg, vocab_size=vocab_size)
         learn_log_w = False
+    loss_weighting = str(cfg.training.get("loss_weighting", "uniform"))
+    hw_loss_weighting = (
+        getattr(hazard_weighting_cfg, "loss_weighting", None)
+        if hazard_weighting_cfg is not None
+        else None
+    )
+    if hw_loss_weighting not in (None, "", "null"):
+        # The hazard_weighting config can pin loss_weighting (e.g. learned.yaml
+        # sets hazard_deriv so log_w actually receives gradient). Field-level
+        # CLI overrides on forward.hazard_weighting.loss_weighting still apply.
+        loss_weighting = str(hw_loss_weighting)
     return {
         "beta": beta,
         "hazard": hazard,
@@ -106,7 +117,7 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
             )
         ),
         "time_sampling": str(cfg.training.get("time_sampling", "uniform")),
-        "loss_weighting": str(cfg.training.get("loss_weighting", "uniform")),
+        "loss_weighting": loss_weighting,
         "anchor_log_w": anchor_log_w,
         "learn_log_w": learn_log_w,
         "pass_noisy_mask_to_model": bool(
