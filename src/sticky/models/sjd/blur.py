@@ -8,6 +8,7 @@ the un-sticking variance.
 
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
+    (more added in subsequent tasks)
 """
 
 from __future__ import annotations
@@ -47,5 +48,6 @@ def gaussian_position_kernel(
         logits = jnp.where(eye_mask, -jnp.inf, logits)
 
     W = jax.nn.softmax(logits, axis=-1)
-    W = W / jnp.diagonal(W)[:, None]
-    return W
+    if include_self:
+        W = W / jnp.diagonal(W)[:, None]
+    return W.astype(dtype)
