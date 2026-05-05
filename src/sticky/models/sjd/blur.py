@@ -125,4 +125,4 @@ def sudoku_constraint_kernel(
     # Zero out positions that were masked (-inf) — softmax + division can
     # leave subnormal numerical residue; explicit zero is cleaner.
     W = jnp.where(neighbor, W, jnp.zeros_like(W))
-    return W
+    return W.astype(dtype)
