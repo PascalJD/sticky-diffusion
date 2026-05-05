@@ -9,6 +9,7 @@ the un-sticking variance.
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
+    blur_means(e, kernel)
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from jax import Array
 __all__ = [
     "gaussian_position_kernel",
     "sudoku_constraint_kernel",
+    "blur_means",
 ]
 
 
@@ -126,3 +128,37 @@ def sudoku_constraint_kernel(
     # leave subnormal numerical residue; explicit zero is cleaner.
     W = jnp.where(neighbor, W, jnp.zeros_like(W))
     return W.astype(dtype)
+
+
+def blur_means(
+    e: Array,
+    kernel: Array,
+) -> Array:
+    """Apply a fixed site-blending matrix to per-site embeddings.
+
+    Args:
+        e: shape (B, N, d) — only 1D site_shape supported in phase 1.
+            Multi-D site shapes (e.g., 2D images) raise NotImplementedError;
+            see the prompt for the ImageNet/CIFAR follow-up.
+        kernel: shape (N, N).
+
+    Returns:
+        mu_bar of shape (B, N, d), where
+            mu_bar[b, i, :] = sum_j kernel[i, j] * e[b, j, :].
+    """
+    if e.ndim != 3:
+        raise NotImplementedError(
+            f"blur_means only supports 1D site_shape (e.ndim == 3); "
+            f"got e.shape={tuple(e.shape)} (ndim={e.ndim}). "
+            f"Multi-D site shapes are deferred."
+        )
+    if kernel.ndim != 2 or kernel.shape[0] != kernel.shape[1]:
+        raise ValueError(
+            f"kernel must be square (N, N); got shape {tuple(kernel.shape)}"
+        )
+    if kernel.shape[0] != e.shape[1]:
+        raise ValueError(
+            f"kernel.shape[0] ({kernel.shape[0]}) must equal e.shape[1] "
+            f"({e.shape[1]})"
+        )
+    return jnp.einsum("ij,bjd->bid", kernel, e)

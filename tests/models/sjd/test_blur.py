@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from sticky.models.sjd.blur import gaussian_position_kernel
+from sticky.models.sjd.blur import gaussian_position_kernel, sudoku_constraint_kernel, blur_means
 
 
 def test_gaussian_position_kernel_small_sigma_is_identity():
@@ -37,9 +37,6 @@ def test_gaussian_position_kernel_no_self_is_finite_and_row_stochastic():
     assert np.isfinite(W_np).all(), "include_self=False produced non-finite entries"
     np.testing.assert_allclose(np.diagonal(W_np), np.zeros(8), atol=1e-6)
     np.testing.assert_allclose(W_np.sum(axis=-1), np.ones(8), atol=1e-6)
-
-
-from sticky.models.sjd.blur import sudoku_constraint_kernel
 
 
 def test_sudoku_kernel_small_sigma_is_identity():
@@ -81,3 +78,26 @@ def test_sudoku_kernel_disable_row_zeros_row_neighbor():
     """include_row=False -> W[0, 1] == 0 (no longer share any active group)."""
     W = sudoku_constraint_kernel(sigma=1.5, include_row=False)
     assert float(W[0, 1]) == 0.0
+
+
+def test_blur_means_identity_kernel_is_passthrough():
+    """blur_means(E, I_N) == E to float32 precision."""
+    B, N, d = 3, 16, 8
+    e = jax.random.normal(jax.random.PRNGKey(0), (B, N, d))
+    out = blur_means(e, jnp.eye(N, dtype=jnp.float32))
+    np.testing.assert_allclose(np.asarray(out), np.asarray(e), atol=1e-6)
+
+
+def test_blur_means_rejects_2d_site_shape():
+    """Phase 1 only supports 1D site_shape; 2D images must raise."""
+    e = jax.random.normal(jax.random.PRNGKey(0), (2, 32, 32, 3, 16))
+    kernel = jnp.eye(32 * 32, dtype=jnp.float32)
+    with pytest.raises(NotImplementedError):
+        blur_means(e, kernel)
+
+
+def test_blur_means_rejects_kernel_shape_mismatch():
+    e = jax.random.normal(jax.random.PRNGKey(0), (2, 16, 8))
+    bad_kernel = jnp.eye(15, dtype=jnp.float32)
+    with pytest.raises((ValueError, AssertionError)):
+        blur_means(e, bad_kernel)
