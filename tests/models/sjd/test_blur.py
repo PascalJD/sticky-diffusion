@@ -37,3 +37,47 @@ def test_gaussian_position_kernel_no_self_is_finite_and_row_stochastic():
     assert np.isfinite(W_np).all(), "include_self=False produced non-finite entries"
     np.testing.assert_allclose(np.diagonal(W_np), np.zeros(8), atol=1e-6)
     np.testing.assert_allclose(W_np.sum(axis=-1), np.ones(8), atol=1e-6)
+
+
+from sticky.models.sjd.blur import sudoku_constraint_kernel
+
+
+def test_sudoku_kernel_small_sigma_is_identity():
+    W = sudoku_constraint_kernel(sigma=1e-3)
+    np.testing.assert_allclose(np.asarray(W), np.eye(81), atol=1e-3)
+
+
+def test_sudoku_kernel_no_share_is_zero():
+    """Cells (0,0) and (8,8) share no row/col/box -> W[0, 80] == 0."""
+    W = sudoku_constraint_kernel(sigma=1.5)
+    assert float(W[0, 80]) == 0.0
+
+
+def test_sudoku_kernel_row_neighbor_nonzero():
+    """Cells (0,0) and (0,1) share row 0 -> W[0, 1] > 0."""
+    W = sudoku_constraint_kernel(sigma=1.5)
+    assert float(W[0, 1]) > 0.0
+
+
+def test_sudoku_kernel_col_neighbor_nonzero():
+    """Cells (0,0) and (1,0) share col 0 -> W[0, 9] > 0."""
+    W = sudoku_constraint_kernel(sigma=1.5)
+    assert float(W[0, 9]) > 0.0
+
+
+def test_sudoku_kernel_box_only_nonzero():
+    """Cells (0,0) and (1,1) share top-left box but no row/col -> W[0, 10] > 0."""
+    W = sudoku_constraint_kernel(sigma=1.5)
+    assert float(W[0, 10]) > 0.0
+
+
+def test_sudoku_kernel_distance_monotone_within_row():
+    """Closer column dominates: W[0, 1] > W[0, 8] (both row-mates of (0,0))."""
+    W = sudoku_constraint_kernel(sigma=1.5)
+    assert float(W[0, 1]) > float(W[0, 8])
+
+
+def test_sudoku_kernel_disable_row_zeros_row_neighbor():
+    """include_row=False -> W[0, 1] == 0 (no longer share any active group)."""
+    W = sudoku_constraint_kernel(sigma=1.5, include_row=False)
+    assert float(W[0, 1]) == 0.0

@@ -8,7 +8,7 @@ the un-sticking variance.
 
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
-    (more added in subsequent tasks)
+    sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from jax import Array
 
 __all__ = [
     "gaussian_position_kernel",
+    "sudoku_constraint_kernel",
 ]
 
 
@@ -51,3 +52,77 @@ def gaussian_position_kernel(
     if include_self:
         W = W / jnp.diagonal(W)[:, None]
     return W.astype(dtype)
+
+
+def sudoku_constraint_kernel(
+    sigma: float,
+    include_row: bool = True,
+    include_col: bool = True,
+    include_box: bool = True,
+    dtype=jnp.float32,
+) -> Array:
+    """Constraint-graph kernel for the flat-81 Sudoku representation.
+
+    Cells are flat-indexed p = 9 * r + c with (r, c) in [0, 9) x [0, 9).
+    Cells i, j are CONSTRAINT-NEIGHBORS iff they share at least one of:
+      - row: r_i == r_j
+      - column: c_i == c_j
+      - box (exclusive): same 3x3 box AND different row AND different column
+    (with the include_row/_col/_box flags toggling each group individually).
+
+    The box group is exclusive of row and column pairs so that toggling
+    include_row=False correctly zeros out pure-row pairs (which would otherwise
+    remain connected via the shared box for cells in the same row-within-box).
+
+    Within the non-zero support, weights follow the 2D Gaussian on (r, c):
+      L[i, j] = -((r_i - r_j)^2 + (c_i - c_j)^2) / (2 sigma^2)
+      L[i, j] = -inf for non-neighbors (and i != j).
+    Diagonal is always included (W[i, i] == 1 after rescaling).
+
+    NOTE: The non-uniformity within each constraint group is essential.
+    A uniform-within-group kernel collapses to a no-op on valid Sudokus
+    because each row/col/box is a permutation of {1,...,9}, so the
+    averaged anchor embedding is invariant across cells in that group.
+    """
+    if sigma <= 0:
+        raise ValueError(f"sigma must be positive, got {sigma}")
+
+    N = 81
+    idx = jnp.arange(N)
+    rows = idx // 9
+    cols = idx % 9
+    boxes = (rows // 3) * 3 + (cols // 3)
+
+    same_row = rows[:, None] == rows[None, :]
+    same_col = cols[:, None] == cols[None, :]
+    same_box = boxes[:, None] == boxes[None, :]
+    # Box-exclusive: cells that share a box but do NOT share a row or column.
+    # Row- and col-sharing pairs are already captured by the row/col groups;
+    # using only the exclusive interior avoids double-counting and ensures
+    # that toggling include_row=False zeros out pure-row pairs.
+    box_exclusive = same_box & ~same_row & ~same_col
+
+    neighbor = jnp.zeros((N, N), dtype=jnp.bool_)
+    if include_row:
+        neighbor = neighbor | same_row
+    if include_col:
+        neighbor = neighbor | same_col
+    if include_box:
+        neighbor = neighbor | box_exclusive
+
+    # Always allow the diagonal so we can rescale W[i,i] -> 1.
+    eye_mask = jnp.eye(N, dtype=jnp.bool_)
+    neighbor = neighbor | eye_mask
+
+    dr = (rows[:, None] - rows[None, :]).astype(dtype)
+    dc = (cols[:, None] - cols[None, :]).astype(dtype)
+    dist_sq = dr * dr + dc * dc
+    logits = -dist_sq / (2.0 * sigma * sigma)
+    logits = jnp.where(neighbor, logits, -jnp.inf)
+
+    W = jax.nn.softmax(logits, axis=-1)
+    W = W / jnp.diagonal(W)[:, None]
+    # Zero out positions that were masked (-inf) — softmax + division can
+    # leave subnormal numerical residue; explicit zero is cleaner.
+    W = jnp.where(neighbor, W, jnp.zeros_like(W))
+    return W
