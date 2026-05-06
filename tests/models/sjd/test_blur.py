@@ -106,6 +106,7 @@ def test_blur_means_rejects_kernel_shape_mismatch():
 def test_build_blur_kernel_disabled_returns_none():
     cfg = {"enabled": False, "kind": None, "sigma": 1.0}
     assert build_blur_kernel(cfg, seq_len=16) is None
+    assert build_blur_kernel(None, seq_len=16) is None  # covers the blur_cfg-is-None branch
 
 
 def test_build_blur_kernel_gaussian_1d():
@@ -134,3 +135,15 @@ def test_build_blur_kernel_unknown_kind_raises():
     cfg = {"enabled": True, "kind": "ring_kernel", "sigma": 1.0}
     with pytest.raises(ValueError):
         build_blur_kernel(cfg, seq_len=16)
+
+
+def test_build_blur_kernel_kind_required_when_enabled():
+    cfg = {"enabled": True, "kind": None, "sigma": 1.0}
+    with pytest.raises(ValueError, match="kind"):
+        build_blur_kernel(cfg, seq_len=16)
+
+
+def test_build_blur_kernel_gaussian_1d_rejects_zero_seq_len():
+    cfg = {"enabled": True, "kind": "gaussian_1d", "sigma": 1.0, "include_self": True}
+    with pytest.raises(ValueError, match="seq_len"):
+        build_blur_kernel(cfg, seq_len=0)

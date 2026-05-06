@@ -187,11 +187,19 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
         return None
 
     kind = blur_cfg.get("kind", None)
+
+    if kind is None:
+        raise ValueError(
+            "blur_cfg has enabled=True but 'kind' is not set (got None)"
+        )
+
     sigma = float(blur_cfg.get("sigma", 1.0))
 
     if kind == "gaussian_1d":
         if seq_len is None:
             raise ValueError("gaussian_1d blur requires seq_len, got None")
+        if int(seq_len) < 1:
+            raise ValueError(f"gaussian_1d blur requires seq_len >= 1, got {seq_len}")
         return gaussian_position_kernel(
             seq_len=int(seq_len),
             sigma=sigma,
