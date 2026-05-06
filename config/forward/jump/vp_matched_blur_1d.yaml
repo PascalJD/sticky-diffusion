@@ -1,0 +1,13 @@
+# VP-matched Gaussian jump with 1D positional Gaussian blur.
+# Use with sequence-shaped tasks (OWT). seq_len is supplied at task setup time.
+_target_: sticky.models.sjd.jump.VPMatchedGaussianJump
+
+eta: 0.8
+std_floor: 1e-3
+clip: null
+
+blur:
+  enabled: true
+  kind: gaussian_1d
+  sigma: 1.0
+  include_self: true

@@ -1,4 +1,5 @@
-# VP-matched Gaussian jump proposal tuned for Sudoku SJD.
+# VP-matched Gaussian jump with Sudoku constraint-graph blur.
+# Use with the 81-cell Sudoku SJD task.
 _target_: sticky.models.sjd.jump.VPMatchedGaussianJump
 
 eta: 0.6
@@ -6,10 +7,9 @@ std_floor: 1e-3
 clip: null
 
 blur:
-  enabled: false
-  kind: null
-  sigma: 1.0
-  include_self: true
+  enabled: true
+  kind: sudoku_constraint
+  sigma: 1.5
   include_row: true
   include_col: true
   include_box: true
