@@ -12,7 +12,7 @@ from .sdes import alpha_sigma, _expand_like
 Array = jnp.ndarray
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class VPMatchedGaussianJump:
     """VP-matched Gaussian jump proposal.
 

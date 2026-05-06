@@ -181,3 +181,34 @@ def test_apply_blur_uses_kernel_when_set():
     out = jump_blur.apply_blur(e)
     # Identity kernel should produce identical values (but not necessarily same object).
     np.testing.assert_allclose(np.asarray(out), np.asarray(e), atol=1e-6)
+
+
+def test_jump_with_kernel_is_hashable():
+    """Frozen dataclass with a JAX-array field must be hashable so it can be
+    passed as a jit static_argnames target or used as a dict key without crash."""
+    import dataclasses
+    from sticky.models.sjd.jump import VPMatchedGaussianJump
+    from sticky.models.sjd.sdes import make_beta
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    jump_blur = dataclasses.replace(jump, blur_kernel=jnp.eye(8, dtype=jnp.float32))
+    # Should not raise.
+    h = hash(jump_blur)
+    assert isinstance(h, int)
+
+
+def test_jump_with_kernel_eq_does_not_crash():
+    """Comparing two kernel-bearing jumps must not raise the JAX boolean-coercion
+    ValueError. With eq=False, equality is identity-based — unequal unless `is`."""
+    import dataclasses
+    from sticky.models.sjd.jump import VPMatchedGaussianJump
+    from sticky.models.sjd.sdes import make_beta
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    kernel = jnp.eye(8, dtype=jnp.float32)
+    jump_a = dataclasses.replace(jump, blur_kernel=kernel)
+    jump_b = dataclasses.replace(jump, blur_kernel=kernel)
+    # Different objects, identity-based equality -> not equal. The point is no crash.
+    result = (jump_a == jump_b)
+    assert result is False  # object.__eq__ returns False for distinct instances
+    assert (jump_a == jump_a) is True
