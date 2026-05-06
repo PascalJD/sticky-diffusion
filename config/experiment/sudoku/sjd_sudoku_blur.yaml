@@ -1,0 +1,30 @@
+# Sudoku SJD with constraint-graph un-sticking kernel.
+# Inherits everything from the existing baseline (eta=0.97, anchor table,
+# hazard, optimizer); only delta is the kernel.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
+  - /forward/jump: vp_matched
+  - /forward/blur: sudoku_constraint    # turn on the constraint kernel
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 0.97
+
+# Knobs to ablate via CLI: forward.blur.{sigma,include_row,include_col,include_box}

@@ -1,0 +1,5 @@
+# @package _global_
+experiment:
+  forward:
+    blur:
+      enabled: false

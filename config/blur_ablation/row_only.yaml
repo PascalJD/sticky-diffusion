@@ -1,0 +1,9 @@
+# @package _global_
+experiment:
+  forward:
+    blur:
+      enabled: true
+      kind: sudoku_constraint
+      include_row: true
+      include_col: false
+      include_box: false
