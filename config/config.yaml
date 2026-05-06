@@ -3,6 +3,7 @@ defaults:
   - experiment: sudoku/sjd_sudoku
   - hydra: default
   - wandb: default
+  - /forward/blur: none
   - _self_
 
 # Top-level seed placeholder (training uses experiment.training.seed).

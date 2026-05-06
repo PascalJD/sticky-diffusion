@@ -4,17 +4,3 @@ _target_: sticky.models.sjd.jump.VPMatchedGaussianJump
 eta: 0.8  # 1.0 cancels state dependency
 std_floor: 1e-3
 clip: null
-
-# Optional non-local blur. Disabled by default; enable in a variant config.
-# This block is read by the task factory and stripped before Hydra
-# instantiates VPMatchedGaussianJump (which has no `blur` kwarg).
-blur:
-  enabled: false
-  kind: null            # "gaussian_1d" | "sudoku_constraint" | null
-  sigma: 1.0
-  # gaussian_1d-only:
-  include_self: true
-  # sudoku_constraint-only:
-  include_row: true
-  include_col: true
-  include_box: true

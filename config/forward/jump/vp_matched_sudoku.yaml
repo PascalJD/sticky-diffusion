@@ -4,12 +4,3 @@ _target_: sticky.models.sjd.jump.VPMatchedGaussianJump
 eta: 0.6
 std_floor: 1e-3
 clip: null
-
-blur:
-  enabled: false
-  kind: null
-  sigma: 1.0
-  include_self: true
-  include_row: true
-  include_col: true
-  include_box: true

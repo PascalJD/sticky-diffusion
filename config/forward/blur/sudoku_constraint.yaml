@@ -1,0 +1,6 @@
+enabled: true
+kind: sudoku_constraint
+sigma: 1.5
+include_row: true
+include_col: true
+include_box: true
