@@ -85,23 +85,22 @@ def _sjd_schedule_kwargs(cfg: DictConfig, seq_len: int | None = None) -> dict[st
     hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
     jump_cfg = cfg.forward.get("jump", None)
     jump = None
-    blur_cfg = None
     if jump_cfg is not None:
         # Strip the optional `blur:` sub-block before Hydra instantiate, since
         # VPMatchedGaussianJump does not accept a `blur` kwarg. The block is
         # consumed below to attach a kernel via dataclasses.replace.
         if "blur" in jump_cfg:
             blur_cfg = jump_cfg.blur
-            jump_cfg_clean = OmegaConf.create(
-                {k: v for k, v in jump_cfg.items() if k != "blur"}
+            jump_cfg_clean = OmegaConf.masked_copy(
+                jump_cfg, [k for k in jump_cfg if k != "blur"]
             )
+            jump = hydra.utils.instantiate(jump_cfg_clean, beta=beta)
+            blur_kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
+            if blur_kernel is not None:
+                jump = dataclasses.replace(jump, blur_kernel=blur_kernel)
         else:
-            jump_cfg_clean = jump_cfg
-        jump = hydra.utils.instantiate(jump_cfg_clean, beta=beta)
+            jump = hydra.utils.instantiate(jump_cfg, beta=beta)
 
-        blur_kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
-        if blur_kernel is not None:
-            jump = dataclasses.replace(jump, blur_kernel=blur_kernel)
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
     hw_mode = hazard_weighting_mode(hazard_weighting_cfg)

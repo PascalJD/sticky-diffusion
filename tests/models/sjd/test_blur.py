@@ -326,7 +326,7 @@ def _make_factory_cfg(blur_block: dict) -> "OmegaConf":
     })
 
 
-def test_factory_strips_blur_and_attaches_kernel(tmp_path):
+def test_factory_strips_blur_and_attaches_kernel():
     """End-to-end: a jump cfg with blur enabled gets a kernel attached and
     instantiates without raising on the unrecognized `blur` kwarg."""
     from sticky.tasks.factory import _sjd_schedule_kwargs
