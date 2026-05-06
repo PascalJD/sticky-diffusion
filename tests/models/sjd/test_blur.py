@@ -156,3 +156,28 @@ def test_public_reexports():
         blur_means as b,
     )
     assert callable(g) and callable(s) and callable(b)
+
+
+def test_apply_blur_is_python_identity_when_disabled():
+    """No blur_kernel -> apply_blur returns the SAME object (Python identity).
+    This guarantees zero numerical drift in the no-blur path."""
+    from sticky.models.sjd.jump import VPMatchedGaussianJump
+    from sticky.models.sjd.sdes import make_beta
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    e = jax.random.normal(jax.random.PRNGKey(0), (2, 16, 8))
+    assert jump.apply_blur(e) is e
+
+
+def test_apply_blur_uses_kernel_when_set():
+    import dataclasses
+    from sticky.models.sjd.jump import VPMatchedGaussianJump
+    from sticky.models.sjd.sdes import make_beta
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    kernel = jnp.eye(16, dtype=jnp.float32)
+    jump_blur = dataclasses.replace(jump, blur_kernel=kernel)
+    e = jax.random.normal(jax.random.PRNGKey(0), (2, 16, 8))
+    out = jump_blur.apply_blur(e)
+    # Identity kernel should produce identical values (but not necessarily same object).
+    np.testing.assert_allclose(np.asarray(out), np.asarray(e), atol=1e-6)

@@ -36,6 +36,7 @@ class VPMatchedGaussianJump:
     eta: float = 0.7
     std_floor: float = 1e-3
     clip: float | None = None
+    blur_kernel: Array | None = None   # (N, N) site-blending matrix; None == identity.
 
     def _mean_std(self, anchor: Array, t: Array) -> tuple[Array, Array]:
         t = jnp.asarray(t, dtype=jnp.float32)
@@ -63,3 +64,15 @@ class VPMatchedGaussianJump:
         logZ = 0.5 * dim * jnp.log(2.0 * jnp.pi)\
          + 0.5 * dim * jnp.log(var[..., 0] + 1e-12)
         return -(logZ + 0.5 * m)
+
+    def apply_blur(self, anchor_field: Array) -> Array:
+        """Apply the configured blur kernel to a per-site anchor field.
+
+        When blur_kernel is None this returns the input object unchanged
+        (Python identity), guaranteeing bit-exact backward compatibility
+        for the no-blur path. Otherwise dispatches to blur_means.
+        """
+        if self.blur_kernel is None:
+            return anchor_field
+        from .blur import blur_means
+        return blur_means(anchor_field, self.blur_kernel)
