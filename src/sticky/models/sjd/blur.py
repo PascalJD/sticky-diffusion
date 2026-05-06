@@ -35,9 +35,11 @@ def gaussian_position_kernel(
 ) -> Array:
     """Row-rescaled 1D Gaussian kernel.
 
-    Logits L[i, j] = -(i - j)^2 / (2 sigma^2). If not include_self: mask
-    diagonal with -inf before softmax. W = softmax(L, axis=-1); then
-    W = W / W.diagonal()[:, None] so W[i, i] == 1 and rows do NOT sum to 1.
+    Logits L[i, j] = -(i - j)^2 / (2 sigma^2). Behavior:
+    - include_self=True (default): W = softmax(L, axis=-1); then
+      W = W / W.diagonal()[:, None] so W[i, i] == 1 and rows do NOT sum to 1.
+    - include_self=False: the diagonal of L is masked to -inf before softmax,
+      so W[i, i] == 0 and rows sum to 1 (no rescale; softmax is row-stochastic).
 
     Raises ValueError on sigma <= 0.
     """

@@ -21,6 +21,7 @@ denominator and `sample_pair` is the only training-side corruption sampler.
 
 from .blur import (
     blur_means,
+    build_blur_kernel,
     gaussian_position_kernel,
     sudoku_constraint_kernel,
 )
@@ -44,6 +45,7 @@ from .plugin_intensity import (
 __all__ = [
     "HazardSchedule",
     "blur_means",
+    "build_blur_kernel",
     "classifier_induced_score",
     "dhm_log_ratio",
     "dhm_target",

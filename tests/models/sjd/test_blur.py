@@ -352,3 +352,29 @@ def test_factory_no_blur_yields_none_kernel():
     })
     out = _sjd_schedule_kwargs(cfg, seq_len=16)
     assert out["jump"].blur_kernel is None
+
+
+def test_factory_rejects_blur_on_image_task():
+    """Phase 1 doesn't support blur for 2D image (CIFAR10) tasks. The factory
+    must fail loudly rather than silently attach a kernel of the wrong shape."""
+    from omegaconf import OmegaConf
+    from sticky.tasks.factory import _build_tfds_sjd_task
+
+    # Minimal cfg: only forward.jump.blur is needed; the guard fires before
+    # _tfds_image_dataset_kwargs or _sjd_schedule_kwargs are reached.
+    cfg = OmegaConf.create({
+        "forward": {
+            "jump": {
+                "blur": {
+                    "enabled": True,
+                    "kind": "sudoku_constraint",
+                    "sigma": 1.5,
+                    "include_row": True,
+                    "include_col": True,
+                    "include_box": True,
+                },
+            },
+        },
+    })
+    with pytest.raises(ValueError, match="2D image"):
+        _build_tfds_sjd_task(cfg, task_name="sjd_cifar10")

@@ -182,6 +182,15 @@ def _build_openwebtext_discrete_task(cfg: DictConfig, *, task_name: str = "openw
 def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
+    # Phase 1: blur is not supported for 2D image tasks. Fail loudly if enabled.
+    jump_cfg = cfg.forward.get("jump", None)
+    if jump_cfg is not None and "blur" in jump_cfg:
+        if bool(jump_cfg.blur.get("enabled", False)):
+            raise ValueError(
+                "Non-local blur is not supported for 2D image tasks (CIFAR10/ImageNet64) "
+                "in Phase 1. Set forward.jump.blur.enabled=false or use a sequence task."
+            )
+
     # CIFAR10SJDTask does not accept drop_remainder / shuffle_buffer_size;
     # strip them so the shared _tfds_image_dataset_kwargs helper can evolve
     # without breaking the SJD task constructor.
