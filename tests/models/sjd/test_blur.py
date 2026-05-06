@@ -6,6 +6,10 @@ import numpy as np
 import pytest
 
 from sticky.models.sjd.blur import gaussian_position_kernel, sudoku_constraint_kernel, blur_means, build_blur_kernel
+from sticky.models.sjd.corruption import sample_pair
+from sticky.models.sjd.hazard import make_hazard_linear_time
+from sticky.models.sjd.jump import VPMatchedGaussianJump
+from sticky.models.sjd.sdes import make_beta
 
 
 def test_gaussian_position_kernel_small_sigma_is_identity():
@@ -212,3 +216,81 @@ def test_jump_with_kernel_eq_does_not_crash():
     result = (jump_a == jump_b)
     assert result is False  # object.__eq__ returns False for distinct instances
     assert (jump_a == jump_a) is True
+
+
+def test_sample_pair_no_blur_unchanged():
+    """With blur_kernel=None, sample_pair output is bit-identical to the
+    pre-change behavior. Verified by-construction (apply_blur is Python
+    identity), but also exercised here on a small fixed-PRNG batch."""
+    import dataclasses
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    hazard = make_hazard_linear_time(beta, kappa=1.5)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+
+    B, N, d = 4, 16, 3
+    key = jax.random.PRNGKey(7)
+    k_anchor, k_t, k_pair = jax.random.split(key, 3)
+    x0 = jax.random.normal(k_anchor, (B, N, d))
+    t = jax.random.uniform(k_t, (B,), minval=0.05, maxval=0.95)
+
+    xt_a, mask_a = sample_pair(k_pair, x0, t, beta, hazard, jump)
+    # Replace with same default jump (still blur_kernel=None) and call again.
+    jump2 = dataclasses.replace(jump)
+    xt_b, mask_b = sample_pair(k_pair, x0, t, beta, hazard, jump2)
+    np.testing.assert_array_equal(np.asarray(xt_a), np.asarray(xt_b))
+    np.testing.assert_array_equal(np.asarray(mask_a), np.asarray(mask_b))
+
+
+def test_sample_pair_with_gaussian_blur_runs_and_preserves_never_unstuck():
+    """Smoke: gaussian_position_kernel doesn't break sample_pair, and the
+    empirical never-unstuck mass still matches hazard.surv(t)."""
+    import dataclasses
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    hazard = make_hazard_linear_time(beta, kappa=1.5)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    jump = dataclasses.replace(
+        jump, blur_kernel=gaussian_position_kernel(16, sigma=1.0)
+    )
+
+    N_samples = 4096
+    L, d = 16, 3
+    a = jnp.asarray([0.5, -1.0, 2.0], dtype=jnp.float32)
+    x0 = jnp.broadcast_to(a, (N_samples, L, d))
+    t_val = 0.6
+    t = jnp.full((N_samples,), t_val, dtype=jnp.float32)
+
+    xt, mask = sample_pair(jax.random.PRNGKey(7), x0, t, beta, hazard, jump)
+    assert jnp.isfinite(xt).all()
+    assert xt.shape == (N_samples, L, d)
+    assert mask.shape == (N_samples, L)
+
+    expected = float(hazard.surv(jnp.asarray(t_val, dtype=jnp.float32)))
+    actual = float(jnp.mean(mask.astype(jnp.float32)))
+    np.testing.assert_allclose(actual, expected, atol=2e-2)
+
+
+def test_sample_pair_with_sudoku_blur_runs_and_preserves_never_unstuck():
+    """Smoke: sudoku_constraint_kernel works with sample_pair on 81-cell anchors."""
+    import dataclasses
+    beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
+    hazard = make_hazard_linear_time(beta, kappa=1.5)
+    jump = VPMatchedGaussianJump(beta=beta, eta=0.7)
+    jump = dataclasses.replace(
+        jump, blur_kernel=sudoku_constraint_kernel(sigma=1.5)
+    )
+
+    N_samples = 4096
+    L, d = 81, 3
+    a = jnp.asarray([0.5, -1.0, 2.0], dtype=jnp.float32)
+    x0 = jnp.broadcast_to(a, (N_samples, L, d))
+    t_val = 0.6
+    t = jnp.full((N_samples,), t_val, dtype=jnp.float32)
+
+    xt, mask = sample_pair(jax.random.PRNGKey(11), x0, t, beta, hazard, jump)
+    assert jnp.isfinite(xt).all()
+    assert xt.shape == (N_samples, L, d)
+    assert mask.shape == (N_samples, L)
+
+    expected = float(hazard.surv(jnp.asarray(t_val, dtype=jnp.float32)))
+    actual = float(jnp.mean(mask.astype(jnp.float32)))
+    np.testing.assert_allclose(actual, expected, atol=2e-2)

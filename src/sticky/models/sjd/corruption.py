@@ -108,7 +108,7 @@ def sample_pair(
         tau = hazard.inv_cdf(u_eff_baseline)
 
     mean, std = mixture_component_mean_std(
-        anchor=x0_anchor,
+        anchor=jump.apply_blur(x0_anchor),  # CHANGED: identity when blur_kernel is None
         t=t_b,
         tau=tau,
         beta=beta,
@@ -200,6 +200,10 @@ def _squared_distance_all_anchors(
     return dist2_flat.reshape((B,) + site_shape + (L,))
 
 
+# TODO(phase-2): mean-field plug-in for blur_kernel != None.
+# This inference path currently assumes W = I (per-site anchors).
+# When jump.blur_kernel is not None, mixture log-pdf must marginalize
+# over the blurred-mean structure; deferred to a later prompt.
 def vp_jump_logpdf_all_anchors(
     y: Array, t: Array, a_table: Array, jump: VPMatchedGaussianJump
 ) -> Array:
@@ -232,6 +236,10 @@ def vp_jump_logpdf_all_anchors(
     )
 
 
+# TODO(phase-2): mean-field plug-in for blur_kernel != None.
+# This inference path currently assumes W = I (per-site anchors).
+# When jump.blur_kernel is not None, mixture log-pdf must marginalize
+# over the blurred-mean structure; deferred to a later prompt.
 def mixture_logpdf_all_anchors(
     y: Array,
     t: Array,
@@ -320,6 +328,10 @@ def mixture_logpdf_all_anchors(
     return m_final + jnp.log(l_final)
 
 
+# TODO(phase-2): mean-field plug-in for blur_kernel != None.
+# This inference path currently assumes W = I (per-site anchors).
+# When jump.blur_kernel is not None, mixture log-pdf must marginalize
+# over the blurred-mean structure; deferred to a later prompt.
 def mixture_logpdf(
     y: Array,
     anchor: Array,
@@ -396,6 +408,10 @@ def mixture_logpdf(
     return m_final + jnp.log(l_final)
 
 
+# TODO(phase-2): mean-field plug-in for blur_kernel != None.
+# This inference path currently assumes W = I (per-site anchors).
+# When jump.blur_kernel is not None, mixture log-pdf must marginalize
+# over the blurred-mean structure; deferred to a later prompt.
 def classifier_induced_score(
     y: Array,
     t: Array,
