@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from sticky.models.sjd.blur import gaussian_position_kernel, sudoku_constraint_kernel, blur_means
+from sticky.models.sjd.blur import gaussian_position_kernel, sudoku_constraint_kernel, blur_means, build_blur_kernel
 
 
 def test_gaussian_position_kernel_small_sigma_is_identity():
@@ -101,3 +101,36 @@ def test_blur_means_rejects_kernel_shape_mismatch():
     bad_kernel = jnp.eye(15, dtype=jnp.float32)
     with pytest.raises((ValueError, AssertionError)):
         blur_means(e, bad_kernel)
+
+
+def test_build_blur_kernel_disabled_returns_none():
+    cfg = {"enabled": False, "kind": None, "sigma": 1.0}
+    assert build_blur_kernel(cfg, seq_len=16) is None
+
+
+def test_build_blur_kernel_gaussian_1d():
+    cfg = {"enabled": True, "kind": "gaussian_1d", "sigma": 1.0, "include_self": True}
+    W = build_blur_kernel(cfg, seq_len=16)
+    assert W.shape == (16, 16)
+    np.testing.assert_allclose(np.diagonal(np.asarray(W)), np.ones(16), atol=1e-6)
+
+
+def test_build_blur_kernel_gaussian_1d_requires_seq_len():
+    cfg = {"enabled": True, "kind": "gaussian_1d", "sigma": 1.0, "include_self": True}
+    with pytest.raises(ValueError):
+        build_blur_kernel(cfg, seq_len=None)
+
+
+def test_build_blur_kernel_sudoku_ignores_seq_len():
+    cfg = {
+        "enabled": True, "kind": "sudoku_constraint", "sigma": 1.5,
+        "include_row": True, "include_col": True, "include_box": True,
+    }
+    W = build_blur_kernel(cfg, seq_len=None)
+    assert W.shape == (81, 81)
+
+
+def test_build_blur_kernel_unknown_kind_raises():
+    cfg = {"enabled": True, "kind": "ring_kernel", "sigma": 1.0}
+    with pytest.raises(ValueError):
+        build_blur_kernel(cfg, seq_len=16)

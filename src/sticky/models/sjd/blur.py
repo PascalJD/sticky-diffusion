@@ -10,6 +10,7 @@ Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
+    build_blur_kernel(blur_cfg, seq_len=None)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ __all__ = [
     "gaussian_position_kernel",
     "sudoku_constraint_kernel",
     "blur_means",
+    "build_blur_kernel",
 ]
 
 
@@ -162,3 +164,44 @@ def blur_means(
             f"({e.shape[1]})"
         )
     return jnp.einsum("ij,bjd->bid", kernel, e)
+
+
+def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
+    """Dispatch a blur config to a concrete kernel.
+
+    Args:
+        blur_cfg: a dict-like (DictConfig or plain dict). Must expose
+            `.get("enabled", False)` and `.get("kind", None)`. When enabled,
+            kind-specific keys are read (sigma, include_self, include_row,
+            include_col, include_box).
+        seq_len: required for kind == "gaussian_1d"; ignored otherwise.
+
+    Returns:
+        None if blur_cfg is None or blur_cfg["enabled"] is False, else an
+        (N, N) kernel array.
+
+    Raises:
+        ValueError if seq_len is required but None, or if kind is unknown.
+    """
+    if blur_cfg is None or not bool(blur_cfg.get("enabled", False)):
+        return None
+
+    kind = blur_cfg.get("kind", None)
+    sigma = float(blur_cfg.get("sigma", 1.0))
+
+    if kind == "gaussian_1d":
+        if seq_len is None:
+            raise ValueError("gaussian_1d blur requires seq_len, got None")
+        return gaussian_position_kernel(
+            seq_len=int(seq_len),
+            sigma=sigma,
+            include_self=bool(blur_cfg.get("include_self", True)),
+        )
+    if kind == "sudoku_constraint":
+        return sudoku_constraint_kernel(
+            sigma=sigma,
+            include_row=bool(blur_cfg.get("include_row", True)),
+            include_col=bool(blur_cfg.get("include_col", True)),
+            include_box=bool(blur_cfg.get("include_box", True)),
+        )
+    raise ValueError(f"Unknown blur kind: {kind!r}")
