@@ -17,6 +17,10 @@ def _masked_mean(x: Array, mask: Array) -> Array:
     return jnp.sum(x.astype(jnp.float32) * w) / denom
 
 
+# TODO(phase-2): mean-field plug-in for blur_kernel != None.
+# state_dependency_metrics calls jump.logpdf and mixture_logpdf, both of which
+# assume W = I (per-site anchors). When jump.blur_kernel is not None, both must
+# marginalize over the blurred-mean structure; deferred to a later prompt.
 def state_dependency_metrics(
     *,
     y: Array,

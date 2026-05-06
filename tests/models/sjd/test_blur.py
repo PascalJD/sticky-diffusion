@@ -219,9 +219,12 @@ def test_jump_with_kernel_eq_does_not_crash():
 
 
 def test_sample_pair_no_blur_unchanged():
-    """With blur_kernel=None, sample_pair output is bit-identical to the
-    pre-change behavior. Verified by-construction (apply_blur is Python
-    identity), but also exercised here on a small fixed-PRNG batch."""
+    """Determinism check: two calls to sample_pair with equivalent (replace'd)
+    no-blur jumps and the same PRNG key produce identical outputs. This is NOT
+    a snapshot test against pre-Task-7 behavior — that backward-compat
+    guarantee is established by-construction in
+    test_apply_blur_is_python_identity_when_disabled (apply_blur returns the
+    same Python object when blur_kernel is None)."""
     import dataclasses
     beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
     hazard = make_hazard_linear_time(beta, kappa=1.5)
