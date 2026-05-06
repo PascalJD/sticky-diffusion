@@ -111,16 +111,12 @@ def test_sjd_sudoku_blur_experiment_attaches_constraint_kernel():
 # ---------------------------------------------------------------------------
 
 def test_mixture_logpdf_with_blurred_jump_is_finite():
-    """Smoke test: calling mixture_logpdf with a blur-kernel-bearing jump must
-    not raise and must produce finite outputs.
-
-    Scope note: a full single-training-step would require building the actual
-    model (GPT2-like backbone + anchor table). Instead we exercise the SJD
-    inference path (mixture_logpdf) directly on 4-example minibatches — this
-    covers the kernel-attached jump through the loss-relevant code path
-    without duplicating model setup. Per the spec, this substitution is
-    documented explicitly here.
-    """
+    """Smoke: a kernel-bearing jump can be passed to mixture_logpdf without
+    crashing. NOTE: mixture_logpdf does NOT yet read jump.blur_kernel — see
+    the TODO(phase-2) markers in corruption.py. This test is a crash-safety
+    check, not a regression test on the blur path. When the Phase 2 mean-field
+    plug-in lands, upgrade this test to verify the blurred mean is actually
+    consumed."""
     beta = make_beta(beta_min=0.1, beta_max=20.0, T=1.0)
     hazard = make_hazard_linear_time(beta, kappa=1.5)
     jump_base = VPMatchedGaussianJump(beta=beta, eta=0.97)

@@ -39,6 +39,7 @@ nvidia-smi || true
 srun python -m sticky.cli.train --multirun \
   experiment=sudoku/sjd_sudoku_blur \
   "+blur_ablation=W_I,full,row_only,row_col" \
-  "hydra.run.dir=${RUN_DIR}/\${blur_ablation}" \
   "hydra.sweep.dir=${RUN_DIR}" \
-  "hydra.sweep.subdir=\${blur_ablation}"
+  "hydra.sweep.subdir=\${blur_ablation}" \
+  wandb.enabled=true \
+  wandb.group=sjd_sudoku_blur_ablation
