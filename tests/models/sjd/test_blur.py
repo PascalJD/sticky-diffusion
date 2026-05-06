@@ -297,3 +297,58 @@ def test_sample_pair_with_sudoku_blur_runs_and_preserves_never_unstuck():
     expected = float(hazard.surv(jnp.asarray(t_val, dtype=jnp.float32)))
     actual = float(jnp.mean(mask.astype(jnp.float32)))
     np.testing.assert_allclose(actual, expected, atol=2e-2)
+
+
+def _make_factory_cfg(blur_block: dict) -> "OmegaConf":
+    """Build a minimal Hydra-like config that satisfies _sjd_schedule_kwargs."""
+    from omegaconf import OmegaConf
+    return OmegaConf.create({
+        "forward": {
+            "beta": {
+                "_target_": "sticky.models.sjd.sdes.make_beta",
+                "beta_min": 0.1, "beta_max": 20.0, "T": 1.0,
+            },
+            "hazard": {
+                "_target_": "sticky.models.sjd.hazard.make_hazard_linear_time",
+                "kappa": 1.5,
+            },
+            "jump": {
+                "_target_": "sticky.models.sjd.jump.VPMatchedGaussianJump",
+                "eta": 0.7,
+                "std_floor": 1e-3,
+                "clip": None,
+                "blur": blur_block,
+            },
+        },
+        "dataset": {"vocab_size": 10},
+        "training": {},
+        "sampler": {},
+    })
+
+
+def test_factory_strips_blur_and_attaches_kernel(tmp_path):
+    """End-to-end: a jump cfg with blur enabled gets a kernel attached and
+    instantiates without raising on the unrecognized `blur` kwarg."""
+    from sticky.tasks.factory import _sjd_schedule_kwargs
+
+    cfg = _make_factory_cfg({
+        "enabled": True,
+        "kind": "gaussian_1d",
+        "sigma": 1.0,
+        "include_self": True,
+    })
+    out = _sjd_schedule_kwargs(cfg, seq_len=16)
+    assert out["jump"].blur_kernel is not None
+    assert out["jump"].blur_kernel.shape == (16, 16)
+
+
+def test_factory_no_blur_yields_none_kernel():
+    from sticky.tasks.factory import _sjd_schedule_kwargs
+
+    cfg = _make_factory_cfg({
+        "enabled": False, "kind": None, "sigma": 1.0,
+        "include_self": True, "include_row": True,
+        "include_col": True, "include_box": True,
+    })
+    out = _sjd_schedule_kwargs(cfg, seq_len=16)
+    assert out["jump"].blur_kernel is None

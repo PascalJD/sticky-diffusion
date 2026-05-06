@@ -1,10 +1,13 @@
 # src/sticky/tasks/factory.py
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, Callable
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+
+from sticky.models.sjd.blur import build_blur_kernel
 
 
 def _optional_str(value):
@@ -71,7 +74,7 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
-def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
+def _sjd_schedule_kwargs(cfg: DictConfig, seq_len: int | None = None) -> dict[str, Any]:
     from sticky.models.sjd.freq_weighting import (
         hazard_weighting_mode,
         load_anchor_log_w,
@@ -81,7 +84,24 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     hazard_cfg = cfg.forward.get("hazard", None)
     hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
     jump_cfg = cfg.forward.get("jump", None)
-    jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
+    jump = None
+    blur_cfg = None
+    if jump_cfg is not None:
+        # Strip the optional `blur:` sub-block before Hydra instantiate, since
+        # VPMatchedGaussianJump does not accept a `blur` kwarg. The block is
+        # consumed below to attach a kernel via dataclasses.replace.
+        if "blur" in jump_cfg:
+            blur_cfg = jump_cfg.blur
+            jump_cfg_clean = OmegaConf.create(
+                {k: v for k, v in jump_cfg.items() if k != "blur"}
+            )
+        else:
+            jump_cfg_clean = jump_cfg
+        jump = hydra.utils.instantiate(jump_cfg_clean, beta=beta)
+
+        blur_kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
+        if blur_kernel is not None:
+            jump = dataclasses.replace(jump, blur_kernel=blur_kernel)
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
     hw_mode = hazard_weighting_mode(hazard_weighting_cfg)
@@ -182,7 +202,7 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
 
     return SudokuInpaintSJDTask(
         **_sudoku_board_dataset_kwargs(cfg),
-        **_sjd_schedule_kwargs(cfg),
+        **_sjd_schedule_kwargs(cfg, seq_len=81),
     )
 
 
@@ -204,7 +224,7 @@ def _build_openwebtext_sjd_task(cfg: DictConfig):
         mmap=bool(cfg.dataset.get("mmap", True)),
         max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
         max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
-        **_sjd_schedule_kwargs(cfg),
+        **_sjd_schedule_kwargs(cfg, seq_len=int(cfg.dataset.seq_len)),
     )
 
 
