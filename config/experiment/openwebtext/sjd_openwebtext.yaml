@@ -9,6 +9,7 @@ defaults:
   - /forward/hazard: poly_alpha
   - /forward/hazard_weighting: none
   - /forward/jump: vp_matched
+  - /forward/blur: none
   - /sampler/openwebtext@sampler: sjd_openwebtext
   - /eval@_global_.eval: openwebtext
   - /training: sjd_openwebtext

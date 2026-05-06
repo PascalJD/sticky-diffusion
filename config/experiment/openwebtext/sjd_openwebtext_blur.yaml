@@ -1,0 +1,37 @@
+# OpenWebText SJD with sequence-level Gaussian un-sticking kernel.
+# Mirrors sjd_openwebtext.yaml exactly with one extra default
+# (/forward/blur: gaussian_1d). Hydra does not support flat
+# experiment-to-experiment inheritance via defaults, so the body and
+# defaults below are duplicated from sjd_openwebtext.yaml. KEEP IN SYNC:
+# any change to the baseline (eta, hazard, optimizer, etc.) must be
+# mirrored here so the only ablation delta remains the kernel.
+defaults:
+  - /dataset: openwebtext_gpt2_1024
+  - /model/sjd@model: sjd_openwebtext
+  - /optim: adamw_openwebtext
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
+  - /forward/jump: vp_matched
+  - /forward/blur: gaussian_1d            # turn on 1D Gaussian sequence blur
+  - /sampler/openwebtext@sampler: sjd_openwebtext
+  - /eval@_global_.eval: openwebtext
+  - /training: sjd_openwebtext
+  - _self_
+
+task:
+  name: openwebtext_sjd
+
+wandb:
+  run_name: sjd_openwebtext_blur
+
+# Per-device batch size on 8 devices gives 512 global.
+dataset:
+  batch_size: 64
+  eval_batch_size: 16
+
+# Sigma is the main knob to ablate via CLI: experiment.forward.blur.sigma=0.5,1.0,1.5,2.0,2.5
+forward:
+  blur:
+    sigma: 1.5
