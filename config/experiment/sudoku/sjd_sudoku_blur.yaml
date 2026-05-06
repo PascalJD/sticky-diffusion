@@ -1,6 +1,10 @@
 # Sudoku SJD with constraint-graph un-sticking kernel.
-# Inherits everything from the existing baseline (eta=0.97, anchor table,
-# hazard, optimizer); only delta is the kernel.
+# Mirrors sjd_sudoku.yaml exactly with one extra default (/forward/blur:
+# sudoku_constraint). Hydra does not support flat experiment-to-experiment
+# inheritance via defaults, so the body and defaults below are duplicated
+# from sjd_sudoku.yaml. KEEP IN SYNC: any change to the baseline (eta,
+# hazard, optimizer, etc.) must be mirrored here so the only ablation delta
+# remains the kernel.
 defaults:
   - /dataset: sudoku_shah_board
   - /model/sjd@model: sjd_sudoku_inpaint
