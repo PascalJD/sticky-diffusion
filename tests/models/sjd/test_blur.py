@@ -299,36 +299,43 @@ def test_sample_pair_with_sudoku_blur_runs_and_preserves_never_unstuck():
     np.testing.assert_allclose(actual, expected, atol=2e-2)
 
 
-def _make_factory_cfg(blur_block: dict) -> "OmegaConf":
-    """Build a minimal Hydra-like config that satisfies _sjd_schedule_kwargs."""
+def _make_factory_cfg(blur_block: dict | None, *, data_shape=(16,)) -> "OmegaConf":
+    """Build a minimal Hydra-like config that satisfies _sjd_schedule_kwargs.
+
+    Phase 1.B: blur lives at the orthogonal `forward.blur` group, NOT under
+    `forward.jump`. seq_len is derived from `dataset.data_shape` inside the
+    factory helper.
+    """
     from omegaconf import OmegaConf
-    return OmegaConf.create({
-        "forward": {
-            "beta": {
-                "_target_": "sticky.models.sjd.sdes.make_beta",
-                "beta_min": 0.1, "beta_max": 20.0, "T": 1.0,
-            },
-            "hazard": {
-                "_target_": "sticky.models.sjd.hazard.make_hazard_linear_time",
-                "kappa": 1.5,
-            },
-            "jump": {
-                "_target_": "sticky.models.sjd.jump.VPMatchedGaussianJump",
-                "eta": 0.7,
-                "std_floor": 1e-3,
-                "clip": None,
-                "blur": blur_block,
-            },
+    forward = {
+        "beta": {
+            "_target_": "sticky.models.sjd.sdes.make_beta",
+            "beta_min": 0.1, "beta_max": 20.0, "T": 1.0,
         },
-        "dataset": {"vocab_size": 10},
+        "hazard": {
+            "_target_": "sticky.models.sjd.hazard.make_hazard_linear_time",
+            "kappa": 1.5,
+        },
+        "jump": {
+            "_target_": "sticky.models.sjd.jump.VPMatchedGaussianJump",
+            "eta": 0.7,
+            "std_floor": 1e-3,
+            "clip": None,
+        },
+    }
+    if blur_block is not None:
+        forward["blur"] = blur_block
+    return OmegaConf.create({
+        "forward": forward,
+        "dataset": {"vocab_size": 10, "data_shape": list(data_shape)},
         "training": {},
         "sampler": {},
     })
 
 
 def test_factory_strips_blur_and_attaches_kernel():
-    """End-to-end: a jump cfg with blur enabled gets a kernel attached and
-    instantiates without raising on the unrecognized `blur` kwarg."""
+    """End-to-end: an enabled blur cfg at forward.blur attaches a kernel to the
+    jump after instantiate (the jump schema itself never sees `blur`)."""
     from sticky.tasks.factory import _sjd_schedule_kwargs
 
     cfg = _make_factory_cfg({
@@ -337,12 +344,13 @@ def test_factory_strips_blur_and_attaches_kernel():
         "sigma": 1.0,
         "include_self": True,
     })
-    out = _sjd_schedule_kwargs(cfg, seq_len=16)
+    out = _sjd_schedule_kwargs(cfg)
     assert out["jump"].blur_kernel is not None
     assert out["jump"].blur_kernel.shape == (16, 16)
 
 
 def test_factory_no_blur_yields_none_kernel():
+    """Explicit `forward.blur` with enabled=False produces no kernel."""
     from sticky.tasks.factory import _sjd_schedule_kwargs
 
     cfg = _make_factory_cfg({
@@ -350,7 +358,16 @@ def test_factory_no_blur_yields_none_kernel():
         "include_self": True, "include_row": True,
         "include_col": True, "include_box": True,
     })
-    out = _sjd_schedule_kwargs(cfg, seq_len=16)
+    out = _sjd_schedule_kwargs(cfg)
+    assert out["jump"].blur_kernel is None
+
+
+def test_factory_missing_blur_yields_none_kernel():
+    """Missing `forward.blur` (the typical baseline path) produces no kernel."""
+    from sticky.tasks.factory import _sjd_schedule_kwargs
+
+    cfg = _make_factory_cfg(blur_block=None)
+    out = _sjd_schedule_kwargs(cfg)
     assert out["jump"].blur_kernel is None
 
 
@@ -360,19 +377,17 @@ def test_factory_rejects_blur_on_image_task():
     from omegaconf import OmegaConf
     from sticky.tasks.factory import _build_tfds_sjd_task
 
-    # Minimal cfg: only forward.jump.blur is needed; the guard fires before
+    # Minimal cfg: only forward.blur is needed; the guard fires before
     # _tfds_image_dataset_kwargs or _sjd_schedule_kwargs are reached.
     cfg = OmegaConf.create({
         "forward": {
-            "jump": {
-                "blur": {
-                    "enabled": True,
-                    "kind": "sudoku_constraint",
-                    "sigma": 1.5,
-                    "include_row": True,
-                    "include_col": True,
-                    "include_box": True,
-                },
+            "blur": {
+                "enabled": True,
+                "kind": "sudoku_constraint",
+                "sigma": 1.5,
+                "include_row": True,
+                "include_col": True,
+                "include_box": True,
             },
         },
     })

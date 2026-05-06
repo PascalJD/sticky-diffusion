@@ -5,7 +5,8 @@ import dataclasses
 from typing import Any, Callable
 
 import hydra
-from omegaconf import DictConfig, OmegaConf
+import numpy as np
+from omegaconf import DictConfig
 
 from sticky.models.sjd.blur import build_blur_kernel
 
@@ -74,7 +75,7 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
-def _sjd_schedule_kwargs(cfg: DictConfig, seq_len: int | None = None) -> dict[str, Any]:
+def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     from sticky.models.sjd.freq_weighting import (
         hazard_weighting_mode,
         load_anchor_log_w,
@@ -84,22 +85,21 @@ def _sjd_schedule_kwargs(cfg: DictConfig, seq_len: int | None = None) -> dict[st
     hazard_cfg = cfg.forward.get("hazard", None)
     hazard = hydra.utils.instantiate(hazard_cfg, beta=beta) if hazard_cfg is not None else None
     jump_cfg = cfg.forward.get("jump", None)
-    jump = None
-    if jump_cfg is not None:
-        # Strip the optional `blur:` sub-block before Hydra instantiate, since
-        # VPMatchedGaussianJump does not accept a `blur` kwarg. The block is
-        # consumed below to attach a kernel via dataclasses.replace.
-        if "blur" in jump_cfg:
-            blur_cfg = jump_cfg.blur
-            jump_cfg_clean = OmegaConf.masked_copy(
-                jump_cfg, [k for k in jump_cfg if k != "blur"]
-            )
-            jump = hydra.utils.instantiate(jump_cfg_clean, beta=beta)
-            blur_kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
-            if blur_kernel is not None:
-                jump = dataclasses.replace(jump, blur_kernel=blur_kernel)
-        else:
-            jump = hydra.utils.instantiate(jump_cfg, beta=beta)
+    jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
+
+    # Phase 1.B: blur lives at the orthogonal `forward.blur` group. We attach
+    # the kernel to the jump after instantiate so VPMatchedGaussianJump never
+    # sees a `blur` kwarg.
+    blur_cfg = cfg.forward.get("blur", None)
+    if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
+        # seq_len: prod(dataset.data_shape) for 1D tasks; the constraint kernel
+        # ignores it (sudoku is hard-coded to 81). 2D image tasks are guarded
+        # at the per-task builder level, so they never reach this branch.
+        data_shape = tuple(cfg.dataset.get("data_shape", ()) or ())
+        seq_len = int(np.prod(data_shape)) if data_shape else None
+        kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
+        if kernel is not None and jump is not None:
+            jump = dataclasses.replace(jump, blur_kernel=kernel)
 
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
@@ -183,13 +183,12 @@ def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
     # Phase 1: blur is not supported for 2D image tasks. Fail loudly if enabled.
-    jump_cfg = cfg.forward.get("jump", None)
-    if jump_cfg is not None and "blur" in jump_cfg:
-        if bool(jump_cfg.blur.get("enabled", False)):
-            raise ValueError(
-                "Non-local blur is not supported for 2D image tasks (CIFAR10/ImageNet64) "
-                "in Phase 1. Set forward.jump.blur.enabled=false or use a sequence task."
-            )
+    blur_cfg = cfg.forward.get("blur", None)
+    if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
+        raise ValueError(
+            "Non-local blur is not supported for 2D image tasks (CIFAR10/ImageNet64) "
+            "in Phase 1. Set forward.blur.enabled=false or use a sequence task."
+        )
 
     # CIFAR10SJDTask does not accept drop_remainder / shuffle_buffer_size;
     # strip them so the shared _tfds_image_dataset_kwargs helper can evolve
@@ -210,7 +209,7 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
 
     return SudokuInpaintSJDTask(
         **_sudoku_board_dataset_kwargs(cfg),
-        **_sjd_schedule_kwargs(cfg, seq_len=81),
+        **_sjd_schedule_kwargs(cfg),
     )
 
 
@@ -232,7 +231,7 @@ def _build_openwebtext_sjd_task(cfg: DictConfig):
         mmap=bool(cfg.dataset.get("mmap", True)),
         max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
         max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
-        **_sjd_schedule_kwargs(cfg, seq_len=int(cfg.dataset.seq_len)),
+        **_sjd_schedule_kwargs(cfg),
     )
 
 
