@@ -147,3 +147,12 @@ def test_build_blur_kernel_gaussian_1d_rejects_zero_seq_len():
     cfg = {"enabled": True, "kind": "gaussian_1d", "sigma": 1.0, "include_self": True}
     with pytest.raises(ValueError, match="seq_len"):
         build_blur_kernel(cfg, seq_len=0)
+
+
+def test_public_reexports():
+    from sticky.models.sjd import (
+        gaussian_position_kernel as g,
+        sudoku_constraint_kernel as s,
+        blur_means as b,
+    )
+    assert callable(g) and callable(s) and callable(b)

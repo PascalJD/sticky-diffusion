@@ -19,6 +19,11 @@ Function names mirror the paper notation directly. There is no `denom`,
 denominator and `sample_pair` is the only training-side corruption sampler.
 """
 
+from .blur import (
+    blur_means,
+    gaussian_position_kernel,
+    sudoku_constraint_kernel,
+)
 from .corruption import (
     classifier_induced_score,
     mixture_logpdf,
@@ -38,13 +43,16 @@ from .plugin_intensity import (
 
 __all__ = [
     "HazardSchedule",
+    "blur_means",
     "classifier_induced_score",
     "dhm_log_ratio",
     "dhm_target",
+    "gaussian_position_kernel",
     "lambda_off_star",
     "lambda_time_star",
     "mixture_logpdf",
     "plugin_hazard_and_allocation",
     "plugin_hazard_and_anchor",
     "sample_pair",
+    "sudoku_constraint_kernel",
 ]
