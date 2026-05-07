@@ -5,7 +5,6 @@
 ## Installation
 
 ```bash
-git clone https://github.com/PascalJD/sticky-diffusion.git
 cd sticky-diffusion
 conda env create -f environment.yml
 conda activate sticky
@@ -13,11 +12,16 @@ conda activate sticky
 
 ## Quickstart
 
-The four canonical SJD experiments carry their forward, sampler, eval, and
-training defaults in the experiment bundle.
+The default quickstart trains the canonical SJD model on CIFAR-10:
 
 ```bash
 python -m sticky.cli.train experiment=cifar10/sjd_cifar10
+```
+
+Each experiment bundle carries its forward, sampler, eval, and training
+defaults. The other canonical SJD experiments are run analogously:
+
+```bash
 python -m sticky.cli.train experiment=imagenet64/sjd_imagenet64
 python -m sticky.cli.train experiment=sudoku/sjd_sudoku
 python -m sticky.cli.train experiment=openwebtext/sjd_openwebtext
@@ -25,7 +29,7 @@ python -m sticky.cli.train experiment=openwebtext/sjd_openwebtext
 
 One-line map:
 
-- `cifar10/sjd_cifar10`: canonical CIFAR-10 discrete-image SJD.
+- `cifar10/sjd_cifar10` (default): canonical CIFAR-10 discrete-image SJD.
 - `imagenet64/sjd_imagenet64`: ImageNet-64 SJD with ImageNet data, model, and eval defaults.
 - `sudoku/sjd_sudoku`: board-level Sudoku SJD with the compact sampler comparison eval.
 - `openwebtext/sjd_openwebtext`: GPT-2-token OpenWebText SJD with lightweight text sampling eval.
