@@ -13,15 +13,7 @@ single canonical source/config tree.
     `experiment/openwebtext/`, and `experiment/sudoku/`.
   - Models are grouped under `model/backbone/`, `model/baseline/`, and `model/sjd/`.
 - `docs/`: repository, config, dataset, and baseline-extension notes.
-- `cluster/`
-  - Training launchers: `anvil_cadd_cifar10_train.sbatch`,
-    `anvil_imagenet64_train.sbatch`, `anvil_sudoku_train.sbatch`, and
-    `gautschi_imagenet64_train.sbatch`.
-  - Environment helpers: `anvil_python_env.sh`, `gauss_python_env.sh`,
-    `gautschi_python_env.sh`, `debug_python_env.sh`, and their Anvil debug
-    launcher.
-  - Submission entry points: `submit_anvil.sh`, `submit_imagenet64_all.sh`,
-    and `submit_gautschi_imagenet64_all.sh`.
+- `tests/`: Smoke tests for SJD loss, corruption sampler, and Hydra config resolution.
 - `tools/`
   - `prepare_imagenet64.py`: ImageNet 64x64 TFDS-cache builder.
   - `prepare_openwebtext.py`: OpenWebText preprocessing.
