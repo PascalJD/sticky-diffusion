@@ -1,7 +1,6 @@
 # src/sticky/tasks/factory.py
 from __future__ import annotations
 
-import dataclasses
 from typing import Any, Callable
 
 import hydra
@@ -75,11 +74,14 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
-def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
-    from sticky.models.sjd.freq_weighting import (
-        hazard_weighting_mode,
-        load_anchor_log_w,
-    )
+def _build_forward_schedule(cfg: DictConfig):
+    """Build a ForwardSchedule from the forward config section.
+
+    Handles beta/hazard/jump instantiation and optional blur attachment via
+    ForwardSchedule.with_blur(kernel).  T is sourced from the sampler config
+    (consistent with the prior flat-dict approach) and stored in the schedule.
+    """
+    from sticky.models.sjd.schedule import ForwardSchedule
 
     beta = hydra.utils.instantiate(cfg.forward.beta)
     hazard_cfg = cfg.forward.get("hazard", None)
@@ -87,9 +89,12 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
     jump_cfg = cfg.forward.get("jump", None)
     jump = hydra.utils.instantiate(jump_cfg, beta=beta) if jump_cfg is not None else None
 
+    T_value = float(cfg.sampler.get("T", getattr(beta, "T", 1.0)))
+    schedule = ForwardSchedule(beta=beta, hazard=hazard, jump=jump, T=T_value)
+
     # Phase 1.B: blur lives at the orthogonal `forward.blur` group. We attach
-    # the kernel to the jump after instantiate so VPMatchedGaussianJump never
-    # sees a `blur` kwarg.
+    # the kernel to the jump (via with_blur) after instantiate so
+    # VPMatchedGaussianJump never sees a `blur` kwarg.
     blur_cfg = cfg.forward.get("blur", None)
     if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
         # seq_len: prod(dataset.data_shape) for 1D tasks; the constraint kernel
@@ -98,8 +103,18 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         data_shape = tuple(cfg.dataset.get("data_shape", ()) or ())
         seq_len = int(np.prod(data_shape)) if data_shape else None
         kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
-        if kernel is not None and jump is not None:
-            jump = dataclasses.replace(jump, blur_kernel=kernel)
+        if kernel is not None:
+            schedule = schedule.with_blur(kernel)
+
+    return schedule
+
+
+def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
+    """Return DHM-side kwargs (9 keys) for SJDTaskBase construction."""
+    from sticky.models.sjd.freq_weighting import (
+        hazard_weighting_mode,
+        load_anchor_log_w,
+    )
 
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
@@ -124,10 +139,6 @@ def _sjd_schedule_kwargs(cfg: DictConfig) -> dict[str, Any]:
         # CLI overrides on forward.hazard_weighting.loss_weighting still apply.
         loss_weighting = str(hw_loss_weighting)
     return {
-        "beta": beta,
-        "hazard": hazard,
-        "jump": jump,
-        "T": float(cfg.sampler.get("T", getattr(beta, "T", 1.0))),
         "log_state_dependency": bool(cfg.training.get("log_state_dependency", True)),
         "state_dep_log_ratio_clip": float(
             cfg.training.get(
@@ -200,7 +211,8 @@ def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     return CIFAR10SJDTask(
         task_name=task_name,
         **image_kw,
-        **_sjd_schedule_kwargs(cfg),
+        forward=_build_forward_schedule(cfg),
+        **_sjd_dhm_kwargs(cfg),
     )
 
 
@@ -209,7 +221,8 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
 
     return SudokuInpaintSJDTask(
         **_sudoku_board_dataset_kwargs(cfg),
-        **_sjd_schedule_kwargs(cfg),
+        forward=_build_forward_schedule(cfg),
+        **_sjd_dhm_kwargs(cfg),
     )
 
 
@@ -231,7 +244,8 @@ def _build_openwebtext_sjd_task(cfg: DictConfig):
         mmap=bool(cfg.dataset.get("mmap", True)),
         max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
         max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
-        **_sjd_schedule_kwargs(cfg),
+        forward=_build_forward_schedule(cfg),
+        **_sjd_dhm_kwargs(cfg),
     )
 
 
