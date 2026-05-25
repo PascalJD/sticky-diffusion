@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
 from jax import core as jax_core
 
 from sticky.data.sudoku import get_sudoku_board_num_examples, make_sudoku_board_iterator
-from sticky.models.sjd.losses import ce_allocation_loss
 from sticky.rng import PRNGKey
-from sticky.tasks.base import Batch, Metrics, Task, TaskSpec
+from sticky.tasks.base import Batch, Metrics, TaskSpec
+from sticky.tasks.sjd_base import SJDTaskBase
 
 
 Array = jnp.ndarray
 
 
 @dataclass
-class SudokuInpaintSJDTask(Task):
+class SudokuInpaintSJDTask(SJDTaskBase):
     """Board-level Sudoku SJD task with hint-clamped conditional corruption."""
 
     data_dir: Optional[str]
@@ -28,19 +28,6 @@ class SudokuInpaintSJDTask(Task):
     data_shape: Tuple[int, ...]
     vocab_size: int
     num_classes: int
-    beta: Callable[[Array], Array]
-    hazard: Optional[Any] = None
-    jump: Optional[Any] = None
-    T: float = 1.0
-    log_state_dependency: bool = True
-    state_dep_log_ratio_clip: float = 10.0
-    time_sampling: str = "uniform"
-    loss_weighting: str = "uniform"
-    anchor_log_w: Optional[Array] = None
-    learn_log_w: bool = False
-    t_floor: float = 1e-3
-    log_anchor_log_w_stats: bool = True
-    pass_noisy_mask_to_model: bool = False
     drop_remainder: bool = True
     shuffle: bool = True
     mmap: bool = True
@@ -125,88 +112,30 @@ class SudokuInpaintSJDTask(Task):
             download_retries=int(self.download_retries),
         )
 
-    def loss_fn(
-        self,
-        *,
-        rng: PRNGKey,
-        model,
-        params,
-        batch: Batch,
-        train: bool,
-    ) -> tuple[jnp.ndarray, Metrics]:
+    def _extract_x0_idx(self, batch: Batch) -> Array:
         solution_board = jnp.asarray(batch["solution_board"], dtype=jnp.int32)
-        clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
         x0_idx = solution_board - 1
-        # Keep a helpful eager-mode validation without triggering Python truth-value
-        # conversion on tracers inside the jitted training step.
+        # Eager-mode digit-range validation: only runs outside jit where x0_idx
+        # is not a Tracer, so it never triggers Python truth-value errors on
+        # abstract values.
         if not isinstance(x0_idx, jax_core.Tracer):
             if bool(jnp.any(x0_idx < 0)) or bool(jnp.any(x0_idx > 8)):
                 raise ValueError(
                     "Sudoku SJD clean targets must map digits 1..9 to indices 0..8."
                 )
+        return x0_idx
 
-        key_loss, key_dropout = jax.random.split(rng)
-        x0_anchor = model.apply({"params": params}, x0_idx, method=model.embed)
-        anchor_table = None
-        if bool(self.log_state_dependency):
-            try:
-                anchor_table = params["anchors"]["table"]
-            except Exception:
-                anchor_table = model.apply({"params": params}, method=model.anchor_table)
+    def _given_mask(self, batch: Batch) -> Array:
+        return jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
 
-        def apply_fn(p, xt, t_img, noisy_position_mask=None):
-            extra_kwargs = {}
-            if noisy_position_mask is not None:
-                extra_kwargs["noisy_position_mask"] = noisy_position_mask
-            if train:
-                return model.apply(
-                    {"params": p},
-                    xt,
-                    t=t_img,
-                    train=True,
-                    **extra_kwargs,
-                    rngs={"dropout": key_dropout},
-                )
-            return model.apply(
-                {"params": p},
-                xt,
-                t=t_img,
-                train=False,
-                **extra_kwargs,
-            )
-
-        if self.learn_log_w:
-            anchor_log_w = model.apply({"params": params}, method=model.anchor_log_w)
-        else:
-            anchor_log_w = self.anchor_log_w
-
-        loss, metrics = ce_allocation_loss(
-            key=key_loss,
-            params=params,
-            apply_fn=apply_fn,
-            x0_anchor=x0_anchor,
-            x0_idx=x0_idx,
-            beta=self.beta,
-            hazard=self.hazard,
-            jump=self.jump if bool(self.log_state_dependency) else None,
-            anchor_table=anchor_table,
-            state_dep_log_ratio_clip=float(self.state_dep_log_ratio_clip),
-            T=float(self.T),
-            given_mask=clue_mask,
-            time_sampling=str(self.time_sampling),
-            loss_weighting=str(self.loss_weighting),
-            anchor_log_w=anchor_log_w,
-            t_floor=float(self.t_floor),
-            log_anchor_log_w_stats=bool(self.log_anchor_log_w_stats),
-            pass_noisy_mask_to_model=bool(self.pass_noisy_mask_to_model),
-        )
-
-        metrics = dict(metrics)
-        metrics["loss"] = loss
+    def _extra_metrics(
+        self, metrics: dict, batch: Batch, x0_idx: Array
+    ) -> dict:
+        clue_mask = jnp.asarray(batch["clue_mask"], dtype=jnp.bool_)
         metrics["clean_index_min"] = jnp.min(x0_idx).astype(jnp.float32)
         metrics["clean_index_max"] = jnp.max(x0_idx).astype(jnp.float32)
         metrics["given_fraction"] = jnp.mean(clue_mask.astype(jnp.float32))
-        return loss, metrics
+        return metrics
 
     def decode(self, x: jnp.ndarray) -> jnp.ndarray:
         arr = jnp.asarray(x, dtype=jnp.int32)
