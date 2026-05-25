@@ -25,6 +25,7 @@ from .blur import (
     gaussian_position_kernel,
     sudoku_constraint_kernel,
 )
+from .schedule import ForwardSchedule
 from .corruption import (
     classifier_induced_score,
     mixture_logpdf,
@@ -43,6 +44,7 @@ from .plugin_intensity import (
 )
 
 __all__ = [
+    "ForwardSchedule",
     "HazardSchedule",
     "blur_means",
     "build_blur_kernel",
