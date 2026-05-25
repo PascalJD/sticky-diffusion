@@ -11,7 +11,6 @@ from sticky.models.factories._helpers import adm_backbone_kwargs
 
 def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int):
     del data_shape
-    import jax.numpy as jnp
 
     from sticky.models.sjd.anchors import (
         anchor_learnable_from_mapping,

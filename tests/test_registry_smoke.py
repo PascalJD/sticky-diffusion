@@ -14,12 +14,14 @@ EXPECTED_FAMILIES = frozenset(
 
 
 def test_init_registry_has_expected_families():
-    """After importing factories, _INIT_REGISTRY contains all 9 model families."""
+    """After importing factories, _INIT_REGISTRY contains exactly the 9 model families."""
     import sticky.models.factories  # noqa: F401 — triggers @register_init decorators
     from sticky.models._registry import _INIT_REGISTRY
 
     missing = EXPECTED_FAMILIES - set(_INIT_REGISTRY)
     assert not missing, f"Init registry missing families: {sorted(missing)}"
+    extra = set(_INIT_REGISTRY) - EXPECTED_FAMILIES
+    assert not extra, f"Init registry has unexpected families: {sorted(extra)}"
 
 
 def test_model_builders_has_expected_families():
