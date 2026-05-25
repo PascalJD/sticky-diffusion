@@ -26,13 +26,15 @@ class ForwardSchedule:
     hazard: Any                    # HazardSchedule protocol (typed as Any for now)
     jump: Any                      # JumpDistribution protocol (typed as Any for now)
     T: float = 1.0
-    blur_kernel: Optional[Any] = None
+
+    @property
+    def blur_kernel(self) -> Optional[Any]:
+        """Cross-position blending W. Stored on the jump kernel; surfaced here
+        so callers can read it from the schedule without reaching into jump.
+        """
+        return getattr(self.jump, "blur_kernel", None)
 
     def with_blur(self, blur_kernel: Any) -> "ForwardSchedule":
-        """Return a copy with the blur kernel attached to the jump.
-
-        Mirrors the prior factory hack of dataclasses.replace(jump, blur_kernel=kernel)
-        but keeps it on the schedule type rather than inline in the factory.
-        """
+        """Return a copy with the blur kernel attached to the jump."""
         new_jump = dataclasses.replace(self.jump, blur_kernel=blur_kernel)
-        return dataclasses.replace(self, jump=new_jump, blur_kernel=blur_kernel)
+        return dataclasses.replace(self, jump=new_jump)
