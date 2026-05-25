@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, ClassVar, Dict, Optional
 
 import jax
 import jax.numpy as jnp
@@ -49,7 +49,8 @@ class SJDTaskBase(Task):
 
     # Whether the model.apply signature takes the time arg positionally (CIFAR-10)
     # vs as a keyword ``t=`` (OpenWebText, Sudoku).
-    _t_passes_positionally: bool = False
+    # Declared as ClassVar so @dataclass does not treat it as an instance field.
+    _t_passes_positionally: ClassVar[bool] = False
 
     def _extract_x0_idx(self, batch: Batch) -> Array:
         raise NotImplementedError("Subclasses must implement _extract_x0_idx")
