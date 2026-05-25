@@ -1,0 +1,39 @@
+# Board-level SJD Sudoku experiment with end-to-end ELBO hazard learning.
+# Mirrors sjd_sudoku.yaml; the only deltas are the hazard_weighting mode (and
+# the eta=1 / W=I guardrails the elbo_eta1 objective requires). KEEP IN SYNC
+# with sjd_sudoku.yaml — Hydra experiment-to-experiment inheritance is not
+# usable here (it double-nests the resolved config), so the defaults list is
+# duplicated.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: learned_e2e   # ELBO at eta=1, unbiased log_w gradient
+  - /forward/jump: vp_matched
+  - /forward/blur: none                       # W = I, required by the elbo_eta1 guardrail
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+forward:
+  jump:
+    eta: 1.0                                  # NOT 0.97 — elbo_eta1 rejects any other value
+  blur:
+    blur_kernel: null                          # W = I
+
+# log_w_lr_multiplier: gradient-magnitude probe suggested ~25 for the
+# unbiased ELBO path (vs the default 100 tuned for the biased hazard_deriv
+# weighting). Adjust per future probes if w-magnitudes drift.
+training:
+  log_w_lr_multiplier: 25.0
