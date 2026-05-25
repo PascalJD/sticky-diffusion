@@ -8,8 +8,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 
 from sticky.data.sudoku import get_sudoku_board_num_examples, make_sudoku_board_iterator
-from sticky.rng import PRNGKey
-from sticky.tasks.base import Batch, Metrics, TaskSpec
+from sticky.tasks.base import Batch, TaskSpec
 from sticky.tasks.sjd_base import SJDTaskBase
 
 

@@ -8,8 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from sticky.data.openwebtext import make_openwebtext_iterator
-from sticky.rng import PRNGKey
-from sticky.tasks.base import Batch, Metrics, TaskSpec
+from sticky.tasks.base import Batch, TaskSpec
 from sticky.tasks.sjd_base import SJDTaskBase
 
 
