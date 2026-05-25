@@ -35,6 +35,52 @@ def _log1mexp(x: Array, eps: float = 1e-7) -> Array:
     )
 
 
+def log_lambda_hat_per_anchor(
+    *,
+    t_img: Array,
+    hazard: HazardSchedule,
+    log_w_table: Array,
+    eps: float = 1e-20,
+) -> Array:
+    """Closed-form ``log lambda_hat_t(a)`` at eta=1 (appendix eq:c2-collapse):
+
+        log lambda_hat_t(a) = log lam(t) + log w(a) + w(a) * log S(t)
+                              - log(1 - S(t)^{w(a)}),
+
+    where ``lam(t) = hazard.lam(t)`` is the SJD forward hazard rate (the
+    appendix's beta(t) — a notation collision with the VP noise schedule),
+    ``S(t) = exp(-H(t))``, and ``w(a) = exp(log_w_table[a])``.
+
+    Shared between the plug-in sampler (full hazard + allocation) and the
+    elbo_eta1 training loss. Uses ``_log1mexp`` for stability when w(a)*H(t)
+    is small.
+
+    Args:
+        t_img: shape (B,).
+        hazard: SJD hazard schedule.
+        log_w_table: shape (K,) — per-anchor log w(a) (caller must mean-recenter
+            if needed; the recentering is not the helper's responsibility).
+        eps: floor on lam(t) before log to avoid -inf.
+
+    Returns:
+        log_lam_hat: shape (B, K).
+    """
+    log_w_table = jnp.asarray(log_w_table, dtype=jnp.float32)
+    t_img = jnp.asarray(t_img, dtype=jnp.float32)
+    lam_t = jnp.asarray(hazard.lam(t_img), dtype=jnp.float32)  # (B,)
+    log_lam_t = jnp.log(jnp.maximum(lam_t, jnp.asarray(eps, dtype=jnp.float32)))
+    log_S_t = -jnp.asarray(hazard.cum(t_img), dtype=jnp.float32)  # (B,)
+    w_table = jnp.exp(log_w_table)  # (K,)
+    log_S_a_t = w_table[None, :] * log_S_t[:, None]  # (B, K)
+    log_one_minus_S_a_t = _log1mexp(log_S_a_t)
+    return (
+        log_lam_t[:, None]
+        + log_w_table[None, :]
+        + log_S_a_t
+        - log_one_minus_S_a_t
+    )  # (B, K)
+
+
 def _sample_anchor_from_probs(
     *,
     key: PRNGKey,
@@ -171,27 +217,17 @@ def _full_hazard_and_allocation(
         )
     else:
         # Per-anchor log_lam_base[a] = log lam(t) + log w(a) + w(a)*log S(t)
-        #                              - log(1 - S(t)^{w(a)}),
-        # where lam(t) = hazard.lam(t) is the base (anchor-agnostic) hazard
-        # rate. Collapses to log lambda_off_star(t) when w(a) = 1 for all a.
+        #                              - log(1 - S(t)^{w(a)}).
+        # Collapses to log lambda_off_star(t) when w(a) = 1 for all a.
+        # Shared with the elbo_eta1 training loss via log_lambda_hat_per_anchor.
         log_w_table = jnp.asarray(anchors.effective_log_w, dtype=jnp.float32)  # (L,)
-        w_table = jnp.exp(log_w_table)  # (L,)
-        lam_t = jnp.asarray(hazard.lam(t_img), dtype=jnp.float32)  # (B,)
-        log_lam_t = jnp.log(
-            jnp.maximum(lam_t, jnp.asarray(eps, dtype=jnp.float32))
-        )[:, None, None]  # (B, 1, 1)
-        log_S_t = -jnp.asarray(hazard.cum(t_img), dtype=jnp.float32)[:, None, None]
-        log_S_a_t = w_table[None, None, :] * log_S_t  # (B, 1, L)
-        # _log1mexp's eps is a "x < 0" guard against float-resolution issues;
-        # leave it at the function default (1e-7) rather than the much
-        # smaller `eps` (1e-20) used as a max-floor on the lam_t / sum_a path.
-        log_one_minus_S_a_t = _log1mexp(log_S_a_t)
-        log_lam_base = (
-            log_lam_t
-            + log_w_table[None, None, :]
-            + log_S_a_t
-            - log_one_minus_S_a_t
-        )  # (B, 1, L)
+        log_lam_base_BL = log_lambda_hat_per_anchor(
+            t_img=t_img,
+            hazard=hazard,
+            log_w_table=log_w_table,
+            eps=eps,
+        )  # (B, L)
+        log_lam_base = log_lam_base_BL[:, None, :]  # (B, 1, L)
     logw_raw = log_lam_base + logp_flat + log_ratio
     lam_total_flat = jnp.maximum(
         jnp.sum(jnp.exp(logw_raw), axis=-1),

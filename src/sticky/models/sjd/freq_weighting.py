@@ -13,17 +13,21 @@ Array = jnp.ndarray
 
 
 def hazard_weighting_mode(cfg_hazard_weighting: Any) -> str:
-    """Return one of {"none", "frequency", "learned"} for a hazard_weighting cfg.
+    """Return one of {"none", "frequency", "learned", "learned_e2e"} for a
+    hazard_weighting cfg.
 
-    The ``mode`` key disambiguates the three Hydra configs explicitly. For
-    backward compatibility with checkpoints/configs predating ``mode``, fall
-    back to the legacy inference: ``enabled=true`` ⇒ ``frequency``, else
-    ``none``.
+    The ``mode`` key disambiguates the configs explicitly. For backward
+    compatibility with checkpoints/configs predating ``mode``, fall back to the
+    legacy inference: ``enabled=true`` ⇒ ``frequency``, else ``none``.
+
+    ``learned_e2e`` is the appendix's end-to-end ELBO at eta=1: same learnable
+    ``log_w`` as ``learned`` but trained under L_CE + L_RB + Omega with
+    unbiased w-gradients (objective='elbo_eta1' in SJDTaskBase).
     """
     if cfg_hazard_weighting is None:
         return "none"
     mode = getattr(cfg_hazard_weighting, "mode", None)
-    if mode in ("none", "frequency", "learned"):
+    if mode in ("none", "frequency", "learned", "learned_e2e"):
         return str(mode)
     enabled = bool(getattr(cfg_hazard_weighting, "enabled", False))
     return "frequency" if enabled else "none"

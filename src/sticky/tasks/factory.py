@@ -119,7 +119,7 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
     hw_mode = hazard_weighting_mode(hazard_weighting_cfg)
-    if hw_mode == "learned":
+    if hw_mode in ("learned", "learned_e2e"):
         # log_w lives in `params` under "anchors/log_w"; the task reads it from
         # there inside loss_fn so gradients can flow.
         anchor_log_w = None
@@ -138,6 +138,20 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
         # sets hazard_deriv so log_w actually receives gradient). Field-level
         # CLI overrides on forward.hazard_weighting.loss_weighting still apply.
         loss_weighting = str(hw_loss_weighting)
+    # End-to-end ELBO mode: opt-in via hazard_weighting.mode='learned_e2e'.
+    # Carries its own loss (L_CE + L_RB + Omega), so 'loss_weighting' is ignored.
+    if hw_mode == "learned_e2e":
+        objective = "elbo_eta1"
+    else:
+        objective = "ce"
+    hw = hazard_weighting_cfg
+    rb_weight = float(getattr(hw, "rb_weight", 1.0)) if hw is not None else 1.0
+    rb_share_sample = bool(
+        getattr(hw, "rb_share_sample", True)
+    ) if hw is not None else True
+    prior_strength = float(
+        getattr(hw, "prior_strength", 0.0)
+    ) if hw is not None else 0.0
     return {
         "log_state_dependency": bool(cfg.training.get("log_state_dependency", True)),
         "state_dep_log_ratio_clip": float(
@@ -157,6 +171,10 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "pass_noisy_mask_to_model": bool(
             cfg.get("model", {}).get("use_noisy_input_bias", False)
         ),
+        "objective": objective,
+        "rb_weight": rb_weight,
+        "rb_share_sample": rb_share_sample,
+        "prior_strength": prior_strength,
     }
 
 

@@ -1,0 +1,37 @@
+# End-to-end SJD ELBO at eta=1 (appendix `alg:sjd-e2e-eta1`). Learns the
+# per-anchor hazard w(a) jointly with the classifier under L_CE + L_RB + Omega.
+#
+# Differences from `learned.yaml`:
+#   - Uses objective='elbo_eta1' inside SJDTaskBase, NOT loss_weighting=hazard_deriv.
+#     The latter has a biased w-gradient (see plan `plan-end-to-end-forward-vast-coral.md`,
+#     "The gradient-correctness gap"); this mode draws Y ~ q_t directly and
+#     puts the (1 - S_a) factor into a deterministic weight so all w-dependence
+#     is closed-form and reparametrized.
+#   - Adds a rate-balance term L_RB and an optional prior Omega(w).
+#
+# Requires:
+#   jump.eta == 1.0  (any other eta is rejected at task construction).
+#   blur_kernel == null (W = I, the only path with the eta=1 closed-form lam_hat).
+mode: learned_e2e
+enabled: true
+# zeros: start from w(a) ≡ 1 (anchor-agnostic baseline at step 0).
+# frequency: initialize from an npz precomputed by tools/compute_anchor_frequencies.py.
+init: zeros
+log_w_path: null
+# loss_weighting is set by the objective; this field has no effect when mode=learned_e2e.
+loss_weighting: null
+# rb_weight: scale on the rate-balance term L_RB. Set to 0.0 to disable
+# (training only on CE + prior).
+rb_weight: 1.0
+# rb_share_sample: if true, reuse the CE forward pass for L_RB (1x cost,
+# correlated CE/RB gradients). If false, draw an independent sample for L_RB
+# (2x cost, cleaner gradient decomposition). Default true for exploration;
+# flip to false for quality-sensitive final runs.
+rb_share_sample: true
+# prior_strength: lambda_Omega for Omega(w) = lambda_Omega * Sum_a (w(a) - 1)^2.
+# Off by default. Turn on for small-data regimes where log_w would otherwise drift.
+prior_strength: 0.0
+# These mirror the precompute-script flags; not consumed at runtime.
+smoothing_alpha: 1.0
+normalize_mean: true
+clip: [0.1, 10.0]
