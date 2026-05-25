@@ -10,6 +10,8 @@ from flax import struct
 from omegaconf import DictConfig
 
 from sticky.core.paths import is_nullish
+from sticky.models import factories  # noqa: F401  triggers @register_init
+from sticky.models._registry import get_init
 from sticky.models.sjd.anchors import anchor_learnable_from_mapping
 from sticky.rng import PRNGKey, ensure_prng_key
 
@@ -152,58 +154,18 @@ def make_optimizer(cfg: DictConfig, params: Any):
 def init_state(cfg: DictConfig, model, rng: PRNGKey):
     rng = ensure_prng_key(rng)
     name = str(cfg.model.name)
-    batch_size = (
-        int(cfg.dataset.per_device_batch_size)
-        if int(cfg.dataset.per_device_batch_size) > 0
-        else 1
-    )
+    # data_shape is kept here for the param-count logging block below.
     data_shape = tuple(getattr(model, "data_shape", tuple(cfg.dataset.data_shape)))
 
-    if name in ("md4", "mdlm", "mdm", "d3pm", "candi", "cadd", "bitdiff", "ddpm"):
-        rng, rng_params, rng_sample = jax.random.split(rng, 3)
-        dummy_x = jnp.zeros((batch_size,) + data_shape, dtype=jnp.int32)
-        dummy_cond = (
-            jnp.zeros((batch_size,), dtype=jnp.int32)
-            if int(cfg.model.classes) > 0
-            else None
-        )
-        if name == "mdm":
-            dummy_t = jnp.zeros((batch_size,), dtype=jnp.float32)
-            variables = model.init(
-                {"params": rng_params, "sample": rng_sample},
-                dummy_x,
-                dummy_t,
-                cond=dummy_cond,
-                train=False,
-            )
-        else:
-            variables = model.init(
-                {"params": rng_params, "sample": rng_sample},
-                dummy_x,
-                cond=dummy_cond,
-                train=False,
-            )
-
-    elif name == "sjd":
-        rng, rng_params = jax.random.split(rng, 2)
-
-        anchor_dim = int(model.anchor_config.anchor_dim)
-        dummy_z = jnp.zeros(
-            (batch_size,) + tuple(cfg.dataset.data_shape) + (anchor_dim,),
-            dtype=jnp.float32,
-        )
-        dummy_t = jnp.zeros((batch_size,), dtype=jnp.float32)
-        dummy_ids = jnp.zeros(tuple(dummy_z.shape[:-1]), dtype=jnp.int32)
-        variables = model.init(
-            {"params": rng_params},
-            dummy_z,
-            dummy_t,
-            anchor_token_ids=dummy_ids,
-            train=False,
-        )
-
-    else:
-        raise ValueError(f"Unknown model.name={name!r} for init")
+    # Registry dispatch: each family's init fn is registered under cfg.model.name.
+    # rng sequencing note: the outer split here differs from the pre-Phase-5
+    # per-family splits (discrete baselines used 3-way; SJD used 2-way). This
+    # means rng_params will differ from pre-Phase-5 code. This only affects
+    # re-init from a pre-Phase-5 checkpoint (step 0 parameters); after step 1
+    # the rng divergence washes out via step_rng updates.
+    init_fn = get_init(name)
+    rng, init_rng = jax.random.split(rng, 2)
+    variables = init_fn(model, cfg, init_rng)
 
     params = variables["params"]
     model_name = str(cfg.model.get("name", "unknown"))
