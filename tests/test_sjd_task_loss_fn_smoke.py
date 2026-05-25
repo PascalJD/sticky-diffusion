@@ -4,6 +4,7 @@ from unittest.mock import patch
 import jax
 import jax.numpy as jnp
 
+from sticky.models.sjd.schedule import ForwardSchedule
 from sticky.models.sjd.sdes import make_beta
 from sticky.models.sjd.hazard import make_hazard_linear_time
 from sticky.models.sjd.jump import VPMatchedGaussianJump
@@ -16,6 +17,7 @@ def _make_task():
     beta = make_beta(0.1, 20.0, T=1.0)
     hazard = make_hazard_linear_time(beta, kappa=3.0)
     jump = VPMatchedGaussianJump(beta=beta)
+    forward = ForwardSchedule(beta=beta, hazard=hazard, jump=jump, T=1.0)
     return SudokuInpaintSJDTask(
         data_dir=None,
         train_file="train.npy",
@@ -25,9 +27,7 @@ def _make_task():
         data_shape=(81,),
         vocab_size=9,
         num_classes=9,
-        beta=beta,
-        hazard=hazard,
-        jump=jump,
+        forward=forward,
         log_state_dependency=False,  # skip anchor_table lookup
     )
 

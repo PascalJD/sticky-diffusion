@@ -52,6 +52,7 @@ class CIFAR10SJDTask(SJDTaskBase, TFDSDiscreteImageTaskBase):
     augment_eval: bool = False
 
     def __post_init__(self):
+        super().__post_init__()
         self._spec = self._build_image_task_spec(name=str(self.task_name))
 
     @property

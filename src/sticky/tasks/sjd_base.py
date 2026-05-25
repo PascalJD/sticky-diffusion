@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 import jax
 import jax.numpy as jnp
 
 from sticky.models.sjd.losses import ce_allocation_loss
+from sticky.models.sjd.schedule import ForwardSchedule
 from sticky.rng import PRNGKey
 from sticky.tasks.base import Batch, Metrics, Task
 
@@ -24,18 +25,14 @@ class SJDTaskBase(Task):
       - data loading (make_dataloaders)
       - dataset-specific dataclass fields
 
-    NOTE: ``beta`` has a ``None`` default to avoid dataclass field-ordering
+    NOTE: ``forward`` has a ``None`` default to avoid dataclass field-ordering
     errors when subclasses define required (no-default) fields. It MUST be
-    supplied at construction time; passing ``beta=None`` will raise at the
-    first training step. Use ``__post_init__`` in a subclass or the factory
-    to enforce this if desired.
+    supplied at construction time; passing ``forward=None`` will raise in
+    ``__post_init__``.
     """
 
     # Forward dynamics (populated by the task factory)
-    beta: Callable[[Array], Array] = None  # required; default avoids ordering issues
-    hazard: Optional[Any] = None
-    jump: Optional[Any] = None
-    T: float = 1.0
+    forward: Optional[ForwardSchedule] = None  # required at construction time
     # DHM knobs
     log_state_dependency: bool = True
     state_dep_log_ratio_clip: float = 10.0
@@ -51,6 +48,15 @@ class SJDTaskBase(Task):
     # vs as a keyword ``t=`` (OpenWebText, Sudoku).
     # Declared as ClassVar so @dataclass does not treat it as an instance field.
     _t_passes_positionally: ClassVar[bool] = False
+
+    def __post_init__(self):
+        if self.forward is None:
+            raise ValueError(
+                f"{type(self).__name__} requires a ForwardSchedule; got forward=None"
+            )
+        super_post = getattr(super(), "__post_init__", None)
+        if super_post is not None:
+            super_post()
 
     def _extract_x0_idx(self, batch: Batch) -> Array:
         raise NotImplementedError("Subclasses must implement _extract_x0_idx")
@@ -111,12 +117,12 @@ class SJDTaskBase(Task):
             apply_fn=apply_fn,
             x0_anchor=x0_anchor,
             x0_idx=x0_idx,
-            beta=self.beta,
-            hazard=self.hazard,
-            jump=self.jump if bool(self.log_state_dependency) else None,
+            beta=self.forward.beta,
+            hazard=self.forward.hazard,
+            jump=self.forward.jump if bool(self.log_state_dependency) else None,
             anchor_table=anchor_table,
             state_dep_log_ratio_clip=float(self.state_dep_log_ratio_clip),
-            T=float(self.T),
+            T=float(self.forward.T),
             given_mask=self._given_mask(batch),
             time_sampling=str(self.time_sampling),
             loss_weighting=str(self.loss_weighting),

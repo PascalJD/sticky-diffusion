@@ -37,6 +37,7 @@ class SudokuInpaintSJDTask(SJDTaskBase):
     download_retries: int = 8
 
     def __post_init__(self):
+        super().__post_init__()
         self.data_shape = (81,)
         self.vocab_size = 9
         self.spec = TaskSpec(

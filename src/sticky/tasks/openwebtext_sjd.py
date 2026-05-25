@@ -36,6 +36,7 @@ class OpenWebTextSJDTask(SJDTaskBase):
     _tokenizer: Any = field(init=False, default=None, repr=False, compare=False)
 
     def __post_init__(self):
+        super().__post_init__()
         self.spec = TaskSpec(
             name=str(self.task_name),
             task_type="text",
