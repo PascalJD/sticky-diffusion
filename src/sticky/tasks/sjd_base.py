@@ -128,4 +128,5 @@ class SJDTaskBase(Task):
 
         metrics = dict(metrics)
         metrics["loss"] = loss
-        return self._extra_metrics(metrics, batch, x0_idx)
+        metrics = self._extra_metrics(metrics, batch, x0_idx)
+        return loss, metrics
