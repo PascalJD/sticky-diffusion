@@ -1,4 +1,3 @@
-# src/sticky/models/factory.py
 """Model factory dispatcher.
 
 Per-family build functions live in ``sticky.models.factories.<family>``.
@@ -6,24 +5,11 @@ The dispatch table is composed in ``sticky.models.factories.__init__``.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from omegaconf import DictConfig
 
-from sticky.models.factories import (
-    MODEL_BUILDERS,
-    bitdiff,
-    cadd,
-    candi,
-    d3pm,
-    ddpm,
-    md4,
-    mdlm,
-    mdm,
-    sjd,
-)
-
-__all__ = ["MODEL_BUILDERS", "build_model"]
+from sticky.models.factories import MODEL_BUILDERS
 
 
 def build_model(
