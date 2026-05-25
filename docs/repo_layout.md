@@ -24,13 +24,18 @@ single canonical source/config tree.
   - `cli/`: canonical train/eval entrypoints.
   - `core/`: shared path, metrics, sampling-loop, and runtime helpers.
   - `data/`: dataset loaders and iterator packages, including `data/sudoku/`.
-  - `tasks/`: task adapters and task factory.
+  - `tasks/`: task adapters, SJDTaskBase (shared loss_fn), and task factory.
   - `models/`
+    - `_registry.py`: init function registry for per-family initialization.
     - `backbones/`: shared sequence/image backbone implementations.
     - `common/`: shared model helpers and math utilities.
     - `baselines/`: baseline diffusion families grouped by family.
-    - `sjd/`: sticky-jump-diffusion code.
+    - `factories/`: per-family `build_model` and init functions; `_helpers.py`
+      for shared factory utilities.
+    - `sjd/`: sticky-jump-diffusion code, including `schedule.py`
+      (ForwardSchedule for bundled forward design axes).
   - `training/`, `eval/`.
+- `tests/`: smoke tests for model initialization and config resolution.
 
 ## Naming Conventions
 
@@ -40,6 +45,9 @@ single canonical source/config tree.
 - Keep `sticky.models.sjd` first-class.
 - Keep `sticky.models.backbones`, `sticky.models.common`, and
   `sticky.models.baselines.*` as the canonical code locations.
+- Model factory code lives in `sticky.models.factories.<family>` per family.
+- Init functions are registered via `@register_init("<family>")` decorator in
+  factories.
 
 ## Notes
 

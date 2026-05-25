@@ -15,12 +15,19 @@ This repository keeps baseline model families under `sticky.models.baselines`.
 ## Recommended Checklist
 
 1. Add the model family package under `sticky.models.baselines.<family>`.
-2. Add or update the explicit builder entry in `sticky.models.factory`.
-3. Add or update the task mapping if the baseline needs a new task preset.
-4. Add model and sampler configs under the grouped config tree.
-5. Add a grouped experiment config that composes the dataset, model, optimizer,
+2. Create `src/sticky/models/factories/<new_family>.py` with `build_model(cfg,
+   *, data_shape, vocab_size)` and optionally an init function decorated with
+   `@register_init("<new_family>")`.
+3. Add the new family to imports and `MODEL_BUILDERS` dict in
+   `src/sticky/models/factories/__init__.py`.
+4. Add or update the task mapping in `src/sticky/tasks/factory.py` if the
+   baseline needs a new task preset.
+5. Add model and sampler configs under the grouped config tree.
+6. Add a grouped experiment config that composes the dataset, model, optimizer,
    sampler, training, and runtime entries.
-6. Add a focused smoke test plus any characterization tests for behavior-
+7. Update `EXPECTED_FAMILIES` in `tests/test_registry_smoke.py` if adding an
+   init function.
+8. Add a focused smoke test plus any characterization tests for behavior-
    sensitive paths.
 
 ## Config Examples
