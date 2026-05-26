@@ -19,6 +19,10 @@ sudoku_run_all_sampler_modes: true
 sudoku_primary_sampler_label: predictor_only
 sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
 sudoku_log_policy_table: true
+# When false, the per-sampler `sampling/*` diagnostic keys (NFE, commit/unstick
+# counts, gate means, wallclock) are omitted from wandb. The CSV mirror still
+# captures them. Flip to true for sampler debugging runs.
+sudoku_log_diagnostics_to_wandb: false
 sudoku_write_progress_csv: true
 sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
 sudoku_write_latest_csv: true

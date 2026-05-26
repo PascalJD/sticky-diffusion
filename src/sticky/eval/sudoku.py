@@ -796,6 +796,11 @@ def build_sudoku_eval_logger(
     num_batches_per_mode = int(eval_cfg.get("sudoku_num_batches_per_sampler", num_batches_default))
     checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
     log_policy_table = bool(eval_cfg.get("sudoku_log_policy_table", False))
+    # Per-sampler `sampling/*` diagnostic metrics (NFE, commit/unstick counts,
+    # gate means, wallclock) are useful when debugging samplers but add noise
+    # to routine training dashboards. The CSV mirror is unaffected — diagnostics
+    # are always written to sudoku_sjd_progress.csv regardless of this flag.
+    log_diagnostics_to_wandb = bool(eval_cfg.get("sudoku_log_diagnostics_to_wandb", False))
     write_progress_csv = bool(eval_cfg.get("sudoku_write_progress_csv", False))
     progress_csv_path = eval_cfg.get("sudoku_progress_csv_path", None)
     write_latest_csv = bool(eval_cfg.get("sudoku_write_latest_csv", False))
@@ -1016,7 +1021,10 @@ def build_sudoku_eval_logger(
             metric_prefix=str(sampler_spec["metrics_prefix"]),
             n_steps=int(sampler_spec["n_steps"]),
             checkpoint_source=checkpoint_source,
-            include_sjd_sampler_metrics=bool(sampler_spec.get("kind") == "sampler"),
+            include_sjd_sampler_metrics=(
+                bool(sampler_spec.get("kind") == "sampler")
+                and log_diagnostics_to_wandb
+            ),
         )
         row = policy_row_fn(sampler_spec, metrics) if policy_row_fn is not None else None
         return metrics, row
