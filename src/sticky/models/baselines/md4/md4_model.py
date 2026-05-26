@@ -215,13 +215,13 @@ class MD4(nn.Module):
     )
 
     loss_diff = self.diffusion_loss(t, x, cond=cond_emb, train=train).mean()
-    loss = loss_diff + loss_prior + loss_recon
+    bpd = loss_diff + loss_prior + loss_recon
 
     model_stats = {
-        "loss": loss,
-        "loss_diff": loss_diff,
-        "loss_prior": loss_prior,
-        "loss_recon": loss_recon,
+        "bpd": bpd,
+        "bpd_diff": loss_diff,
+        "bpd_prior": loss_prior,
+        "bpd_recon": loss_recon,
     }
     return utils.loss2bpt(model_stats, self.data_shape)
 

@@ -122,7 +122,11 @@ def make_eval_step_fn(*, task, model):
             metrics = jax.tree.map(lambda x: jax.lax.pmean(x, axis_name=axis_name), metrics)
 
         metrics = dict(metrics)
-        metrics["loss"] = loss
+        # Mirror the scalar bound to the model's primary key (bpd for MD4/CADD,
+        # loss for the other families). Keeps eval aggregation aligned with
+        # whatever the model reports.
+        scalar_key = "bpd" if "bpd" in metrics else "loss"
+        metrics[scalar_key] = loss
         return metrics
 
     return eval_step_fn
@@ -179,12 +183,13 @@ def run_likelihood_eval(
         return {}
 
     # Whitelist (Prompt B): the only likelihood-eval metric forwarded to W&B
-    # is `eval/loss`. The full per-batch metric set still flows through
-    # sanitize_metrics for any internal aggregation, but only `loss` is
-    # surfaced as a logged metric.
-    if "loss" not in metric_sums:
+    # is the scalar bound — `eval/bpd` for MD4/CADD (which report in bpd
+    # units) or `eval/loss` for the other families. The full per-batch metric
+    # set still flows through sanitize_metrics for any internal aggregation.
+    scalar_key = "bpd" if "bpd" in metric_sums else "loss"
+    if scalar_key not in metric_sums:
         return {}
-    return {"eval/loss": metric_sums["loss"] / total_examples}
+    return {f"eval/{scalar_key}": metric_sums[scalar_key] / total_examples}
 
 
 @dataclass
@@ -544,8 +549,9 @@ def process_completed_step(
         last_train_metrics = dict(train_log)
 
     if ((ctx.log_every_steps > 0) and (step_i % ctx.log_every_steps == 0)) and (train_log is not None):
+        scalar_key = "train/bpd" if "train/bpd" in train_log else "train/loss"
         print(
-            f"[step {step_i}] loss={float(train_log['train/loss']):.4f}",
+            f"[step {step_i}] {scalar_key}={float(train_log[scalar_key]):.4f}",
             flush=True,
         )
         if ctx.wandb_mod is not None:

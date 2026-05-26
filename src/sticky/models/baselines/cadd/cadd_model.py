@@ -369,7 +369,7 @@ class CADD(nn.Module):
         loss = jnp.mean(weight * masked_neg_ce)
 
         metrics = {
-            "loss_ce": loss,
+            "bpd_ce": loss,
             "mask_frac": jnp.mean(mask),
         }
         return loss, metrics
@@ -400,7 +400,7 @@ class CADD(nn.Module):
         logits = self.predict_logits(z_tilde, t, cond=cond_emb, train=train)
 
         loss, metrics = self._cross_entropy_on_masked(logits=logits, x0=x, x_t=x_t, t=t)
-        metrics["loss"] = loss
+        metrics["bpd"] = loss
         metrics["t_mean"] = jnp.mean(t)
 
         # Match MD4-style logging: convert losses to bits-per-token.

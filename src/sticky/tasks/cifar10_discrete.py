@@ -17,7 +17,9 @@ class CIFAR10DiscreteTask(TFDSDiscreteImageTaskBase):
 
     Assumes model API:
       model.apply({"params": params}, x, cond=cond, train=train, rngs=rngs)
-    returning a dict containing at least {"loss": ...}.
+    returning a dict containing the scalar gradient target under "bpd"
+    (MD4/CADD, which already scale to bits-per-dim) OR "loss" (the other
+    discrete baselines). The task accepts either.
     """
 
     task_name: str
@@ -73,4 +75,8 @@ class CIFAR10DiscreteTask(TFDSDiscreteImageTaskBase):
             train=train,
             rngs=rngs,
         )
-        return stats["loss"], stats
+        # MD4/CADD report the scalar gradient target under "bpd"; the other
+        # discrete baselines (MDLM, D3PM, BitDiff, DDPM, CANDI) still use
+        # "loss". Accept either so this task adapter stays family-agnostic.
+        scalar = stats["bpd"] if "bpd" in stats else stats["loss"]
+        return scalar, stats

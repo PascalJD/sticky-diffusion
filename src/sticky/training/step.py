@@ -160,7 +160,12 @@ def make_train_step_fn(
             opt_state=new_opt_state,
         )
         metrics = dict(metrics)
-        metrics["train/loss"] = loss
+        # Mirror the scalar gradient target to a prefixed wandb-friendly key.
+        # MD4/CADD report their loss in bits-per-dim units under "bpd"; the
+        # other families report it under "loss". The metrics dict's primary
+        # scalar key tells us which.
+        scalar_key = "bpd" if "bpd" in metrics else "loss"
+        metrics[f"train/{scalar_key}"] = loss
         metrics["train/num_microbatches"] = jnp.asarray(
             num_microbatches,
             dtype=jnp.float32,

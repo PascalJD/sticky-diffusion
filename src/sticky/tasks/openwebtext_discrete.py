@@ -98,7 +98,8 @@ class OpenWebTextDiscreteTask(Task):
             train=train,
             rngs=rngs,
         )
-        return stats["loss"], stats
+        scalar = stats["bpd"] if "bpd" in stats else stats["loss"]
+        return scalar, stats
 
     def decode(self, x: jnp.ndarray) -> jnp.ndarray:
         return jnp.asarray(x, dtype=jnp.int32)

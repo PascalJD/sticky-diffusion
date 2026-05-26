@@ -93,7 +93,8 @@ def main_train_loop(
 
         t_step0 = time.perf_counter()
         state, metrics = adapter.run_train_step(state, batch)
-        _maybe_sync_training_metric(metrics["train/loss"], sync=ctx.sync_train_step)
+        scalar_key = "train/bpd" if "train/bpd" in metrics else "train/loss"
+        _maybe_sync_training_metric(metrics[scalar_key], sync=ctx.sync_train_step)
         t_step = time.perf_counter() - t_step0 if ctx.sync_train_step else 0.0
 
         last_train_metrics, last_eval_metrics, last_eval_step = process_completed_step(
