@@ -1,13 +1,9 @@
 # End-to-end SJD ELBO at eta=1 (appendix `alg:sjd-e2e-eta1`). Learns the
 # per-anchor hazard w(a) jointly with the classifier under L_CE + L_RB + Omega.
 #
-# Differences from `learned.yaml`:
-#   - Uses objective='elbo_eta1' inside SJDTaskBase, NOT loss_weighting=hazard_deriv.
-#     The latter has a biased w-gradient (see plan `plan-end-to-end-forward-vast-coral.md`,
-#     "The gradient-correctness gap"); this mode draws Y ~ q_t directly and
-#     puts the (1 - S_a) factor into a deterministic weight so all w-dependence
-#     is closed-form and reparametrized.
-#   - Adds a rate-balance term L_RB and an optional prior Omega(w).
+# This is the only learnable-w mode. It draws Y ~ q_t directly and puts the
+# (1 - S_a) factor into a deterministic weight, so every w-dependence is
+# closed-form and reparametrized (unbiased gradient on log_w).
 #
 # Requires:
 #   jump.eta == 1.0  (any other eta is rejected at task construction).

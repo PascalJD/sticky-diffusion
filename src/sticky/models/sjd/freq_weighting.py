@@ -13,22 +13,30 @@ Array = jnp.ndarray
 
 
 def hazard_weighting_mode(cfg_hazard_weighting: Any) -> str:
-    """Return one of {"none", "frequency", "learned", "learned_e2e"} for a
+    """Return one of {"none", "frequency", "learned_e2e"} for a
     hazard_weighting cfg.
 
     The ``mode`` key disambiguates the configs explicitly. For backward
     compatibility with checkpoints/configs predating ``mode``, fall back to the
     legacy inference: ``enabled=true`` ⇒ ``frequency``, else ``none``.
 
-    ``learned_e2e`` is the appendix's end-to-end ELBO at eta=1: same learnable
-    ``log_w`` as ``learned`` but trained under L_CE + L_RB + Omega with
-    unbiased w-gradients (objective='elbo_eta1' in SJDTaskBase).
+    ``learned_e2e`` is the appendix's end-to-end ELBO at eta=1: a learnable
+    ``log_w`` trained under L_CE + L_RB + Omega with unbiased w-gradients
+    (objective='elbo_eta1' in SJDTaskBase). The earlier ``learned`` mode used
+    a biased gradient via the ``hazard_deriv`` loss weighting and has been
+    removed; configs using ``mode: learned`` will raise here.
     """
     if cfg_hazard_weighting is None:
         return "none"
     mode = getattr(cfg_hazard_weighting, "mode", None)
-    if mode in ("none", "frequency", "learned", "learned_e2e"):
+    if mode in ("none", "frequency", "learned_e2e"):
         return str(mode)
+    if mode == "learned":
+        raise ValueError(
+            "hazard_weighting.mode='learned' (biased w-gradient via "
+            "hazard_deriv loss weighting) has been removed. Use "
+            "mode='learned_e2e' for unbiased end-to-end log_w learning."
+        )
     enabled = bool(getattr(cfg_hazard_weighting, "enabled", False))
     return "frequency" if enabled else "none"
 

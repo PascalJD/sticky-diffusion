@@ -1,8 +1,9 @@
 """Tests for the eta=1 SJD ELBO training loss (L_CE + L_RB + Omega).
 
-PRIMARY correctness gate: per the plan, the new mode and the old hazard_deriv
-path agree on the *value* of L_CE in expectation but differ in *gradient*. The
-gradient checks below are therefore the load-bearing tests.
+The gradient checks below are the load-bearing correctness gate: this loss
+draws Y ~ q_t directly and puts the (1 - S_a) factor into a deterministic
+weight, yielding an unbiased gradient on log_w (the prior biased path via
+hazard_deriv weighting has been removed).
 """
 import jax
 import jax.numpy as jnp

@@ -33,7 +33,7 @@ forward:
     blur_kernel: null                          # W = I
 
 # log_w_lr_multiplier: gradient-magnitude probe suggested ~25 for the
-# unbiased ELBO path (vs the default 100 tuned for the biased hazard_deriv
-# weighting). Adjust per future probes if w-magnitudes drift.
+# unbiased ELBO gradient on log_w. Adjust per future probes if w-magnitudes
+# drift.
 training:
   log_w_lr_multiplier: 25.0

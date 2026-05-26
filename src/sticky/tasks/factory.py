@@ -119,7 +119,7 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
     hazard_weighting_cfg = cfg.forward.get("hazard_weighting", None)
     vocab_size = int(cfg.dataset.get("vocab_size"))
     hw_mode = hazard_weighting_mode(hazard_weighting_cfg)
-    if hw_mode in ("learned", "learned_e2e"):
+    if hw_mode == "learned_e2e":
         # log_w lives in `params` under "anchors/log_w"; the task reads it from
         # there inside loss_fn so gradients can flow.
         anchor_log_w = None
@@ -128,18 +128,8 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
         anchor_log_w = load_anchor_log_w(hazard_weighting_cfg, vocab_size=vocab_size)
         learn_log_w = False
     loss_weighting = str(cfg.training.get("loss_weighting", "uniform"))
-    hw_loss_weighting = (
-        getattr(hazard_weighting_cfg, "loss_weighting", None)
-        if hazard_weighting_cfg is not None
-        else None
-    )
-    if hw_loss_weighting not in (None, "", "null"):
-        # The hazard_weighting config can pin loss_weighting (e.g. learned.yaml
-        # sets hazard_deriv so log_w actually receives gradient). Field-level
-        # CLI overrides on forward.hazard_weighting.loss_weighting still apply.
-        loss_weighting = str(hw_loss_weighting)
-    # End-to-end ELBO mode: opt-in via hazard_weighting.mode='learned_e2e'.
-    # Carries its own loss (L_CE + L_RB + Omega), so 'loss_weighting' is ignored.
+    # End-to-end ELBO mode carries its own loss (L_CE + L_RB + Omega);
+    # 'loss_weighting' is ignored when objective='elbo_eta1'.
     if hw_mode == "learned_e2e":
         objective = "elbo_eta1"
     else:

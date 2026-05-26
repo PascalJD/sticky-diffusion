@@ -15,43 +15,6 @@ Array = jnp.ndarray
 Metrics = Dict[str, Array]
 
 
-def _hazard_deriv_weights(
-    *,
-    t_img: Array,
-    beta,
-    hazard,
-    anchor_log_w: Optional[Array],
-    x0_idx: Array,
-    target_like: Array,
-) -> Array:
-    """Pre-normalization SJD per-site loss weighting.
-
-    With factored hazard λ_t(a) = β(t)·w(a) and S_a(t) = exp(−w(a)·H(t)),
-    returns w_t(a) = β(t)·w(a)·S_a(t) / (1 − S_a(t)) per token. Uses
-    ``jnp.expm1`` for numerical stability when w(a)·H(t) is small. When
-    ``anchor_log_w is None``, w(a) ≡ 1 and the formula collapses to
-    β(t)·exp(−H)/(1−exp(−H)).
-    """
-    H_t = hazard.cum(t_img)
-    beta_t = beta(t_img)
-    if anchor_log_w is not None:
-        log_w_site = jnp.take(
-            jnp.asarray(anchor_log_w, dtype=jnp.float32),
-            jnp.asarray(x0_idx, dtype=jnp.int32),
-            axis=0,
-        )
-        w_a = jnp.exp(log_w_site)
-        H_b = _expand_like(H_t, w_a)
-        b_b = _expand_like(beta_t, w_a)
-        log_Sa = -w_a * H_b
-        one_minus_Sa = -jnp.expm1(log_Sa)
-        w_t = b_b * w_a * jnp.exp(log_Sa) / jnp.maximum(one_minus_Sa, 1e-8)
-    else:
-        one_minus_S = -jnp.expm1(-H_t)
-        w_t = beta_t * jnp.exp(-H_t) / jnp.maximum(one_minus_S, 1e-8)
-    return _expand_like(w_t, target_like)
-
-
 def ce_allocation_loss(
     key: PRNGKey,
     params,
@@ -104,11 +67,8 @@ def ce_allocation_loss(
     else:
         t_img = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=float(T))
 
-    # Clamp t away from {0, T}. The hazard_deriv weight ~ 1/t at t→0 and is
-    # amplified by w(a) when log_w is non-uniform, so a single very-small-t
-    # draw can spike the batch mean and crush gradient signal on the rest.
-    # Default 1e-3 keeps existing baselines (which mostly use uniform/alpha_deriv
-    # weighting) qualitatively unchanged.
+    # Clamp t away from {0, T} to keep alpha_deriv weights and the SJD
+    # convolution variance well-conditioned near the boundaries.
     t_floor_f = float(t_floor)
     t_ceil_f = float(T) - t_floor_f
     t_img = jnp.clip(t_img, t_floor_f, t_ceil_f)
@@ -154,7 +114,6 @@ def ce_allocation_loss(
     # double-mask bug.
     effective_loss_mask = suffix_mask & (~never_unstuck_mask)
     effective_loss_weight = effective_loss_mask.astype(jnp.float32)
-    w_t = None
     if loss_weighting == "alpha_deriv":
         alpha_t, _ = alpha_sigma(beta, t_img)
         beta_t = beta(t_img)
@@ -163,20 +122,11 @@ def ce_allocation_loss(
         w_t = _expand_like(w_t, effective_loss_weight)
         effective_loss_weight = effective_loss_weight * w_t
     elif loss_weighting == "hazard_deriv":
-        # SJD ELBO weighting: makes log_w enter the loss differentiably (the
-        # only other use of log_w is the non-differentiable sample_pair draw).
-        w_t = _hazard_deriv_weights(
-            t_img=t_img,
-            beta=beta,
-            hazard=hazard,
-            anchor_log_w=anchor_log_w,
-            x0_idx=x0_idx,
-            target_like=effective_loss_weight,
+        raise ValueError(
+            "loss_weighting='hazard_deriv' was the biased w-gradient path and "
+            "has been removed. Use hazard_weighting.mode='learned_e2e' "
+            "(objective='elbo_eta1') for unbiased end-to-end log_w learning."
         )
-        mask_f = effective_loss_mask.astype(jnp.float32)
-        mean_w = jnp.sum(w_t * mask_f) / jnp.maximum(jnp.sum(mask_f), 1.0)
-        w_t = w_t / jnp.maximum(mean_w, 1e-8)
-        effective_loss_weight = effective_loss_weight * w_t
     effective_loss_count = jnp.sum(effective_loss_weight)
     denom = jnp.maximum(effective_loss_count, 1.0)
     loss = jnp.sum(nll * effective_loss_weight) / denom
@@ -205,9 +155,10 @@ def ce_allocation_loss(
         "t/std": jnp.std(t_img),
     }
 
-    # log_w/* track the per-anchor weight used in the hazard_deriv path.
-    # mean is a sanity check on the runtime mean-zero recentering; std/range
-    # tell us whether log_w is moving over training.
+    # log_w/* track the per-anchor weight passed in (frozen `frequency`
+    # mode or learned `elbo_eta1` mode). mean is a sanity check on the
+    # runtime mean-zero recentering; std/range tell us whether log_w is
+    # moving over training.
     if (anchor_log_w is not None) and bool(log_anchor_log_w_stats):
         lw = jnp.asarray(anchor_log_w, dtype=jnp.float32)
         lw_max = jnp.max(lw)

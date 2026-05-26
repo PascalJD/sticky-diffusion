@@ -24,10 +24,10 @@ def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
 
     hw_cfg = cfg.get("forward", {}).get("hazard_weighting", None)
     hw_mode = hazard_weighting_mode(hw_cfg)
-    # learned_e2e shares the same learnable log_w parameter as learned; the
-    # objective differs (elbo_eta1 vs hazard_deriv weighting) but the model
-    # owns the same Flax variable in either mode.
-    learnable_log_w = hw_mode in ("learned", "learned_e2e")
+    # learned_e2e adds a Flax parameter at params["anchors"]["log_w"] for
+    # unbiased ELBO learning. frequency mode passes a frozen log_w through
+    # the loss kwarg instead, so it does not need the trainable variable.
+    learnable_log_w = hw_mode == "learned_e2e"
     log_w_init = None
     if learnable_log_w:
         init = str(getattr(hw_cfg, "init", "zeros"))
@@ -35,7 +35,7 @@ def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
             loaded = load_anchor_log_w(hw_cfg, vocab_size=int(vocab_size))
             if loaded is None:
                 raise ValueError(
-                    f"hazard_weighting={hw_mode} init=frequency requires "
+                    "hazard_weighting=learned_e2e init=frequency requires "
                     "enabled=true and a valid log_w_path."
                 )
             # Match the runtime mean-zero re-centering so the at-init forward
