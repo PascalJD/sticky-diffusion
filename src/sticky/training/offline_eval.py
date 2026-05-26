@@ -340,19 +340,6 @@ def _extract_sudoku_sampler_summary(
     }
 
 
-def _apply_prop52_only_override(
-    *,
-    eval_cfg_local: DictConfig,
-    offline_cfg: DictConfig,
-) -> None:
-    if not bool(offline_cfg.get("eval_prop52_only", False)):
-        return
-    if str(eval_cfg_local.get("mode", "fid_is")).lower() != "sudoku":
-        raise ValueError("offline_eval.eval_prop52_only is supported only with eval.mode=sudoku.")
-    eval_cfg_local.sudoku_prop52_enabled = True
-    eval_cfg_local.sudoku_prop52_only = True
-
-
 def _best_sampler_by_board_accuracy(
     sudoku_sampler_summary: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
@@ -533,7 +520,6 @@ def run_offline_checkpoint_eval(
     eval_cfg_local.run_at_end = True
     eval_cfg_local.checkpoint_source = checkpoint_source
     eval_cfg_local.param_source = param_source
-    _apply_prop52_only_override(eval_cfg_local=eval_cfg_local, offline_cfg=offline_cfg)
     eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
 
     fid_every = int(eval_cfg_local.get("fid_every", 0)) if eval_mode != "sudoku" else 0
@@ -637,13 +623,6 @@ def run_offline_checkpoint_eval(
         eval_cfg=eval_cfg_local,
     )
     sudoku_policy_table = getattr(maybe_log_eval, "sudoku_policy_table_rows", None)
-    sudoku_prop52_rows_by_eta = getattr(maybe_log_eval, "sudoku_prop52_rows_by_eta", None)
-    sudoku_prop52_summary_rows = getattr(maybe_log_eval, "sudoku_prop52_summary_rows", None)
-    sudoku_prop52_collapse_summary = getattr(
-        maybe_log_eval,
-        "sudoku_prop52_collapse_summary",
-        None,
-    )
 
     probe_batches_cfg = offline_cfg.get("sampler_probe_batches", 0)
     probe_batches = 0 if _is_nullish(probe_batches_cfg) else int(probe_batches_cfg)
@@ -737,7 +716,6 @@ def run_offline_checkpoint_eval(
             "sample_timesteps": int(sample_timesteps),
             "force_fid": bool(force_fid),
             "force_is": bool(force_is),
-            "eval_prop52_only": bool(offline_cfg.get("eval_prop52_only", False)),
             "fid_enabled": bool(eval_cfg_local.get("fid_enabled", True)) if eval_mode != "sudoku" else False,
             "is_enabled": bool(eval_cfg_local.get("is_enabled", True)) if eval_mode != "sudoku" else False,
             "fid_num_samples": int(fid_num_samples),
@@ -779,12 +757,6 @@ def run_offline_checkpoint_eval(
         payload["sudoku_sampler_summary"] = sudoku_sampler_summary
     if sudoku_policy_table:
         payload["sudoku_policy_table"] = sudoku_policy_table
-    if sudoku_prop52_rows_by_eta:
-        payload["sudoku_prop52_rows_by_eta"] = sudoku_prop52_rows_by_eta
-    if sudoku_prop52_summary_rows:
-        payload["sudoku_prop52_summary_rows"] = sudoku_prop52_summary_rows
-    if sudoku_prop52_collapse_summary:
-        payload["sudoku_prop52_collapse_summary"] = sudoku_prop52_collapse_summary
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
@@ -840,8 +812,6 @@ def run_offline_checkpoint_eval(
         best_sampler is not None
         or best_plugin_eta is not None
         or best_sjd_profile is not None
-        or sudoku_prop52_collapse_summary
-        or sudoku_prop52_summary_rows
     ):
         print("[offline-eval] Summary:", flush=True)
         if best_sampler is not None:
@@ -880,24 +850,7 @@ def run_offline_checkpoint_eval(
         else:
             print("- best SJD sampler profile: not available", flush=True)
 
-        if sudoku_prop52_collapse_summary:
-            print(
-                "- whether V_state collapsed as eta approached 1: "
-                f"{bool(sudoku_prop52_collapse_summary.get('v_state_collapsed', False))} "
-                f"(ratio={sudoku_prop52_collapse_summary.get('eta_one_vs_max_lower_v_state_ratio')})",
-                flush=True,
-            )
-        else:
-            print("- whether V_state collapsed as eta approached 1: not evaluated", flush=True)
-
-        caveats = []
-        if bool(offline_cfg.get("eval_prop52_only", False)):
-            caveats.append("board-accuracy policy sweep was skipped because eval_prop52_only=true")
-        if sudoku_prop52_summary_rows:
-            caveats.append("Prop 5.2 summaries are estimated on a fixed held-out subset and time bins")
-        if not caveats:
-            caveats.append("none")
-        print(f"- caveats: {'; '.join(caveats)}", flush=True)
+        print("- caveats: none", flush=True)
     print(
         f"[offline-eval] Wrote metrics report to {output_path}",
         flush=True,

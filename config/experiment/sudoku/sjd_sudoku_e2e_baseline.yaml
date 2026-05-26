@@ -1,0 +1,36 @@
+# Frozen-anchor, eta=1, W=I baseline matched to sjd_sudoku_e2e.yaml. The only
+# delta vs the e2e config is hazard_weighting=none (no learnable log_w);
+# everything else — anchors frozen, eta=1, blur=none, batch/optim/schedule —
+# is identical, so the contrast isolates the contribution of e2e hazard
+# learning.
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none            # ← delta vs e2e
+  - /forward/jump: vp_matched                   # eta=1.0 by new default
+  - /forward/blur: none
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+model:
+  anchor:
+    learnable: false
+
+forward:
+  jump:
+    eta: 1.0
+  blur:
+    blur_kernel: null

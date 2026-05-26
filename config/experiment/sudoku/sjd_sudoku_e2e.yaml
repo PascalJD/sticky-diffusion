@@ -26,6 +26,13 @@ dataset:
   batch_size: 128
   eval_batch_size: 128
 
+# Freeze the anchor table: every gradient update flows into log_w (e2e) or
+# the classifier only. This isolates the learnable-w contribution from any
+# coevolution of the anchor geometry.
+model:
+  anchor:
+    learnable: false
+
 forward:
   jump:
     eta: 1.0                                  # NOT 0.97 — elbo_eta1 rejects any other value

@@ -19,8 +19,6 @@ sudoku_run_all_sampler_modes: true
 sudoku_primary_sampler_label: predictor_only
 sudoku_num_batches_per_sampler: ${.sudoku_num_batches}
 sudoku_log_policy_table: true
-sudoku_prop52_enabled: false
-sudoku_prop52_only: false
 sudoku_write_progress_csv: true
 sudoku_progress_csv_path: metrics/sudoku_sjd_progress.csv
 sudoku_write_latest_csv: true

@@ -12,7 +12,6 @@ from omegaconf import DictConfig, OmegaConf
 from sticky.core.config_paths import config_root
 from sticky.data.sudoku import make_sudoku_board_iterator
 from sticky.models.sjd.anchors import AnchorTable
-from sticky.eval.sudoku_prop52 import run_sudoku_prop52_diagnostics
 from sticky.rng import make_rng
 from sticky.training.csv_report import write_sudoku_sjd_progress_artifacts
 from sticky.training.persistence import get_hydra_output_dir
@@ -797,8 +796,6 @@ def build_sudoku_eval_logger(
     num_batches_per_mode = int(eval_cfg.get("sudoku_num_batches_per_sampler", num_batches_default))
     checkpoint_source = str(eval_cfg.get("checkpoint_source", "live")).strip().lower()
     log_policy_table = bool(eval_cfg.get("sudoku_log_policy_table", False))
-    prop52_enabled = bool(eval_cfg.get("sudoku_prop52_enabled", False))
-    prop52_only = bool(eval_cfg.get("sudoku_prop52_only", False))
     write_progress_csv = bool(eval_cfg.get("sudoku_write_progress_csv", False))
     progress_csv_path = eval_cfg.get("sudoku_progress_csv_path", None)
     write_latest_csv = bool(eval_cfg.get("sudoku_write_latest_csv", False))
@@ -1057,45 +1054,22 @@ def build_sudoku_eval_logger(
 
         metrics: Dict[str, float] = {}
         policy_rows: list[dict[str, Any]] = []
-        if not prop52_only:
-            for sampler_spec in sampler_specs:
-                sampler_metrics, row = _run_eval(
-                    step_i,
-                    params_for_sampling,
-                    num_batches=int(per_mode_batches),
-                    sampler_spec=sampler_spec,
-                )
-                metrics.update(sampler_metrics)
-                if row is not None:
-                    policy_rows.append(row)
+        for sampler_spec in sampler_specs:
+            sampler_metrics, row = _run_eval(
+                step_i,
+                params_for_sampling,
+                num_batches=int(per_mode_batches),
+                sampler_spec=sampler_spec,
+            )
+            metrics.update(sampler_metrics)
+            if row is not None:
+                policy_rows.append(row)
 
         maybe_eval.sudoku_policy_table_rows = policy_rows
-        maybe_eval.sudoku_prop52_rows_by_eta = {}
-        maybe_eval.sudoku_prop52_summary_rows = []
-        maybe_eval.sudoku_prop52_collapse_summary = {}
 
         payload: dict[str, Any] = {}
         if metrics:
             payload.update(metrics)
-        if model_name == "sjd" and prop52_enabled:
-            prop52_policy_specs = [spec for spec in sampler_specs if spec.get("kind") == "policy"]
-            if prop52_policy_specs:
-                prop52_result = run_sudoku_prop52_diagnostics(
-                    cfg=cfg,
-                    eval_cfg=eval_cfg,
-                    task=task,
-                    model=model,
-                    params=params_for_sampling,
-                    step_i=step_i,
-                    policy_specs=prop52_policy_specs,
-                    wandb_mod=wandb_mod,
-                )
-                metrics.update(prop52_result.metrics)
-                payload.update(prop52_result.metrics)
-                payload.update(prop52_result.wandb_payload)
-                maybe_eval.sudoku_prop52_rows_by_eta = prop52_result.rows_by_eta
-                maybe_eval.sudoku_prop52_summary_rows = prop52_result.eta_summary_rows
-                maybe_eval.sudoku_prop52_collapse_summary = prop52_result.collapse_summary
 
         if wandb_mod is not None and payload:
             if log_policy_table and policy_rows:
@@ -1116,7 +1090,7 @@ def build_sudoku_eval_logger(
                 write_latest=write_latest_csv,
             )
 
-        if metrics and (run_all_modes or verbose) and not prop52_only:
+        if metrics and (run_all_modes or verbose):
             primary_spec = next(
                 (spec for spec in sampler_specs if spec["label"] == primary_label),
                 sampler_specs[0],
@@ -1135,7 +1109,4 @@ def build_sudoku_eval_logger(
         return metrics
 
     maybe_eval.sudoku_policy_table_rows = []
-    maybe_eval.sudoku_prop52_rows_by_eta = {}
-    maybe_eval.sudoku_prop52_summary_rows = []
-    maybe_eval.sudoku_prop52_collapse_summary = {}
     return maybe_eval
