@@ -29,12 +29,12 @@ import numpy as np
 from orbax import checkpoint as orbax_checkpoint
 import seaborn as sns
 
-from sticky.core.metrics import scale_loss_metrics_to_bits
+from sticky.core.metrics import scale_bpd_components
 
 
 def loss2bpt(loss_dict, data_shape):
   """Normalize loss to bits per token."""
-  return scale_loss_metrics_to_bits(loss_dict, data_shape)
+  return scale_bpd_components(loss_dict, data_shape)
 
 
 def constant_init(value, dtype="float32"):

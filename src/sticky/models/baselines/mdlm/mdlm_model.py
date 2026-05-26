@@ -7,7 +7,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from sticky.core.metrics import scale_loss_metrics_to_bits
+from sticky.core.metrics import scale_bpd_components
 from sticky.models.common import masked_discrete_core as masked_core
 from sticky.models.backbones import DiscreteClassifier
 from sticky.models.common.discrete_mixture import (
@@ -325,7 +325,7 @@ class MDLM(nn.Module):
             "loss_prior": loss_prior,
             "loss_recon": loss_recon,
         }
-        return scale_loss_metrics_to_bits(stats, self.data_shape)
+        return scale_bpd_components(stats, self.data_shape)
 
     def _use_cache(self) -> bool:
         return bool(self.cache_predictions) and str(self.time_features) == "none"

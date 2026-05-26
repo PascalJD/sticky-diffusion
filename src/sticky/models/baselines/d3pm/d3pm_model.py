@@ -8,7 +8,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from sticky.core.metrics import scale_loss_metrics_to_bits
+from sticky.core.metrics import scale_bpd_components
 from sticky.models.backbones import DiscreteClassifier
 from sticky.models.common.discrete_mixture import (
     categorical_sample_from_probs,
@@ -465,7 +465,7 @@ class D3PM(nn.Module):
             "loss_aux": loss_aux,
             "loss_prior": loss_prior,
         }
-        return scale_loss_metrics_to_bits(stats, self.data_shape)
+        return scale_bpd_components(stats, self.data_shape)
 
     def sample_step(
         self,

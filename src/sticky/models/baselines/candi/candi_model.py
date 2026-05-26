@@ -6,7 +6,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from sticky.core.metrics import scale_loss_metrics_to_bits
+from sticky.core.metrics import scale_bpd_components
 from sticky.models.common import masked_discrete_core as masked_core
 from sticky.models.backbones.factory import build_image_token_backbone
 from sticky.models.backbones.networks.conditioning import CondEmbedding
@@ -559,7 +559,7 @@ class CANDI(nn.Module):
             "sigma_mean": jnp.mean(corruption["sigma"]),
             "t_mean": jnp.mean(t),
         }
-        return scale_loss_metrics_to_bits(metrics, self.data_shape)
+        return scale_bpd_components(metrics, self.data_shape)
 
     def prior_sample(self, batch_size: int) -> dict[str, Array]:
         batch_size = int(batch_size)

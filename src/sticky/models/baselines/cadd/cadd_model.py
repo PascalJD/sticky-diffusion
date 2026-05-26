@@ -7,7 +7,7 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-from sticky.core.metrics import scale_loss_metrics_to_bits
+from sticky.core.metrics import scale_bpd_components
 from sticky.models.backbones.factory import (
     build_image_backbone,
     build_sequence_backbone,
@@ -404,7 +404,7 @@ class CADD(nn.Module):
         metrics["t_mean"] = jnp.mean(t)
 
         # Match MD4-style logging: convert losses to bits-per-token.
-        return scale_loss_metrics_to_bits(metrics, self.data_shape)
+        return scale_bpd_components(metrics, self.data_shape)
 
     # ------------------------------- Sampling -------------------------------
 
