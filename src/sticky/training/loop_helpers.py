@@ -21,28 +21,6 @@ def _identity(value):
     return value
 
 
-def _is_bits_per_dim_model(cfg: DictConfig, task: Any) -> bool:
-    return str(cfg.model.name) in {"md4", "cadd"} and str(task.spec.task_type) == "image"
-
-
-def _with_bpd_alias(metrics: dict[str, float], *, prefix: str, enable_alias: bool) -> dict[str, float]:
-    out = dict(metrics)
-    if not enable_alias:
-        return out
-
-    loss_key = f"{prefix}/loss"
-    if loss_key in out:
-        out[f"{prefix}/bpd"] = out[loss_key]
-
-    for suffix in ("loss_diff", "loss_prior", "loss_recon"):
-        key = f"{prefix}/{suffix}"
-        if key in out:
-            alias = suffix.replace("loss_", "bpd_")
-            out[f"{prefix}/{alias}"] = out[key]
-
-    return out
-
-
 def _maybe_sync_training_metric(metric: Array, *, sync: bool) -> None:
     if sync:
         jax.block_until_ready(metric)
@@ -228,7 +206,6 @@ class LoopContext:
     sync_train_step: bool
     save_final_metrics: bool
     checkpoint_every_steps: int
-    bits_per_dim_model: bool
     likelihood_eval_every_steps: int
     likelihood_eval_max_batches: int
     eval_enabled: bool
@@ -348,7 +325,6 @@ def build_loop_context(
         use_pmap = False
 
     ema_rate = float(cfg.training.ema_rate)
-    bits_per_dim_model = _is_bits_per_dim_model(cfg, task)
     likelihood_eval_every_steps = int(
         cfg.training.get(
             "likelihood_eval_every_steps",
@@ -456,7 +432,6 @@ def build_loop_context(
         sync_train_step=sync_train_step,
         save_final_metrics=save_final_metrics,
         checkpoint_every_steps=checkpoint_every_steps,
-        bits_per_dim_model=bits_per_dim_model,
         likelihood_eval_every_steps=likelihood_eval_every_steps,
         likelihood_eval_max_batches=likelihood_eval_max_batches,
         eval_enabled=eval_enabled,
@@ -566,11 +541,6 @@ def process_completed_step(
         train_log = sanitize_metrics(metrics_host)
         train_log["lr"] = float(to_py_scalar(ctx.lr_schedule(step)) or ctx.lr_schedule(step))
         train_log["step"] = step_i
-        train_log = _with_bpd_alias(
-            train_log,
-            prefix="train",
-            enable_alias=ctx.bits_per_dim_model,
-        )
         last_train_metrics = dict(train_log)
 
     if ((ctx.log_every_steps > 0) and (step_i % ctx.log_every_steps == 0)) and (train_log is not None):
@@ -666,11 +636,6 @@ def process_completed_step(
                 max_batches=ctx.likelihood_eval_max_batches,
             )
             if likelihood_metrics:
-                likelihood_metrics = _with_bpd_alias(
-                    likelihood_metrics,
-                    prefix="eval",
-                    enable_alias=ctx.bits_per_dim_model,
-                )
                 last_eval_metrics = dict(last_eval_metrics)
                 last_eval_metrics.update(likelihood_metrics)
                 if ctx.metrics_writer is not None:

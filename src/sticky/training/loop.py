@@ -36,14 +36,12 @@ from sticky.training.step import (
     params_for_sampling,
 )
 from sticky.training.loop_helpers import (
-    _is_bits_per_dim_model,
     _make_pmap_batch_iterator,
     _maybe_sync_training_metric,
     _normalize_sudoku_eval_param_source,
     _params_for_sudoku_eval,
     _resolve_num_train_steps,
     _take_gt_images,
-    _with_bpd_alias,
     build_loop_context,
     finalize_training_loop,
     make_eval_step_fn,
