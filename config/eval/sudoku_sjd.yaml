@@ -25,18 +25,14 @@ sudoku_write_latest_csv: true
 sudoku_latest_csv_path: metrics/sudoku_sjd_latest.csv
 
 sudoku_eval_sjd_runs:
+  # Deterministic linear-survival policy — the paper's Table-1 baseline.
   linear_survival:
     kind: policy
     policy: linear_survival
     n_steps: 50
     sampling_grid: uniform
     eta: 1.00
-  cosine_survival:
-    kind: policy
-    policy: cosine_survival
-    n_steps: 50
-    sampling_grid: cosine
-    eta: 1.00
+  # Top-k probability policy — paper's Table-1 main result (96.43%).
   linear_topk_probability:
     kind: policy
     policy: linear_topk_probability
@@ -44,12 +40,7 @@ sudoku_eval_sjd_runs:
     sampling_grid: uniform
     stochastic_k: false
     eta: 1.00
-  plugin_hazard_eta_0p97:
-    kind: policy
-    policy: plugin_hazard
-    n_steps: 50
-    sampling_grid: uniform
-    eta: 0.97
+  # Reverse-time predictor only — anchors `best_checkpoint_metric`.
   predictor_only:
     kind: sampler
     sampler: sjd_sudoku
