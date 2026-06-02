@@ -1,0 +1,16 @@
+# Lightweight Text8 training-time evaluation: sample and dump char sequences.
+# The valid-word frontier (the validation metric) runs OFFLINE via
+# eval=text8_valid_word on a checkpoint, not during training.
+enabled: true
+mode: text_basic
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+
+fid_enabled: false
+is_enabled: false
+
+text_every: 5000
+text_num_samples: 16
+text_batch_size: 16
+text_output_prefix: text_samples

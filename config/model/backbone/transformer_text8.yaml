@@ -1,0 +1,41 @@
+# LLAMA2/DiT-style Transformer backbone for Text8 SJD, sized to CANDI "tiny".
+# hidden = feature_dim * num_heads = 32 * 8 = 256; 8 layers; 8 heads (head_dim 32).
+# Non-causal, RoPE, SwiGLU MLP, adaLN-zero time conditioning. seq_len 128.
+#
+# NOTE (flagged reproduction risk): the repo "transformer" backbone derives its
+# SwiGLU FFN width internally (LLAMA ~2/3*4*dim, rounded), NOT CANDI's explicit
+# mlp_ratio=4 -> 1024. This lands params near ~8M but is not byte-identical to
+# CANDI's MLP width. See the config-test param-count check; resolve before the
+# GPU gate if the FIXED valid-word number misses.
+feature_dim: 32
+n_layers: 8
+n_dit_layers: 0
+dit_num_heads: 8
+dit_hidden_size: 256
+dropout_rate: 0.1
+
+sequence_backbone: transformer
+sequence_mlp_hidden_dim: 1024
+sequence_max_length: 128
+sequence_causal: false
+image_backbone: auto
+
+ch_mult: [1]
+adm_num_res_blocks: 2
+adm_attention_resolutions: [2, 4]
+adm_num_heads: 4
+adm_num_head_channels: -1
+adm_num_heads_upsample: -1
+adm_conv_resample: true
+adm_use_scale_shift_norm: true
+adm_resblock_updown: false
+adm_use_conv_skip: false
+adm_use_new_attention_order: false
+
+use_attn_dropout: true
+num_heads: 8
+mlp_type: swiglu
+depth_scaled_init: false
+cond_type: adaln_zero
+outside_embed: false
+model_sharding: false

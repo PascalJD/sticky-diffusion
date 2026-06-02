@@ -455,6 +455,151 @@ def _collect_sjd_sampler_probe_metrics(
     return mean_metrics
 
 
+def _run_text8_valid_word_eval(
+    *,
+    effective_cfg: DictConfig,
+    eval_cfg: DictConfig,
+    task,
+    model,
+    params_for_eval,
+    restored_step: int,
+    param_source: str,
+    selected_ckpt,
+    run_dir: Optional[Path],
+    experiment_cfg_source: str,
+    offline_cfg: DictConfig,
+    wandb_mod=None,
+) -> Dict[str, float]:
+    """Text8 valid-word frontier eval over the temperature x NFE grid.
+
+    Reuses the existing reverse_sample path (via build_sampling_fns) with no
+    sampler-code changes: for each (NFE, temperature) gridpoint we mutate a
+    cloned sampler config and re-build the sampling fn, generate num_samples,
+    decode chars, and score against the test-split dictionary.
+    """
+    import numpy as np
+
+    from sticky.eval.valid_word import (
+        list_grid,
+        load_char_map,
+        load_test_vocab,
+        valid_word_frontier_report,
+    )
+
+    vocab = load_test_vocab(
+        str(eval_cfg.get("vocab_path", "data/text8/test_vocab_len5.json"))
+    )
+    id_to_char = load_char_map(
+        str(eval_cfg.get("char_map_path", "data/text8/char_map.json"))
+    )
+    nfe_sweep = [int(x) for x in list_grid(eval_cfg, "nfe_sweep", [128])]
+    temp_grid = [float(x) for x in list_grid(eval_cfg, "temperature_grid", [1.0])]
+    num_samples = int(eval_cfg.get("num_samples", 256))
+    batch_size = max(1, int(eval_cfg.get("text_batch_size", 64)))
+    base_rng = make_rng(int(eval_cfg.get("seed", 0)) + 90_909)
+
+    samples_by_nfe_temp: Dict[tuple, Any] = {}
+    for nfe_idx, nfe in enumerate(nfe_sweep):
+        for temp_idx, temp in enumerate(temp_grid):
+            cfg_gridpoint = _clone_cfg(effective_cfg)
+            cfg_gridpoint.sampler.logit_temperature = float(temp)
+            _, sample_jit = build_sampling_fns(
+                cfg=cfg_gridpoint,
+                task=task,
+                model=model,
+                num_log_images=batch_size,
+                sample_timesteps=int(nfe),
+                fid_every=1,
+                fid_batch_size=batch_size,
+            )
+            if sample_jit is None:
+                raise RuntimeError(
+                    "text_valid_word eval could not build a sampling function."
+                )
+            gridpoint_rng = jax.random.fold_in(
+                jax.random.fold_in(base_rng, int(nfe_idx)), int(temp_idx)
+            )
+            collected: list = []
+            n_done = 0
+            batch_i = 0
+            while n_done < num_samples:
+                rng = jax.random.fold_in(gridpoint_rng, int(batch_i))
+                out = sample_jit(params_for_eval, rng)
+                arr = np.asarray(jax.device_get(jax.block_until_ready(out.k_filled)))
+                if arr.ndim == 1:
+                    arr = arr[None, :]
+                collected.append(arr)
+                n_done += int(arr.shape[0])
+                batch_i += 1
+            samples = np.concatenate(collected, axis=0)[:num_samples]
+            samples_by_nfe_temp[(int(nfe), float(temp))] = samples
+            print(
+                f"[offline-eval] text_valid_word nfe={nfe} temp={temp:g} "
+                f"samples={samples.shape[0]}",
+                flush=True,
+            )
+
+    report = valid_word_frontier_report(
+        samples_by_nfe_temp, id_to_char=id_to_char, vocab=vocab
+    )
+    metrics = _to_float_metrics(report)
+
+    # Prefer a valid-word-specific filename. Only honor an explicit output_path
+    # that differs from the generic offline-eval default (which targets the
+    # FID/sudoku report), so the valid-word report is not confused with it.
+    output_path_cfg = offline_cfg.get("output_path", None)
+    if _is_nullish(output_path_cfg) or str(output_path_cfg) == "offline_eval_metrics.json":
+        output_path_cfg = "valid_word_metrics.json"
+    output_path = resolve_run_path(
+        str(output_path_cfg),
+        "valid_word_metrics.json",
+        base_dir=get_hydra_output_dir(),
+    )
+    payload = {
+        "timestamp_utc": now_utc_iso(),
+        "experiment_config": {
+            "source": experiment_cfg_source,
+            "run_dir": None if run_dir is None else str(run_dir),
+            "task_name": str(effective_cfg.task.name),
+            "model_name": str(effective_cfg.model.name),
+        },
+        "checkpoint": {
+            "checkpoint_path": str(selected_ckpt),
+            "restored_step": int(restored_step),
+            "param_source": param_source,
+        },
+        "evaluation": {
+            "mode": "text_valid_word",
+            "nfe_sweep": nfe_sweep,
+            "temperature_grid": temp_grid,
+            "num_samples": int(num_samples),
+            "length_thresholds": [
+                int(x) for x in list_grid(eval_cfg, "length_thresholds", [5])
+            ],
+            "vocab_size": len(vocab),
+        },
+        "metrics": metrics,
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    if wandb_mod is not None:
+        try:
+            wandb_mod.log({**metrics, "step": int(restored_step)})
+        except Exception:
+            pass
+
+    headline = {k: v for k, v in metrics.items() if k.startswith("eval/valid_word_max@")}
+    print(
+        f"[offline-eval] text_valid_word headline (max-along-temperature): {headline}",
+        flush=True,
+    )
+    print(f"[offline-eval] Wrote valid-word report to {output_path}", flush=True)
+    return metrics
+
+
 def run_offline_checkpoint_eval(
     *,
     cfg: DictConfig,
@@ -521,6 +666,22 @@ def run_offline_checkpoint_eval(
     eval_cfg_local.checkpoint_source = checkpoint_source
     eval_cfg_local.param_source = param_source
     eval_mode = str(eval_cfg_local.get("mode", "fid_is")).lower()
+
+    if eval_mode == "text_valid_word":
+        return _run_text8_valid_word_eval(
+            effective_cfg=effective_cfg,
+            eval_cfg=eval_cfg_local,
+            task=task,
+            model=model,
+            params_for_eval=params_for_eval,
+            restored_step=restored_step,
+            param_source=param_source,
+            selected_ckpt=selected_ckpt,
+            run_dir=run_dir,
+            experiment_cfg_source=experiment_cfg_source,
+            offline_cfg=offline_cfg,
+            wandb_mod=wandb_mod,
+        )
 
     fid_every = int(eval_cfg_local.get("fid_every", 0)) if eval_mode != "sudoku" else 0
     is_every = int(eval_cfg_local.get("is_every", fid_every)) if eval_mode != "sudoku" else 0

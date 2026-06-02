@@ -234,6 +234,10 @@ def build_eval_logger(
             while len(lines) < num_samples:
                 sample_rng = jax.random.fold_in(base_rng, batch_idx)
                 samples = sample_images_fid_jit(params_for_sampling, sample_rng)
+                # SJD samplers return a ReverseSampleResult struct; the committed
+                # token grid is k_filled. Image/text baselines return the array
+                # directly. Normalize to the token array either way.
+                samples = getattr(samples, "k_filled", samples)
                 sample_np = np.asarray(to_numpy(jax.block_until_ready(samples)))
                 remaining = num_samples - len(lines)
                 sample_np = sample_np[: min(remaining, batch_size)]

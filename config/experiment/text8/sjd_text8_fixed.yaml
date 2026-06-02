@@ -1,0 +1,31 @@
+# CANDI-equivalent FIXED baseline for Text8 SJD (W=I, eta=1, fixed hazard w=1).
+# Forward stack = OWT SJD stack verbatim (the CANDI-family hybrid): the continuous
+# channel lives in beta+jump (VP diffusion over anchor embeddings), NOT in blur.
+# Do NOT hand-assemble a stripped W=I bundle.
+#
+# Training-time eval is the lightweight text8 (text_basic) dumper; the valid-word
+# frontier (the validation metric) runs OFFLINE via eval=text8_valid_word.
+defaults:
+  - /dataset: text8_char_128
+  - /model/sjd@model: sjd_text8
+  - /optim: adamw_text8
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha        # linear survival S(t)=1-t
+  - /forward/hazard_weighting: none    # FIXED: w=1, not learned (objective=ce)
+  - /forward/jump: vp_matched          # eta=1.0 -> VP-matched continuous channel
+  - /forward/blur: none                # discrete-side kernel = I (channel intact)
+  - /sampler/text8@sampler: sjd_text8
+  - /eval@_global_.eval: text8
+  - /training: sjd_text8
+  - _self_
+
+forward:
+  hazard:
+    p: 1.0                             # pin linear survival explicitly
+
+task:
+  name: text8_sjd
+
+wandb:
+  run_name: sjd_text8_fixed_baseline

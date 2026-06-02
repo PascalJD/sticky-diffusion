@@ -1,0 +1,31 @@
+# Text8 valid-word frontier eval (CANDI calculate_word_dictionary_match).
+# OFFLINE mode: load a checkpoint, sweep temperature x NFE through the existing
+# reverse_sample path, decode chars, and score samples against the test-split
+# dictionary. Headline = mean per-sample (|unique gen words in vocab| / total
+# tokens), max along the temperature frontier per NFE.
+#
+# Run via:
+#   python -m sticky.cli.eval_checkpoint experiment=text8/sjd_text8_fixed \
+#     eval=text8_valid_word offline_eval.run_dir=<run_dir>
+enabled: true
+mode: text_valid_word
+prefix: eval
+log_at_step_zero: false
+run_at_end: true
+
+fid_enabled: false
+is_enabled: false
+
+# Reference dictionary built by tools/prepare_text8.py from the test split.
+vocab_path: data/text8/test_vocab_len5.json
+# char->int map persisted alongside the data (must match training-time encoding).
+char_map_path: data/text8/char_map.json
+
+# Figure-2 sweep grid (config-driven; pending exact values, D9). Defaults to the
+# CANDI 128-step budget and a temperature frontier.
+length_thresholds: [5]
+nfe_sweep: [32, 64, 128]
+temperature_grid: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+num_samples: 512
+text_batch_size: 64
+seed: 0

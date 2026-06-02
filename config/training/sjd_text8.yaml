@@ -1,0 +1,28 @@
+defaults:
+  - openwebtext
+  - _self_
+
+# Text8 training schedule for SJD (CANDI tiny scale).
+# Global batch 512 (via dataset.batch_size), grad-accum 4 (num_microbatches),
+# constant LR 1e-3, EMA 0.9999 (from base), checkpoint/eval every 5000.
+# num_train_steps is the run length cap; the final value is fixed with the
+# reproduction target (E10).
+name: sjd_text8
+
+num_train_steps: 1000000
+
+num_microbatches: 4
+
+checkpoint_keep: 3
+log_every_steps: 500
+eval_every_steps: 5000
+checkpoint_every_steps: 5000
+
+sample_timesteps: ${..sampler.n_steps}
+
+log_state_dependency: true
+state_dep_log_ratio_clip: ${..sampler.log_ratio_clip}
+
+# MDM-style variance reduction (carried over from the OWT SJD recipe).
+time_sampling: antithetic
+loss_weighting: alpha_deriv

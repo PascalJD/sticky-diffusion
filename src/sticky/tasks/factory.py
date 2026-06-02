@@ -142,6 +142,13 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
     prior_strength = float(
         getattr(hw, "prior_strength", 0.0)
     ) if hw is not None else 0.0
+    # score_w_stop_gradient: when True, L_score is fully stop-gradiented so
+    # it contributes zero gradient to either theta or log_w. Default False
+    # preserves the v3 ELBO behavior. Used by the CE-only condition of the
+    # Sudoku World-1-vs-World-2 test.
+    score_w_stop_gradient = bool(
+        getattr(hw, "score_w_stop_gradient", False)
+    ) if hw is not None else False
     return {
         "log_state_dependency": bool(cfg.training.get("log_state_dependency", True)),
         "state_dep_log_ratio_clip": float(
@@ -165,6 +172,7 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "rb_weight": rb_weight,
         "rb_share_sample": rb_share_sample,
         "prior_strength": prior_strength,
+        "score_w_stop_gradient": score_w_stop_gradient,
     }
 
 
@@ -234,6 +242,28 @@ def _build_sjd_sudoku_inpaint_task(cfg: DictConfig):
     )
 
 
+def _build_text8_sjd_task(cfg: DictConfig):
+    from sticky.tasks.text8_sjd import Text8SJDTask
+
+    return Text8SJDTask(
+        task_name="text8_sjd",
+        train_tokens_path=str(cfg.dataset.get("train_tokens_path")),
+        eval_tokens_path=_optional_str(cfg.dataset.get("eval_tokens_path", None)),
+        batch_size=int(cfg.dataset.get("batch_size")),
+        eval_batch_size=int(cfg.dataset.get("eval_batch_size", cfg.dataset.batch_size)),
+        seq_len=int(cfg.dataset.get("seq_len")),
+        vocab_size=int(cfg.dataset.get("vocab_size")),
+        num_classes=int(cfg.dataset.get("num_classes", -1)),
+        drop_remainder=bool(cfg.dataset.get("drop_remainder", True)),
+        shuffle=bool(cfg.dataset.get("shuffle", True)),
+        mmap=bool(cfg.dataset.get("mmap", True)),
+        max_train_examples=int(cfg.dataset.get("max_train_examples", -1)),
+        max_eval_examples=int(cfg.dataset.get("max_eval_examples", -1)),
+        forward=_build_forward_schedule(cfg),
+        **_sjd_dhm_kwargs(cfg),
+    )
+
+
 def _build_openwebtext_sjd_task(cfg: DictConfig):
     from sticky.tasks.openwebtext_sjd import OpenWebTextSJDTask
 
@@ -278,6 +308,7 @@ TASK_BUILDERS: dict[str, Callable[[DictConfig], Any]] = {
     "sjd_imagenet64": lambda cfg: _build_tfds_sjd_task(cfg, task_name="sjd_imagenet64"),
     "sjd_sudoku_inpaint": _build_sjd_sudoku_inpaint_task,
     "openwebtext_sjd": _build_openwebtext_sjd_task,
+    "text8_sjd": _build_text8_sjd_task,
 }
 
 

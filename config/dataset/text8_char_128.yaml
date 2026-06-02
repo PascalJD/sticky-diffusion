@@ -1,0 +1,25 @@
+# Pretokenized Text8 char-level chunks for fixed-length context training.
+# Vocab = 27 (a-z + space), CANDI char ordering. seq_len 128 (CANDI tiny).
+name: text8_char_128
+
+train_tokens_path: data/text8/train.npy
+eval_tokens_path: data/text8/val.npy
+
+batch_size: 512
+eval_batch_size: 512
+per_device_batch_size: -1
+
+seq_len: 128
+data_shape:
+  - 128
+vocab_size: 27
+num_classes: -1
+# Char-level: no HF tokenizer; decoding uses the in-repo text8 char map.
+tokenizer_name: null
+
+drop_remainder: true
+shuffle: true
+mmap: true
+
+max_train_examples: -1
+max_eval_examples: -1
