@@ -1,0 +1,54 @@
+# Sudoku SJD with end-to-end LEARNABLE hazard, trained on the CE+RB SUBSET of
+# the ELBO (score term fully stop-gradiented). The CE condition of the
+# World-1-vs-World-2 hazard-learning test.
+#
+# Difference from sjd_sudoku_e2e.yaml (the ELBO condition):
+#   - forward.hazard_weighting.score_w_stop_gradient: true
+# Everything else (DiT, optim, sampler, eval, log_w clamp, prior, multiplier)
+# is identical. The three Sudoku experiments differ ONLY in:
+#   sjd_sudoku_e2e_baseline.yaml : hazard_weighting=none           (FIXED)
+#   sjd_sudoku_e2e.yaml          : learned_e2e + score_w_stop_gradient=false (ELBO)
+#   sjd_sudoku_e2e_ce.yaml       : learned_e2e + score_w_stop_gradient=true  (CE)
+# See plan: World-1-vs-World-2 in
+# /Users/PascalJutras/.claude/plans/we-have-an-end-to-end-compressed-boole.md
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: learned_e2e   # ELBO at eta=1, learnable log_w
+  - /forward/jump: vp_matched
+  - /forward/blur: none                       # W = I (required by elbo_eta1)
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+model:
+  anchor:
+    learnable: false                          # anchors frozen, same as ELBO/FIXED
+
+forward:
+  jump:
+    eta: 1.0                                  # required by elbo_eta1
+  blur:
+    blur_kernel: null                         # W = I
+  hazard_weighting:
+    # The single delta vs sjd_sudoku_e2e.yaml: stop-gradient the WHOLE
+    # score-term residual, including (1-S_a). L_score's value is still
+    # computed and logged (loss/score), but contributes ZERO gradient to
+    # either theta or log_w. This isolates the discrete-channel-preferred
+    # schedule from the score term's ELBO opposition.
+    score_w_stop_gradient: true
+
+training:
+  log_w_lr_multiplier: 0.1

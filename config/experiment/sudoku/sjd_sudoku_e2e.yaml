@@ -39,8 +39,12 @@ forward:
   blur:
     blur_kernel: null                          # W = I
 
-# log_w_lr_multiplier: gradient-magnitude probe suggested ~25 for the
-# unbiased ELBO gradient on log_w. Adjust per future probes if w-magnitudes
-# drift.
+# log_w_lr_multiplier: starting probe per corrected appendix
+# alg:sjd-e2e-eta1 note (b), which recommends ~lr/10 for the hazard
+# parameter group (i.e., 0.1 when the classifier LR is 1e-3). The previous
+# value of 25.0 was tuned under the BIASED L_CE + L_RB objective (no
+# L_score) and produced unbounded log_w drift -> NaN around step 4500. With
+# L_score installed, the gradient direction is now correct; re-probe
+# empirically and adjust based on log_w/{mean,std,max,min} convergence.
 training:
-  log_w_lr_multiplier: 25.0
+  log_w_lr_multiplier: 0.1

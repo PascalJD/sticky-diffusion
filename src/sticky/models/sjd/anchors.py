@@ -740,6 +740,13 @@ class TokenAnchors(nn.Module):
     learnable: bool = True
     learnable_log_w: bool = False
     log_w_init: Any = None
+    # When set, log_w_float() clamps the recentered log_w into this range.
+    # Hazard-likelihood is unidentified at the optimum (corrected appendix
+    # rem:hazard-flat), so keep this loose: [-3, 3] => w in [~0.05, 20]. A
+    # tight clamp can pin the very signal the experiment measures. Defaults
+    # to None (no clamp) for back-compat; learned_e2e configs wire this to
+    # hazard_weighting.clip via the SJD model factory.
+    log_w_clip: tuple[float, float] | None = None
 
     def _normalize(self, table: Array) -> Array:
         """Apply CDCD-style L2-normalize-then-scale-by-sqrt(d), if enabled.
@@ -802,7 +809,16 @@ class TokenAnchors(nn.Module):
         if not self.learnable_log_w:
             return None
         log_w = self.get_variable("params", "log_w")
-        return self._recenter_log_w(log_w)
+        log_w = self._recenter_log_w(log_w)
+        # Single chokepoint clamp: everything downstream (loss, sampling,
+        # metrics, log_lambda_hat quadrature) reads through this accessor.
+        # Without the clamp, the raw param can drift to overflow w = exp(log_w)
+        # in float32 and produce NaNs via 0 * inf in the prior term, even with
+        # prior_strength=0. (See plan v3 H1+H2.)
+        if self.log_w_clip is not None:
+            lo, hi = self.log_w_clip
+            log_w = jnp.clip(log_w, float(lo), float(hi))
+        return log_w
 
 
 @struct.dataclass

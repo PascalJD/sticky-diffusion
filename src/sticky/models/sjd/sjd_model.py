@@ -16,6 +16,9 @@ class SJD(nn.Module):
     learnable_anchors: bool = True
     learnable_log_w: bool = False
     log_w_init: Any = None
+    # See TokenAnchors.log_w_clip; threaded through here so the anchor
+    # factory in models/factories/sjd.py can wire hazard_weighting.clip.
+    log_w_clip: tuple[float, float] | None = None
     # When True, the model maintains a learnable anchor_dim-sized bias
     # vector that is added to y_t at uncommitted (noisy) site positions
     # before the classifier sees it. The mask is supplied per-call via the
@@ -66,6 +69,7 @@ class SJD(nn.Module):
             learnable=self.learnable_anchors,
             learnable_log_w=self.learnable_log_w,
             log_w_init=self.log_w_init,
+            log_w_clip=self.log_w_clip,
         )
         self.classifier = ContinuousClassifier(
             n_layers=self.n_layers,

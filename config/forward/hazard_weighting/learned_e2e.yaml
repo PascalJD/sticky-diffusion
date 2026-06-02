@@ -24,10 +24,31 @@ rb_weight: 1.0
 # (2x cost, cleaner gradient decomposition). Default true for exploration;
 # flip to false for quality-sensitive final runs.
 rb_share_sample: true
+# score_w_stop_gradient: gates whether L_score's (1-S_a) occupancy factor
+# is differentiable w.r.t. log_w. Three conditions for the SJD World-1-vs-
+# World-2 hazard-learning test (see plan):
+#   - false (default): the v3 full ELBO. L_score's w-gradient flows via
+#     (1-S_a); theta still fit by CE only via the residual stop_gradient.
+#     This is the ELBO condition.
+#   - true: L_score is fully stop-gradiented. It contributes zero gradient
+#     to both theta AND log_w (still computed and logged). This is the CE
+#     condition that isolates the discrete-channel-preferred schedule.
+# (For the FIXED condition, use hazard_weighting=none; no log_w is learned
+# and this flag is irrelevant.)
+score_w_stop_gradient: false
 # prior_strength: lambda_Omega for Omega(w) = lambda_Omega * Sum_a (w(a) - 1)^2.
-# Off by default. Turn on for small-data regimes where log_w would otherwise drift.
-prior_strength: 0.0
-# These mirror the precompute-script flags; not consumed at runtime.
+# WEAK default (0.01) because the hazard is likelihood-unidentified at the
+# optimum: a heavy prior pins log_w = 0 even when data wants something else
+# (a spurious null). The clamp below is the load-bearing safety bound; the
+# prior just nudges back toward the anchor-agnostic baseline.
+prior_strength: 0.01
+# smoothing_alpha and normalize_mean mirror the precompute-script flags;
+# not consumed at runtime.
 smoothing_alpha: 1.0
 normalize_mean: true
-clip: [0.1, 10.0]
+# clip: per-element clamp on log_w(a) (in LOG SPACE), applied inside
+# TokenAnchors.log_w_float() after mean-recentering. [-3, 3] => w in
+# [~0.05, 20]. Bounds w against float32 overflow in (w-1)^2 and against
+# underflow in exp(-w * B(t)). Loose by design — see corrected appendix
+# rem:hazard-flat on likelihood-unidentifiability of the hazard.
+clip: [-3.0, 3.0]

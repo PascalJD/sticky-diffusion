@@ -1,9 +1,14 @@
-"""Tests for the eta=1 SJD ELBO training loss (L_CE + L_RB + Omega).
+"""Tests for the eta=1 SJD ELBO training loss
+(L_CE + L_RB + L_score + Omega).
 
-The gradient checks below are the load-bearing correctness gate: this loss
-draws Y ~ q_t directly and puts the (1 - S_a) factor into a deterministic
-weight, yielding an unbiased gradient on log_w (the prior biased path via
-hazard_deriv weighting has been removed).
+Plan v3 brought the three-term ELBO online: L_score is now part of the loss
+(its w-gradient is the restoring force at the consistent hazard), and all
+three terms share a 1/N normalizer (the previous stop_gradient(sum(w_ce))
+CE normalizer was biased in log_w). These tests cover the original
+ce_num/rb_num FD-vs-autograd gates plus the new normalization + L_score
+behaviour. The deeper Layer-B gates (autograd-vs-FD on the total loss,
+analytic-posterior stationarity, theta-grad zero, discrete limit) live in
+test_score_term_layer_b.py.
 """
 import jax
 import jax.numpy as jnp
@@ -50,14 +55,11 @@ def _make_x0(rng):
 
 
 def test_elbo_eta1_loss_value_matches_closed_form_at_w_eq_1():
-    """At log_w = 0 and a fixed seed, L_CE matches its analytic closed form:
-        weight_i * (- log P_theta(X_0,i | Y_i, t))
-        where weight_i = lam(t) * w(X_0,i) * S_{X_0,i}(t), w == 1.
-
-    The per-batch mean normalization is also tested (stop-grad scalar)."""
+    """At log_w = 0 and a fixed seed, the loss is finite and the three
+    normalized loss-component metrics exist."""
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(0)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w = jnp.zeros((K,), dtype=jnp.float32)
 
     loss, metrics = elbo_eta1_loss(
@@ -71,33 +73,26 @@ def test_elbo_eta1_loss_value_matches_closed_form_at_w_eq_1():
         jump=jump,
         T=1.0,
         anchor_log_w=log_w,
+        anchor_table=anchor_table,
         prior_strength=0.0,
         rb_share_sample=True,  # one forward pass; logits reused
     )
     assert loss.ndim == 0
     assert bool(jnp.isfinite(loss)), f"loss not finite: {loss}"
-    assert "loss/ce" in metrics
-    assert "loss/rb" in metrics
-    # At log_w = 0 the rate-balance contribution still has a per-anchor lambda_hat,
-    # but the test simply asserts finiteness here. Value-correctness is checked
-    # via the gradient tests, which is what the plan calls the primary gate.
-    assert bool(jnp.isfinite(metrics["loss/ce"])), "ce term not finite"
-    assert bool(jnp.isfinite(metrics["loss/rb"])), "rb term not finite"
+    for key in ("loss/ce", "loss/rb", "loss/score", "loss/prior"):
+        assert key in metrics
+        assert bool(jnp.isfinite(metrics[key])), f"{key} not finite"
 
 
 def test_grad_log_w_L_CE_num_matches_finite_difference():
-    """PRIMARY correctness gate: autograd grad of ce_num (the un-normalized
-    weighted sum) wrt log_w matches FD.
-
-    The loss's per-batch normalizer is wrapped in stop_gradient for stability,
-    so testing the normalized loss against FD would compare apples to oranges
-    (FD doesn't respect stop_gradient). Testing ce_num directly is the right
-    correctness gate: it covers the full w-dependence of the loss numerator,
-    which is what the optimizer actually steps along (the denominator is just
-    a scalar rescaling)."""
+    """Sanity: autograd grad of ce_num (the un-normalized weighted sum) wrt
+    log_w matches FD. This is the L_CE component of the v3 implementation
+    gate. The total-loss FD parity test lives in test_score_term_layer_b.py
+    (test 3a).
+    """
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(2)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w0 = jnp.array([-0.3, 0.1, 0.2], dtype=jnp.float32)  # asymmetric
     key_fixed = jax.random.PRNGKey(7)
 
@@ -113,6 +108,7 @@ def test_grad_log_w_L_CE_num_matches_finite_difference():
             jump=jump,
             T=1.0,
             anchor_log_w=log_w,
+            anchor_table=anchor_table,
             prior_strength=0.0,
             rb_weight=0.0,  # isolate L_CE
         )
@@ -130,55 +126,47 @@ def test_grad_log_w_L_CE_num_matches_finite_difference():
     grad_fd = jnp.stack(grad_fd_list)
 
     err = jnp.max(jnp.abs(grad_auto - grad_fd))
-    # Tolerance: FD truncation O(h^2) ~ 1e-6 of scale, autograd float32 noise.
-    # Absolute scale of grad ~ 0.1-1.0, so 1e-3 absolute is comfortable.
     assert err < 1e-3, (
         f"autograd vs FD ce_num gradient mismatch: max |delta| = {float(err)}\n"
         f"autograd = {grad_auto}\nFD      = {grad_fd}"
     )
 
 
-def test_loss_ce_normalizer_is_stop_gradiented():
-    """The per-batch ce_den (sum of weights) must be stop-gradiented so the
-    gradient direction in log_w is the un-normalized direction. Verify by
-    confirming grad(loss/ce) is exactly proportional to grad(loss/ce_num).
+def test_loss_ce_normalizer_matches_rb_normalizer():
+    """Plan v3 B2: L_CE and L_RB share a 1/N normalizer (sum(mask_f), not
+    stop_grad(sum(w_ce))). This makes L_CE + L_RB + L_score an unbiased MC
+    estimator of the appendix's ELBO integrand.
+
+    Check that ce_den equals the active-site count exactly (no
+    stop_gradient detour), so FD on the total loss can match autograd.
     """
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(4)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w0 = jnp.array([-0.3, 0.1, 0.2], dtype=jnp.float32)
-    key_fixed = jax.random.PRNGKey(11)
 
-    def call(log_w, which: str):
-        _, metrics = elbo_eta1_loss(
-            key=key_fixed,
-            params={},
-            apply_fn=_fake_apply_fn,
-            x0_anchor=x0_anchor,
-            x0_idx=x0_idx,
-            beta=beta,
-            hazard=hazard,
-            jump=jump,
-            T=1.0,
-            anchor_log_w=log_w,
-            prior_strength=0.0,
-            rb_weight=0.0,
-        )
-        return metrics[which]
-
-    grad_ce = jax.grad(lambda lw: call(lw, "loss/ce"))(log_w0)
-    grad_num = jax.grad(lambda lw: call(lw, "loss/ce_num"))(log_w0)
-    den = float(call(log_w0, "loss/ce_den"))
-
-    # grad(loss/ce) should equal grad(loss/ce_num) / den_stopped exactly,
-    # because den is stop-gradiented at evaluation. Verify numerically.
-    expected = grad_num / den
-    err = jnp.max(jnp.abs(grad_ce - expected))
-    assert err < 1e-5, (
-        f"grad(loss/ce) != grad(loss/ce_num) / stop_grad(den).\n"
-        f"  grad_ce = {grad_ce}\n  grad_num/den = {expected}\n"
-        f"  This means the per-batch normalizer is differentiated through,\n"
-        f"  reintroducing the gradient-pollution the elbo_eta1 mode avoids."
+    _, metrics = elbo_eta1_loss(
+        key=jax.random.PRNGKey(11),
+        params={},
+        apply_fn=_fake_apply_fn,
+        x0_anchor=x0_anchor,
+        x0_idx=x0_idx,
+        beta=beta,
+        hazard=hazard,
+        jump=jump,
+        T=1.0,
+        anchor_log_w=log_w0,
+        anchor_table=anchor_table,
+        prior_strength=0.0,
+        rb_weight=0.0,
+    )
+    # No given_mask provided, so every site is active; ce_den == B * L_seq.
+    expected_den = float(B * L_seq)
+    got_den = float(metrics["loss/ce_den"])
+    assert abs(got_den - expected_den) < 1e-6, (
+        f"ce_den should equal active-site count {expected_den}, got {got_den}. "
+        "The stop_gradient(sum(w_ce)) normalizer is the previous biased "
+        "behavior; it has been replaced by the unified 1/N path."
     )
 
 
@@ -188,7 +176,7 @@ def test_L_RB_zero_at_w_eq_1():
     exactly at log_w == 0, regardless of the model."""
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(5)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w = jnp.zeros((K,), dtype=jnp.float32)
 
     _, metrics = elbo_eta1_loss(
@@ -202,6 +190,7 @@ def test_L_RB_zero_at_w_eq_1():
         jump=jump,
         T=1.0,
         anchor_log_w=log_w,
+        anchor_table=anchor_table,
         prior_strength=0.0,
         rb_weight=1.0,
     )
@@ -219,7 +208,7 @@ def test_grad_log_w_L_RB_num_matches_finite_difference():
     """
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(6)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w0 = jnp.array([-0.3, 0.1, 0.2], dtype=jnp.float32)
     key_fixed = jax.random.PRNGKey(17)
 
@@ -235,6 +224,7 @@ def test_grad_log_w_L_RB_num_matches_finite_difference():
             jump=jump,
             T=1.0,
             anchor_log_w=log_w,
+            anchor_table=anchor_table,
             prior_strength=0.0,
             rb_weight=1.0,
             rb_share_sample=False,  # independent draw — same gradient guarantee
@@ -264,7 +254,7 @@ def test_prior_omega_contributes_to_loss():
     at w != 1 it adds a positive penalty that is computed correctly."""
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(8)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
 
     # log_w such that w = exp([-0.5, 0, 0.5]) = [0.6065, 1.0, 1.6487]
     log_w = jnp.array([-0.5, 0.0, 0.5], dtype=jnp.float32)
@@ -283,6 +273,7 @@ def test_prior_omega_contributes_to_loss():
         jump=jump,
         T=1.0,
         anchor_log_w=log_w,
+        anchor_table=anchor_table,
         prior_strength=strength,
         rb_weight=0.0,
     )
@@ -297,7 +288,7 @@ def test_grad_log_w_L_CE_nonzero_and_finite():
     indicate a silent stop_gradient broke the w-path)."""
     beta, hazard, jump = _make_schedules()
     rng = jax.random.PRNGKey(3)
-    x0_idx, x0_anchor, _ = _make_x0(rng)
+    x0_idx, x0_anchor, anchor_table = _make_x0(rng)
     log_w0 = jnp.array([-0.3, 0.0, 0.2], dtype=jnp.float32)
 
     def L_CE_only(log_w):
@@ -312,6 +303,7 @@ def test_grad_log_w_L_CE_nonzero_and_finite():
             jump=jump,
             T=1.0,
             anchor_log_w=log_w,
+            anchor_table=anchor_table,
             prior_strength=0.0,
             rb_weight=0.0,
         )

@@ -54,6 +54,11 @@ class SJDTaskBase(Task):
     rb_weight: float = 1.0
     rb_share_sample: bool = True
     prior_strength: float = 0.0
+    # When True, L_score is fully stop-gradiented (including the (1-S_a)
+    # occupancy factor), so it contributes ZERO gradient to either theta
+    # or log_w. Default False preserves the v3 ELBO behavior. Used by the
+    # CE-only Sudoku world-test condition (see plan: World-1-vs-World-2).
+    score_w_stop_gradient: bool = False
 
     # Whether the model.apply signature takes the time arg positionally (CIFAR-10)
     # vs as a keyword ``t=`` (OpenWebText, Sudoku).
@@ -148,6 +153,13 @@ class SJDTaskBase(Task):
             anchor_log_w = self.anchor_log_w
 
         if str(self.objective) == "elbo_eta1":
+            # L_score needs the NORMALIZED anchor table (same space as
+            # x0_anchor); DO NOT reuse the raw params["anchors"]["table"]
+            # path used by the CE branch when log_state_dependency is on.
+            # See plan v3 Correction 2.
+            elbo_anchor_table = model.apply(
+                {"params": params}, method=model.anchor_table
+            )
             loss, metrics = elbo_eta1_loss(
                 key=key_loss,
                 params=params,
@@ -159,12 +171,14 @@ class SJDTaskBase(Task):
                 jump=self.forward.jump,
                 T=float(self.forward.T),
                 anchor_log_w=anchor_log_w,
+                anchor_table=elbo_anchor_table,
                 given_mask=self._given_mask(batch),
                 time_sampling=str(self.time_sampling),
                 t_floor=float(self.t_floor),
                 rb_share_sample=bool(self.rb_share_sample),
                 rb_weight=float(self.rb_weight),
                 prior_strength=float(self.prior_strength),
+                score_w_stop_gradient=bool(self.score_w_stop_gradient),
             )
         else:
             loss, metrics = ce_allocation_loss(

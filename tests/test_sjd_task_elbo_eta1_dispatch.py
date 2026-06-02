@@ -44,7 +44,7 @@ def _make_task(*, objective="ce", learn_log_w=False, forward=None, **kwargs):
 
 class _FakeModel:
     """Stand-in for a real Flax SJD model. Returns zero logits and exposes
-    a fake `anchor_log_w` method for the elbo path."""
+    fake `anchor_log_w` and `anchor_table` methods for the elbo path."""
 
     def embed(self, token_ids):
         return jnp.zeros(token_ids.shape + (8,))
@@ -52,10 +52,15 @@ class _FakeModel:
     def anchor_log_w(self):
         return jnp.zeros((9,))  # vocab_size=9
 
+    def anchor_table(self):
+        return jnp.zeros((9, 8))  # (vocab_size, anchor_dim)
+
     def apply(self, variables, *args, method=None, **kwargs):
         if method is not None:
             if method is self.anchor_log_w or method == self.anchor_log_w:
                 return jnp.zeros((9,))
+            if method is self.anchor_table or method == self.anchor_table:
+                return jnp.zeros((9, 8))
             token_ids = args[0]
             return jnp.zeros(token_ids.shape + (8,))
         xt = args[0]

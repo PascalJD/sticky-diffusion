@@ -29,6 +29,7 @@ def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
     # the loss kwarg instead, so it does not need the trainable variable.
     learnable_log_w = hw_mode == "learned_e2e"
     log_w_init = None
+    log_w_clip: tuple[float, float] | None = None
     if learnable_log_w:
         init = str(getattr(hw_cfg, "init", "zeros"))
         if init == "frequency":
@@ -41,6 +42,24 @@ def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
             # Match the runtime mean-zero re-centering so the at-init forward
             # pass reproduces the frozen `frequency` path bit-exactly.
             log_w_init = loaded - jnp.mean(loaded)
+        # Read hazard_weighting.clip and apply it as a log_w clamp inside
+        # TokenAnchors.log_w_float(). Interpreted in LOG-w space: e.g.
+        # clip=[-3.0, 3.0] => w in [~0.05, 20]. Defaults to no clamp.
+        raw_clip = getattr(hw_cfg, "clip", None)
+        if raw_clip is not None:
+            try:
+                lo, hi = float(raw_clip[0]), float(raw_clip[1])
+            except (TypeError, IndexError, ValueError) as exc:
+                raise ValueError(
+                    "forward.hazard_weighting.clip must be a 2-element "
+                    f"[lo, hi] sequence in log_w space, got {raw_clip!r}."
+                ) from exc
+            if not lo < hi:
+                raise ValueError(
+                    f"forward.hazard_weighting.clip must have lo < hi, "
+                    f"got [{lo}, {hi}]."
+                )
+            log_w_clip = (lo, hi)
 
     return SJD(
         vocab_size=vocab_size,
@@ -51,6 +70,7 @@ def build_model(cfg: DictConfig, *, data_shape: tuple[int, ...], vocab_size: int
         learnable_anchors=anchor_learnable_from_mapping(cfg.model, default=True),
         learnable_log_w=learnable_log_w,
         log_w_init=log_w_init,
+        log_w_clip=log_w_clip,
         use_noisy_input_bias=bool(cfg.model.get("use_noisy_input_bias", False)),
         feature_dim=int(cfg.model.feature_dim),
         n_layers=int(cfg.model.n_layers),
