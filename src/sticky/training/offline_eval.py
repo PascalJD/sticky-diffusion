@@ -480,18 +480,22 @@ def _run_text8_valid_word_eval(
     import numpy as np
 
     from sticky.eval.valid_word import (
+        build_threshold_vocabs,
+        decode_with_map,
         list_grid,
         load_char_map,
         load_test_vocab,
         valid_word_frontier_report,
     )
 
-    vocab = load_test_vocab(
+    base_vocab = load_test_vocab(
         str(eval_cfg.get("vocab_path", "data/text8/test_vocab_len5.json"))
     )
     id_to_char = load_char_map(
         str(eval_cfg.get("char_map_path", "data/text8/char_map.json"))
     )
+    thresholds = [int(x) for x in list_grid(eval_cfg, "length_thresholds", [5])]
+    vocabs_by_threshold = build_threshold_vocabs(base_vocab, thresholds)
     nfe_sweep = [int(x) for x in list_grid(eval_cfg, "nfe_sweep", [128])]
     temp_grid = [float(x) for x in list_grid(eval_cfg, "temperature_grid", [1.0])]
     num_samples = int(eval_cfg.get("num_samples", 256))
@@ -539,10 +543,35 @@ def _run_text8_valid_word_eval(
                 flush=True,
             )
 
-    report = valid_word_frontier_report(
-        samples_by_nfe_temp, id_to_char=id_to_char, vocab=vocab
-    )
+    report: Dict[str, float] = {}
+    for thr in sorted(vocabs_by_threshold):
+        report.update(
+            valid_word_frontier_report(
+                samples_by_nfe_temp,
+                id_to_char=id_to_char,
+                vocab=vocabs_by_threshold[thr],
+                key_prefix=f"eval/valid_word_len{thr}",
+            )
+        )
     metrics = _to_float_metrics(report)
+
+    # Optional: dump a few decoded text samples per gridpoint for inspection
+    # (diagnostics only; off by default; never affects metrics).
+    if bool(eval_cfg.get("dump_samples", False)):
+        n_dump = int(eval_cfg.get("num_dump_samples", 10))
+        dump_dir = get_hydra_output_dir() / "samples"
+        try:
+            dump_dir.mkdir(parents=True, exist_ok=True)
+            for (nfe, temp), samples in sorted(samples_by_nfe_temp.items()):
+                lines = [
+                    decode_with_map(row, id_to_char)
+                    for row in np.asarray(samples)[:n_dump]
+                ]
+                fp = dump_dir / f"samples_nfe{int(nfe)}_temp{float(temp):g}.txt"
+                fp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            print(f"[offline-eval] Dumped {n_dump} samples/gridpoint to {dump_dir}", flush=True)
+        except Exception as exc:  # never let a dump failure break the eval
+            print(f"[offline-eval] WARNING: sample dump failed: {exc}", flush=True)
 
     # Prefer a valid-word-specific filename. Only honor an explicit output_path
     # that differs from the generic offline-eval default (which targets the
@@ -573,10 +602,11 @@ def _run_text8_valid_word_eval(
             "nfe_sweep": nfe_sweep,
             "temperature_grid": temp_grid,
             "num_samples": int(num_samples),
-            "length_thresholds": [
-                int(x) for x in list_grid(eval_cfg, "length_thresholds", [5])
-            ],
-            "vocab_size": len(vocab),
+            "length_thresholds": thresholds,
+            "vocab_size": len(base_vocab),
+            "vocab_size_by_threshold": {
+                int(t): len(v) for t, v in sorted(vocabs_by_threshold.items())
+            },
         },
         "metrics": metrics,
     }
@@ -591,7 +621,7 @@ def _run_text8_valid_word_eval(
         except Exception:
             pass
 
-    headline = {k: v for k, v in metrics.items() if k.startswith("eval/valid_word_max@")}
+    headline = {k: v for k, v in metrics.items() if "_max@" in k}
     print(
         f"[offline-eval] text_valid_word headline (max-along-temperature): {headline}",
         flush=True,

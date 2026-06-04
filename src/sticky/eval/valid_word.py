@@ -85,26 +85,44 @@ def score_samples(
     return float(np.mean(scores))
 
 
+def build_threshold_vocabs(
+    base_vocab: set[str], thresholds: Iterable[int]
+) -> dict[int, set[str]]:
+    """Per-length-threshold reference vocabularies derived from one base vocab.
+
+    For each threshold ``T`` (a minimum word length, CANDI-style "len>=T"), the
+    vocab is the subset of ``base_vocab`` with ``len(word) >= T``. Because the
+    persisted base vocab is the len>=5 test-split set, any threshold ``T >= 5``
+    yields exactly the test-split words of length ``>= T`` (e.g. T=6 == the
+    len>=6 reference set), with no need to re-read the raw corpus. The CANDI
+    score itself is unchanged per threshold (unique matched words / total
+    tokens); only the reference set narrows.
+    """
+    return {int(t): {w for w in base_vocab if len(w) >= int(t)} for t in thresholds}
+
+
 def valid_word_frontier_report(
     samples_by_nfe_temp: Mapping[tuple[int, float], np.ndarray],
     *,
     id_to_char: Mapping[int, str],
     vocab: set[str],
+    key_prefix: str = "eval/valid_word",
 ) -> dict[str, float]:
     """Aggregate the temperature x NFE frontier into flat scalars.
 
     `samples_by_nfe_temp` maps (nfe, temperature) -> integer sample array
-    (N, S). Emits per-gridpoint `eval/valid_word@nfe{N}_temp{T}` and the
-    max-along-temperature headline `eval/valid_word_max@nfe{N}`.
+    (N, S). Emits per-gridpoint `{key_prefix}@nfe{N}_temp{T}` and the
+    max-along-temperature headline `{key_prefix}_max@nfe{N}`. ``key_prefix``
+    lets callers namespace per length threshold (e.g. `eval/valid_word_len6`).
     """
     report: dict[str, float] = {}
     per_nfe: dict[int, list[float]] = {}
     for (nfe, temp), samples in sorted(samples_by_nfe_temp.items()):
         mean_score = score_samples(samples, id_to_char=id_to_char, vocab=vocab)
-        report[f"eval/valid_word@nfe{int(nfe)}_temp{float(temp):g}"] = mean_score
+        report[f"{key_prefix}@nfe{int(nfe)}_temp{float(temp):g}"] = mean_score
         per_nfe.setdefault(int(nfe), []).append(mean_score)
     for nfe, scores in sorted(per_nfe.items()):
-        report[f"eval/valid_word_max@nfe{int(nfe)}"] = float(max(scores))
+        report[f"{key_prefix}_max@nfe{int(nfe)}"] = float(max(scores))
     return report
 
 

@@ -23,9 +23,14 @@ char_map_path: data/text8/char_map.json
 
 # Figure-2 sweep grid (config-driven; pending exact values, D9). Defaults to the
 # CANDI 128-step budget and a temperature frontier.
-length_thresholds: [5]
+length_thresholds: [5, 6]
 nfe_sweep: [32, 64, 128]
 temperature_grid: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 num_samples: 512
 text_batch_size: 64
 seed: 0
+
+# Diagnostics: optionally dump a few decoded text samples per gridpoint to the
+# eval Hydra output dir (off by default; never affects the metric).
+dump_samples: false
+num_dump_samples: 10

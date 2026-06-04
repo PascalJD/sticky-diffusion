@@ -1,6 +1,5 @@
-# Lightweight Text8 training-time evaluation: sample and dump char sequences.
-# The valid-word frontier (the validation metric) runs OFFLINE via
-# eval=text8_valid_word on a checkpoint, not during training.
+# Lightweight Text8 training-time evaluation: sample and dump char sequences,
+# PLUS periodic valid-word frontier logging to wandb (see below).
 enabled: true
 mode: text_basic
 prefix: eval
@@ -14,3 +13,24 @@ text_every: 5000
 text_num_samples: 16
 text_batch_size: 16
 text_output_prefix: text_samples
+
+# Periodic valid-word frontier logging during training (CANDI
+# calculate_word_dictionary_match at len>=5 and len>=6, on the params the loop
+# passes for sampling = EMA). Logs scalars eval/valid_word_len5 and
+# eval/valid_word_len6 to wandb so the GENERATION trajectory is watchable
+# continuously (training loss decouples from sample quality). Runs on its own
+# sparser cadence with enough samples for a stable number; keep
+# valid_word_every a multiple of text_every. The eval is wrapped in try/except
+# so a sampling/scoring error logs a warning and training continues.
+valid_word_enabled: true
+valid_word_every: 25000
+valid_word_num_samples: 256
+valid_word_thresholds: [5, 6]
+# Temperature sweep: log the MAX-along-temperature valid-word (the operating
+# frontier the gate metric reads) plus per-temp values. Empty list => use the
+# single configured sampler temperature (no sweep).
+valid_word_temps: [0.5, 0.7, 0.9]
+valid_word_batch_size: 64
+valid_word_nfe: 128
+vocab_path: data/text8/test_vocab_len5.json
+char_map_path: data/text8/char_map.json

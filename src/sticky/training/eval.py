@@ -206,6 +206,100 @@ def build_eval_logger(
         output_dir = get_hydra_output_dir()
         output_prefix = str(eval_cfg.get("text_output_prefix", "text_samples"))
 
+        # --- Periodic valid-word frontier logging (CANDI calculate_word_dictionary_match)
+        # at len>=5 and len>=6, computed on the SAME generated samples this hook
+        # already produces and on whatever params the loop passes (EMA via
+        # params_for_sampling). This surfaces the GENERATION trajectory in wandb
+        # during training because the loss is a poor proxy for sample quality.
+        # The 16-sample text dump is too small for a stable number, so the
+        # valid-word metric runs on its own (sparser) cadence with more samples.
+        vw_enabled = bool(eval_cfg.get("valid_word_enabled", False))
+        vw_every = int(eval_cfg.get("valid_word_every", 25000))
+        vw_num_samples = max(1, int(eval_cfg.get("valid_word_num_samples", 256)))
+        vw_thresholds = [int(x) for x in eval_cfg.get("valid_word_thresholds", [5, 6])]
+        vw_vocabs = None
+        vw_id_to_char = None
+        if vw_enabled and vw_every > 0:
+            # Build the reference vocabs/char-map ONCE. Any failure here disables
+            # valid-word logging with a warning; it must never break training.
+            try:
+                from sticky.eval.valid_word import (
+                    build_threshold_vocabs,
+                    load_char_map,
+                    load_test_vocab,
+                )
+
+                _base_vocab = load_test_vocab(
+                    str(eval_cfg.get("vocab_path", "data/text8/test_vocab_len5.json"))
+                )
+                vw_vocabs = build_threshold_vocabs(_base_vocab, vw_thresholds)
+                vw_id_to_char = load_char_map(
+                    str(eval_cfg.get("char_map_path", "data/text8/char_map.json"))
+                )
+                print(
+                    f"[eval] valid-word logging ON: thresholds={vw_thresholds} "
+                    f"every={vw_every} n_samples={vw_num_samples} "
+                    f"(len5 vocab={len(_base_vocab)})",
+                    flush=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - never break training setup
+                print(
+                    f"[eval] WARNING: valid-word logging disabled (vocab setup "
+                    f"failed): {exc}",
+                    flush=True,
+                )
+                vw_vocabs = None
+
+        # Optional TEMPERATURE SWEEP for the valid-word metric: build one
+        # sampler per temperature so the logged number tracks the operating
+        # FRONTIER (max-along-temperature), per the gate metric. Empty/absent
+        # valid_word_temps => use the single configured sampler
+        # (sample_images_fid_jit), i.e. prior behavior, bit-unchanged. The
+        # per-temp samplers inherit cfg.sampler (incl. the fixed-sampler flags),
+        # only overriding logit_temperature. Build failures fall back to the
+        # single sampler and never break training.
+        vw_temps = [float(t) for t in (eval_cfg.get("valid_word_temps", []) or [])]
+        vw_samplers = None  # list[(temp, sample_fn)] or None => single sampler
+        if (vw_vocabs is not None) and vw_temps and (model is not None):
+            try:
+                from omegaconf import OmegaConf
+
+                from sticky.training.sampling import build_sampling_fns
+
+                vw_nfe = int(
+                    eval_cfg.get("valid_word_nfe", int(cfg.sampler.get("n_steps", 128)))
+                )
+                vw_batch = max(1, int(eval_cfg.get("valid_word_batch_size", text_batch_size)))
+                _built = []
+                for _t in vw_temps:
+                    cfg_t = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+                    cfg_t.sampler.logit_temperature = float(_t)
+                    _, _fn_t = build_sampling_fns(
+                        cfg=cfg_t,
+                        task=task,
+                        model=model,
+                        num_log_images=vw_batch,
+                        sample_timesteps=vw_nfe,
+                        fid_every=1,
+                        fid_batch_size=vw_batch,
+                    )
+                    if _fn_t is None:
+                        raise RuntimeError("build_sampling_fns returned None for valid-word temp sweep")
+                    _built.append((float(_t), _fn_t))
+                vw_samplers = _built
+                print(
+                    f"[eval] valid-word temp-sweep ON: temps={vw_temps} nfe={vw_nfe} "
+                    f"(logged metric = max-along-temperature frontier)",
+                    flush=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - never break training setup
+                print(
+                    f"[eval] WARNING: valid-word temp-sweep disabled (build failed): "
+                    f"{exc}; falling back to single configured sampler",
+                    flush=True,
+                )
+                vw_samplers = None
+
         def maybe_eval(
             step_i: int,
             params_for_sampling,
@@ -219,58 +313,142 @@ def build_eval_logger(
                 every=text_every,
                 log_at_step_zero=fid_log_at_step_zero,
             )
-            if not run_text:
+            run_vw = (vw_vocabs is not None) and (
+                bool(force_fid)
+                or _should_run_eval(
+                    step_i=step_i, every=vw_every, log_at_step_zero=False
+                )
+            )
+            if not run_text and not run_vw:
                 return {}
 
-            num_samples = max(1, int(text_num_samples))
-            batch_size = max(1, int(text_batch_size))
-            lines: list[str] = []
-            base_rng = jax.random.fold_in(
-                make_rng(int(cfg.training.seed) + 17_071),
-                int(step_i),
-            )
+            result: Dict[str, float] = {}
 
-            batch_idx = 0
-            while len(lines) < num_samples:
-                sample_rng = jax.random.fold_in(base_rng, batch_idx)
-                samples = sample_images_fid_jit(params_for_sampling, sample_rng)
-                # SJD samplers return a ReverseSampleResult struct; the committed
-                # token grid is k_filled. Image/text baselines return the array
-                # directly. Normalize to the token array either way.
-                samples = getattr(samples, "k_filled", samples)
-                sample_np = np.asarray(to_numpy(jax.block_until_ready(samples)))
-                remaining = num_samples - len(lines)
-                sample_np = sample_np[: min(remaining, batch_size)]
+            if run_text:
+                num_samples = max(1, int(text_num_samples))
+                batch_size = max(1, int(text_batch_size))
+                lines: list[str] = []
+                base_rng = jax.random.fold_in(
+                    make_rng(int(cfg.training.seed) + 17_071),
+                    int(step_i),
+                )
 
-                formatter = getattr(task, "format_samples_for_logging", None)
-                if callable(formatter):
-                    rendered = formatter(sample_np)
-                else:
-                    rendered = None
+                batch_idx = 0
+                while len(lines) < num_samples:
+                    sample_rng = jax.random.fold_in(base_rng, batch_idx)
+                    samples = sample_images_fid_jit(params_for_sampling, sample_rng)
+                    # SJD samplers return a ReverseSampleResult struct; the committed
+                    # token grid is k_filled. Image/text baselines return the array
+                    # directly. Normalize to the token array either way.
+                    samples = getattr(samples, "k_filled", samples)
+                    sample_np = np.asarray(to_numpy(jax.block_until_ready(samples)))
+                    remaining = num_samples - len(lines)
+                    sample_np = sample_np[: min(remaining, batch_size)]
 
-                if rendered is None:
-                    decoded = task.decode(jnp.asarray(sample_np)) if task is not None else sample_np
-                    decoded_np = np.asarray(to_numpy(decoded))
-                    if decoded_np.ndim == 1:
-                        decoded_np = decoded_np[None, :]
-                    rendered = [
-                        " ".join(str(int(tok)) for tok in row.reshape(-1))
-                        for row in decoded_np
-                    ]
+                    formatter = getattr(task, "format_samples_for_logging", None)
+                    if callable(formatter):
+                        rendered = formatter(sample_np)
+                    else:
+                        rendered = None
 
-                lines.extend(rendered)
-                batch_idx += 1
+                    if rendered is None:
+                        decoded = task.decode(jnp.asarray(sample_np)) if task is not None else sample_np
+                        decoded_np = np.asarray(to_numpy(decoded))
+                        if decoded_np.ndim == 1:
+                            decoded_np = decoded_np[None, :]
+                        rendered = [
+                            " ".join(str(int(tok)) for tok in row.reshape(-1))
+                            for row in decoded_np
+                        ]
 
-            out_path = output_dir / f"{output_prefix}_step_{int(step_i):07d}.txt"
-            out_path.write_text(
-                "\n".join(lines[:num_samples]) + "\n",
-                encoding="utf-8",
-            )
-            print(
-                f"[eval] Wrote {num_samples} text samples to {out_path}",
-                flush=True,
-            )
-            return {f"{fid_prefix}/text_samples_written": float(num_samples)}
+                    lines.extend(rendered)
+                    batch_idx += 1
+
+                out_path = output_dir / f"{output_prefix}_step_{int(step_i):07d}.txt"
+                out_path.write_text(
+                    "\n".join(lines[:num_samples]) + "\n",
+                    encoding="utf-8",
+                )
+                print(
+                    f"[eval] Wrote {num_samples} text samples to {out_path}",
+                    flush=True,
+                )
+                result[f"{fid_prefix}/text_samples_written"] = float(num_samples)
+
+            if run_vw:
+                # Wrapped so any sampling/scoring failure logs a warning and lets
+                # training continue (this hook must never crash a run).
+                try:
+                    from sticky.eval.valid_word import score_samples
+
+                    def _collect(fn, base_rng):
+                        coll: list = []
+                        n = 0
+                        b = 0
+                        while n < vw_num_samples:
+                            r = jax.random.fold_in(base_rng, b)
+                            s = fn(params_for_sampling, r)
+                            s = getattr(s, "k_filled", s)
+                            a = np.asarray(to_numpy(jax.block_until_ready(s)))
+                            if a.ndim == 1:
+                                a = a[None, :]
+                            coll.append(a)
+                            n += int(a.shape[0])
+                            b += 1
+                        return np.concatenate(coll, axis=0)[:vw_num_samples]
+
+                    base = jax.random.fold_in(
+                        make_rng(int(cfg.training.seed) + 24_601), int(step_i)
+                    )
+                    if vw_samplers is not None:
+                        # Max-along-temperature frontier: score each temp, log
+                        # per-temp values plus the max as the headline metric.
+                        per_thr_max = {thr: 0.0 for thr in vw_vocabs}
+                        for ti, (t, fn_t) in enumerate(vw_samplers):
+                            samples_t = _collect(fn_t, jax.random.fold_in(base, 1000 + ti))
+                            for thr in sorted(vw_vocabs):
+                                sc = float(
+                                    score_samples(
+                                        samples_t,
+                                        id_to_char=vw_id_to_char,
+                                        vocab=vw_vocabs[thr],
+                                    )
+                                )
+                                result[f"{fid_prefix}/valid_word_len{thr}@temp{t:g}"] = sc
+                                if sc > per_thr_max[thr]:
+                                    per_thr_max[thr] = sc
+                        for thr in sorted(vw_vocabs):
+                            result[f"{fid_prefix}/valid_word_len{thr}"] = per_thr_max[thr]
+                        nsamp = vw_num_samples
+                    else:
+                        vw_samples = _collect(sample_images_fid_jit, base)
+                        for thr in sorted(vw_vocabs):
+                            result[f"{fid_prefix}/valid_word_len{thr}"] = float(
+                                score_samples(
+                                    vw_samples,
+                                    id_to_char=vw_id_to_char,
+                                    vocab=vw_vocabs[thr],
+                                )
+                            )
+                        nsamp = int(vw_samples.shape[0])
+                    print(
+                        f"[eval] valid_word @step {step_i} (n={nsamp}/temp, EMA, "
+                        f"{'max-frontier' if vw_samplers is not None else 'single-temp'}): "
+                        + ", ".join(
+                            f"{k.split('/')[-1]}={v:.4f}"
+                            for k, v in result.items()
+                            if "valid_word_len" in k and "@" not in k
+                        ),
+                        flush=True,
+                    )
+                except Exception as exc:  # noqa: BLE001 - never crash training
+                    print(
+                        f"[eval] WARNING: valid_word eval failed @step {step_i} "
+                        f"(training continues): {exc}",
+                        flush=True,
+                    )
+
+            return result
 
         return maybe_eval
 

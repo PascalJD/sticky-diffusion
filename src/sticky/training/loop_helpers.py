@@ -672,6 +672,8 @@ def process_completed_step(
                 last_eval_step = step_i
                 if ctx.metrics_writer is not None:
                     ctx.metrics_writer.write(step_i=step_i, metrics=eval_metrics, tag="eval")
+                if ctx.wandb_mod is not None:
+                    ctx.wandb_mod.log(eval_metrics, step=step_i)
                 if ctx.checkpoint_writer is not None:
                     ctx.checkpoint_writer.maybe_save_best(
                         target=state_s,
@@ -721,6 +723,8 @@ def finalize_training_loop(
                     metrics=final_eval_metrics,
                     tag="eval",
                 )
+            if ctx.wandb_mod is not None:
+                ctx.wandb_mod.log(final_eval_metrics, step=ctx.num_train_steps)
             if ctx.checkpoint_writer is not None:
                 ctx.checkpoint_writer.maybe_save_best(
                     target=final_state,
