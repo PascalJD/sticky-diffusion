@@ -22,3 +22,12 @@ rng_fold: 4
 force_classify_at_end: true
 
 metrics_count_nfe: true
+
+# Sanctioned sampling-strategy options, DEFAULT OFF = current/CANDI-baseline
+# behavior (bit-identical when off and at temperature 1.0). See SamplerConfig.
+# symmetric_temperature: apply logit_temperature to the continuous-drift
+#   posterior too (not only the discrete-jump allocation).
+# ancestral_final_commit: draw the forced final commit from the untempered
+#   allocation (removes the low-temp near-argmax lock-in).
+symmetric_temperature: false
+ancestral_final_commit: false

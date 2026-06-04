@@ -50,6 +50,16 @@ class SamplerConfig:
     refresh_logits_after_em_step: bool = False
     metrics_count_nfe: bool = True
     tau_grid_size: int = 32
+    # --- Sanctioned sampling-strategy options (default OFF = current behavior).
+    # symmetric_temperature: also apply logit_temperature to the classifier
+    #   posterior that drives the continuous drift (not just the discrete-jump
+    #   allocation), so raising temperature softens the WHOLE reverse process.
+    # ancestral_final_commit: at the forced final commit, sample leftover sites
+    #   from the UNTEMPERED (temperature=1.0) allocation instead of the
+    #   temperature-sharpened choice_probs, removing the low-temp near-argmax
+    #   lock-in. Both are no-ops at logit_temperature == 1.0.
+    symmetric_temperature: bool = False
+    ancestral_final_commit: bool = False
 
 
 @struct.dataclass
@@ -154,6 +164,13 @@ def reverse_sample(
             a_table=a_table,
         )
 
+    # FIX 2 (symmetric_temperature): when ON, temper the classifier posterior
+    # that weights the continuous-drift score by the same logit_temperature used
+    # for the discrete-jump allocation. 1.0 keeps the score bit-identical.
+    score_posterior_temperature = (
+        float(cfg.logit_temperature) if cfg.symmetric_temperature else 1.0
+    )
+
     def _predictive_stats(
         logits: Array,
         y_state: Array,
@@ -168,6 +185,7 @@ def reverse_sample(
             hazard=hazard,
             jump=jump,
             tau_grid_size=int(cfg.tau_grid_size),
+            posterior_temperature=score_posterior_temperature,
         ) * float(cfg.score_scale)
         bt = _expand_like(beta(t_img_state), y_state)
         return score, bt
@@ -228,18 +246,36 @@ def reverse_sample(
                 jump_logits = jnp.where(is_last_step, logits_score, jump_logits)
 
         if cfg.alloc_mode == "sample":
-            lam_total, choice_probs = plugin_hazard_and_allocation(
-                logits=jump_logits,
-                y=jump_y,
-                t_img=jump_t_img,
-                anchors=anchors,
-                beta=beta,
-                hazard=hazard,
-                jump=jump,
-                logit_temperature=float(cfg.logit_temperature),
-                log_ratio_clip=float(cfg.log_ratio_clip),
-                tau_grid_size=int(cfg.tau_grid_size),
-            )
+            if cfg.ancestral_final_commit:
+                lam_total, choice_probs, choice_probs_untempered = (
+                    plugin_hazard_and_allocation(
+                        logits=jump_logits,
+                        y=jump_y,
+                        t_img=jump_t_img,
+                        anchors=anchors,
+                        beta=beta,
+                        hazard=hazard,
+                        jump=jump,
+                        logit_temperature=float(cfg.logit_temperature),
+                        log_ratio_clip=float(cfg.log_ratio_clip),
+                        tau_grid_size=int(cfg.tau_grid_size),
+                        also_return_untempered=True,
+                    )
+                )
+            else:
+                lam_total, choice_probs = plugin_hazard_and_allocation(
+                    logits=jump_logits,
+                    y=jump_y,
+                    t_img=jump_t_img,
+                    anchors=anchors,
+                    beta=beta,
+                    hazard=hazard,
+                    jump=jump,
+                    logit_temperature=float(cfg.logit_temperature),
+                    log_ratio_clip=float(cfg.log_ratio_clip),
+                    tau_grid_size=int(cfg.tau_grid_size),
+                )
+                choice_probs_untempered = choice_probs
         else:
             lam_total, a_idx = plugin_hazard_and_anchor(
                 key=k_a,
@@ -274,9 +310,20 @@ def reverse_sample(
                 active,
                 p_jump,
             )
+            # FIX 1 (ancestral_final_commit): at the forced final commit, draw
+            # leftover sites from the untempered allocation (removes the low-temp
+            # near-argmax sharpening). Only the last step differs; earlier steps
+            # keep the tempered choice_probs. No-op when the flag is off or at
+            # logit_temperature == 1.0.
+            if cfg.ancestral_final_commit and cfg.force_classify_at_end:
+                commit_probs = jnp.where(
+                    is_last_step, choice_probs_untempered, choice_probs
+                )
+            else:
+                commit_probs = choice_probs
             a_idx, stay_mask = sample_mixture_categorical(
                 k_mix,
-                destination_probs=choice_probs,
+                destination_probs=commit_probs,
                 stay_prob=1.0 - p_jump_sample,
                 change_prob=p_jump_sample,
                 policy=cfg.categorical_sampling_policy,

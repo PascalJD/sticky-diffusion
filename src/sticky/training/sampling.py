@@ -233,6 +233,13 @@ def _base_sampler_spec_from_cfg(cfg_sampler, *, sample_timesteps: int) -> dict:
         "metrics_count_nfe": bool(cfg_sampler.get("metrics_count_nfe", True)),
         # tau-grid resolution for the SJD plug-in / classifier_induced_score.
         "tau_grid_size": int(cfg_sampler.get("tau_grid_size", 32)),
+        # Sanctioned sampling-strategy options (default OFF = current behavior).
+        "symmetric_temperature": bool(
+            cfg_sampler.get("symmetric_temperature", False)
+        ),
+        "ancestral_final_commit": bool(
+            cfg_sampler.get("ancestral_final_commit", False)
+        ),
     }
 
 
@@ -257,6 +264,8 @@ def _sjd_sampler_cfg_from_dict(spec: dict) -> "SamplerConfig":
         refresh_logits_after_em_step=bool(spec.get("refresh_logits_after_em_step", False)),
         metrics_count_nfe=bool(spec.get("metrics_count_nfe", True)),
         tau_grid_size=int(spec.get("tau_grid_size", 32)),
+        symmetric_temperature=bool(spec.get("symmetric_temperature", False)),
+        ancestral_final_commit=bool(spec.get("ancestral_final_commit", False)),
     )
 
 

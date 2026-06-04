@@ -160,7 +160,8 @@ def _full_hazard_and_allocation(
     eps: float,
     sitewise_lam_off: Array | None = None,
     tau_grid_size: int = 32,
-) -> Tuple[Array, Array]:
+    also_return_untempered: bool = False,
+) -> Tuple[Array, ...]:
     """Dense plug-in implementation that materializes [B, S, L]-scale tensors.
 
     When ``sitewise_lam_off`` is None, ``lambda_off_star(hazard, t_img)`` is
@@ -247,8 +248,20 @@ def _full_hazard_and_allocation(
     choice_probs_flat = jax.nn.softmax(logw_choice, axis=-1).astype(jnp.float32)
 
     lam_total = lam_total_flat.reshape((B,) + site_shape)
-    choice_probs = choice_probs_flat.reshape((B,) + site_shape + (L,))
-    return lam_total, normalize_probs(choice_probs)
+    choice_probs = normalize_probs(choice_probs_flat.reshape((B,) + site_shape + (L,)))
+    if also_return_untempered:
+        # Untempered (temperature=1.0) allocation: softmax(logw_raw), i.e. the
+        # choice distribution with logp (not logp/tau). Reuses logw_raw already
+        # materialized for lam_total, so this is ~one extra softmax. When
+        # temperature == 1.0 it equals `choice_probs` exactly.
+        if logit_temperature == 1.0:
+            choice_probs_untempered = choice_probs
+        else:
+            choice_probs_untempered = normalize_probs(
+                jax.nn.softmax(logw_raw, axis=-1).reshape((B,) + site_shape + (L,))
+            )
+        return lam_total, choice_probs, choice_probs_untempered
+    return lam_total, choice_probs
 
 
 def dhm_target(
@@ -320,11 +333,16 @@ def plugin_hazard_and_allocation(
     eps: float = 1e-20,
     sitewise_lam_off: Array | None = None,
     tau_grid_size: int = 32,
-) -> Tuple[Array, Array]:
+    also_return_untempered: bool = False,
+) -> Tuple[Array, ...]:
     """Total plug-in hazard backvec-lambda_t^star(y) and per-anchor allocation
     pi_t^star(a | y), per Section 3.1 of the paper.
 
-    Returns (lam_total, choice_probs).
+    Returns (lam_total, choice_probs), or (lam_total, choice_probs,
+    choice_probs_untempered) when ``also_return_untempered`` is True. The
+    untempered allocation uses temperature=1.0 (logp, not logp/tau) and is used
+    by the optional ancestral final-step commit; it equals ``choice_probs`` when
+    ``logit_temperature == 1.0``.
     """
     return _full_hazard_and_allocation(
         logits=logits,
@@ -339,6 +357,7 @@ def plugin_hazard_and_allocation(
         eps=eps,
         sitewise_lam_off=sitewise_lam_off,
         tau_grid_size=tau_grid_size,
+        also_return_untempered=also_return_untempered,
     )
 
 

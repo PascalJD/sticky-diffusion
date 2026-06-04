@@ -422,6 +422,7 @@ def classifier_induced_score(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     tau_grid_size: int = 32,
+    posterior_temperature: float = 1.0,
 ) -> Array:
     """Classifier-induced score nabla log p_t(y) on X_A (Appendix C.3).
 
@@ -431,6 +432,15 @@ def classifier_induced_score(
         s_a(y, t) = -sum_i w_t(tau_i | y, a) (y - alpha(t) a) / v_t(tau_i),
     where the time-posterior `w_t(tau_i | y, a)` is the softmax over tau of
     `log_w_i + log lambda(tau_i) + log S(tau_i) + log N(y; alpha(t)a, v_t(tau_i) I)`.
+
+    ``posterior_temperature`` (default 1.0) tempers the classifier posterior
+    P_theta(a | y) = softmax(anchor_logits / temperature) that weights the
+    per-anchor scores, i.e. it softens/sharpens the predicted-embedding mixture
+    abar = sum_a P_theta(a|y) E(a) that drives the continuous drift. At 1.0 the
+    branch below is bit-identical to the untempered softmax; a sampler may pass
+    its logit_temperature here so temperature acts symmetrically on the drift
+    and the discrete-jump allocation (sampling-strategy only; the score is no
+    longer the exact marginal score when temperature != 1.0).
 
     Output shape equals `y.shape`.
     """
@@ -452,7 +462,13 @@ def classifier_induced_score(
     y_flat = y.reshape((B, -1, d))  # (B, S, d)
     S = int(y_flat.shape[1])
 
-    probs = jax.nn.softmax(anchor_logits, axis=-1)
+    if float(posterior_temperature) == 1.0:
+        probs = jax.nn.softmax(anchor_logits, axis=-1)
+    else:
+        probs = jax.nn.softmax(
+            anchor_logits / jnp.asarray(posterior_temperature, dtype=jnp.float32),
+            axis=-1,
+        )
     probs_flat = probs.reshape((B, S, L))
 
     alpha_t, sigma_t = alpha_sigma(beta, t)
