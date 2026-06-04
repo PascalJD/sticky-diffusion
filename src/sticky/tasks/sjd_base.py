@@ -59,6 +59,11 @@ class SJDTaskBase(Task):
     # or log_w. Default False preserves the v3 ELBO behavior. Used by the
     # CE-only Sudoku world-test condition (see plan: World-1-vs-World-2).
     score_w_stop_gradient: bool = False
+    # When True, L_RB's classifier (theta) gradient is stop-gradiented so the
+    # classifier trains on the weighted-CE term ONLY (RB + score detached from
+    # theta), while L_RB still feeds the log_w (hazard) gradient. Gradient-
+    # routing only; the loss value is unchanged. Default False = v3 ELBO.
+    rb_theta_stop_gradient: bool = False
 
     # Whether the model.apply signature takes the time arg positionally (CIFAR-10)
     # vs as a keyword ``t=`` (OpenWebText, Sudoku).
@@ -179,6 +184,7 @@ class SJDTaskBase(Task):
                 rb_weight=float(self.rb_weight),
                 prior_strength=float(self.prior_strength),
                 score_w_stop_gradient=bool(self.score_w_stop_gradient),
+                rb_theta_stop_gradient=bool(self.rb_theta_stop_gradient),
             )
         else:
             loss, metrics = ce_allocation_loss(

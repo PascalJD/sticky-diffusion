@@ -99,6 +99,7 @@ def elbo_eta1_loss(
     rb_weight: float = 1.0,
     prior_strength: float = 0.0,
     score_w_stop_gradient: bool = False,
+    rb_theta_stop_gradient: bool = False,
     eps: float = 1e-8,
 ) -> Tuple[Array, Metrics]:
     if anchor_log_w is None:
@@ -207,8 +208,17 @@ def elbo_eta1_loss(
     lam_hat_per_site = jnp.broadcast_to(lam_hat_per_site, p_theta_rb.shape)
 
     one_hot_x0 = jax.nn.one_hot(x0_idx, K, dtype=jnp.float32)
+    # rb_theta_stop_gradient (default False): stop-gradient P_theta in L_RB so
+    # the term contributes ZERO gradient to theta (the classifier then trains on
+    # the weighted-CE term only). P_theta depends only on theta (not log_w), so
+    # this leaves L_RB's log_w gradient — via lam_hat and one_minus_S — exactly
+    # unchanged, and the loss VALUE is unchanged (stop_gradient is identity in
+    # the forward pass). When False the path is bit-identical to before.
+    p_theta_rb_for_rb = (
+        jax.lax.stop_gradient(p_theta_rb) if rb_theta_stop_gradient else p_theta_rb
+    )
     rb_inner = jnp.sum(
-        lam_hat_per_site * (p_theta_rb - one_hot_x0), axis=-1
+        lam_hat_per_site * (p_theta_rb_for_rb - one_hot_x0), axis=-1
     )  # (B, *site)
     rb_per_site = mask_f * one_minus_S * rb_inner
     rb_num = jnp.sum(rb_per_site)

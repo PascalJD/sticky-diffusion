@@ -1,0 +1,42 @@
+# CE-clean: the denoising classifier (theta) trains on weighted-CE ONLY
+# (L_RB's theta-gradient detached via rb_theta_stop_gradient), while the hazard
+# w is LEARNED from CE+RB (score_w_stop_gradient=true keeps L_score out of the
+# w-gradient). Expected: FIXED-level generation AND the frequency-ordered
+# schedule. The two flags are ORTHOGONAL and CE-clean needs BOTH.
+#
+# Minimal diff from sjd_text8_ce.yaml (the CE condition, score_w_stop_gradient
+# already true):
+#   - forward.hazard_weighting.rb_theta_stop_gradient: true  (theta = CE only)
+# w stays learned (log_w_lr_multiplier=0.1).
+defaults:
+  - /dataset: text8_char_128
+  - /model/sjd@model: sjd_text8
+  - /optim: adamw_text8
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha              # linear survival S(t)=1-t
+  - /forward/hazard_weighting: learned_e2e   # elbo_eta1, learnable log_w
+  - /forward/jump: vp_matched                # eta=1.0
+  - /forward/blur: none                       # W = I, required by elbo_eta1
+  - /sampler/text8@sampler: sjd_text8
+  - /eval@_global_.eval: text8
+  - /training: sjd_text8
+  - _self_
+
+forward:
+  hazard:
+    p: 1.0
+  hazard_weighting:
+    rb_theta_stop_gradient: true              # classifier trains on weighted-CE only
+    score_w_stop_gradient: true               # w learns from CE+RB (score's w-grad off)
+    prior_strength: 0.0
+    clip: [-3.0, 3.0]
+
+training:
+  log_w_lr_multiplier: 0.1                    # w is learned
+
+task:
+  name: text8_sjd
+
+wandb:
+  run_name: sjd_text8_ce_clean

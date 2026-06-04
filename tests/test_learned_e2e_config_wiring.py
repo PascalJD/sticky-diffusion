@@ -50,6 +50,10 @@ def test_dhm_kwargs_dispatch_e2e_objective():
     # preserves the v3 ELBO behavior (current published objective). The
     # CE-only condition flips it to True via an experiment-level override.
     assert kwargs["score_w_stop_gradient"] is False
+    # Default for the L_RB theta-gradient routing flag: False preserves the
+    # full-ELBO theta path (theta trains on L_CE + L_RB). frozenw-clean /
+    # CE-clean flip it to True via an experiment-level override.
+    assert kwargs["rb_theta_stop_gradient"] is False
     GlobalHydra.instance().clear()
 
 

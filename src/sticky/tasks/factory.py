@@ -149,6 +149,14 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
     score_w_stop_gradient = bool(
         getattr(hw, "score_w_stop_gradient", False)
     ) if hw is not None else False
+    # rb_theta_stop_gradient: when True, L_RB's classifier (theta) gradient is
+    # stop-gradiented so theta trains on the weighted-CE term ONLY (matching
+    # what the FIXED/ce objective trains theta on), while L_RB still feeds the
+    # log_w (hazard) gradient. Gradient-routing only; loss value unchanged.
+    # Default False preserves the v3 ELBO behavior.
+    rb_theta_stop_gradient = bool(
+        getattr(hw, "rb_theta_stop_gradient", False)
+    ) if hw is not None else False
     return {
         "log_state_dependency": bool(cfg.training.get("log_state_dependency", True)),
         "state_dep_log_ratio_clip": float(
@@ -173,6 +181,7 @@ def _sjd_dhm_kwargs(cfg: DictConfig) -> dict[str, Any]:
         "rb_share_sample": rb_share_sample,
         "prior_strength": prior_strength,
         "score_w_stop_gradient": score_w_stop_gradient,
+        "rb_theta_stop_gradient": rb_theta_stop_gradient,
     }
 
 

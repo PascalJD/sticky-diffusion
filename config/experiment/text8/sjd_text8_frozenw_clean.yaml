@@ -1,0 +1,45 @@
+# frozenw-clean: the denoising classifier (theta) trains on weighted-CE ONLY
+# (L_RB's theta-gradient detached via rb_theta_stop_gradient), with the hazard
+# w FROZEN at 1 (log_w_lr_multiplier=0). This isolates "does elbo_eta1's
+# weighted-CE term alone reproduce FIXED-level generation?" — if it does, the
+# L_RB-in-theta gradient was the collapse driver.
+#
+# Minimal diff from sjd_text8_elbo.yaml (the ELBO condition):
+#   - forward.hazard_weighting.rb_theta_stop_gradient: true  (theta = CE only)
+#   - training.log_w_lr_multiplier: 0.0                       (w frozen = 1)
+# score_w_stop_gradient stays false but is irrelevant once w is frozen (it gates
+# only L_score's log_w gradient, and there is no w update). Everything else
+# (forward stack, model with learnable anchors, optimizer, sampler, eval) is
+# identical to ELBO/FIXED.
+defaults:
+  - /dataset: text8_char_128
+  - /model/sjd@model: sjd_text8
+  - /optim: adamw_text8
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha              # linear survival S(t)=1-t
+  - /forward/hazard_weighting: learned_e2e   # elbo_eta1 (theta path detached below)
+  - /forward/jump: vp_matched                # eta=1.0
+  - /forward/blur: none                       # W = I, required by elbo_eta1
+  - /sampler/text8@sampler: sjd_text8
+  - /eval@_global_.eval: text8
+  - /training: sjd_text8
+  - _self_
+
+forward:
+  hazard:
+    p: 1.0
+  hazard_weighting:
+    rb_theta_stop_gradient: true              # classifier trains on weighted-CE only
+    score_w_stop_gradient: false              # irrelevant once w is frozen
+    prior_strength: 0.0
+    clip: [-3.0, 3.0]
+
+training:
+  log_w_lr_multiplier: 0.0                    # FREEZE w at init (w == 1); theta still trains
+
+task:
+  name: text8_sjd
+
+wandb:
+  run_name: sjd_text8_frozenw_clean

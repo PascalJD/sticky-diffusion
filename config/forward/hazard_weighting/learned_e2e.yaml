@@ -36,6 +36,12 @@ rb_share_sample: true
 # (For the FIXED condition, use hazard_weighting=none; no log_w is learned
 # and this flag is irrelevant.)
 score_w_stop_gradient: false
+# rb_theta_stop_gradient: when True, L_RB's classifier (theta) gradient is
+# stop-gradiented so the classifier trains on the weighted-CE term ONLY
+# (RB + score detached from theta), while L_RB still feeds the log_w gradient
+# (w can still learn the schedule). Gradient-routing only; the loss VALUE is
+# unchanged. Default false = full v3 ELBO theta-training.
+rb_theta_stop_gradient: false
 # prior_strength: lambda_Omega for Omega(w) = lambda_Omega * Sum_a (w(a) - 1)^2.
 # WEAK default (0.01) because the hazard is likelihood-unidentified at the
 # optimum: a heavy prior pins log_w = 0 even when data wants something else

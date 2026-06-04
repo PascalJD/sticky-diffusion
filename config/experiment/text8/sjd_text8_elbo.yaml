@@ -1,0 +1,49 @@
+# Text8 SJD with end-to-end LEARNABLE hazard, full ELBO at eta=1 (v3
+# alg:sjd-e2e-eta1). The ELBO condition of the hazard-learning ablation.
+#
+# MINIMAL DIFF from sjd_text8_fixed.yaml — the only cross-condition change is
+# the hazard-learning setting (FIXED hazard_weighting=none -> learned_e2e here),
+# plus the Layer-A log_w controls. Forward stack, model (learnable anchors, as
+# in FIXED), optimizer, sampler, and the text8 eval (valid-word logging) are
+# IDENTICAL to FIXED. eta=1.0 and blur=none (W=I) are already the FIXED text8
+# defaults, so the elbo_eta1 guardrail is satisfied with no extra change.
+#
+# Cross-condition map (only these differ):
+#   sjd_text8_fixed.yaml : hazard_weighting=none                         (FIXED, w=1, CE)
+#   sjd_text8_elbo.yaml  : learned_e2e + score_w_stop_gradient=false     (ELBO)
+#   sjd_text8_ce.yaml    : learned_e2e + score_w_stop_gradient=true      (CE)
+#
+# The fixed-sampler flags (FIX 1 + FIX 2) are passed identically to all three
+# conditions at launch (experiment.sampler.symmetric_temperature=true,
+# experiment.sampler.ancestral_final_commit=true), so the sampler is shared.
+defaults:
+  - /dataset: text8_char_128
+  - /model/sjd@model: sjd_text8
+  - /optim: adamw_text8
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha              # linear survival S(t)=1-t
+  - /forward/hazard_weighting: learned_e2e   # ELBO at eta=1, learnable log_w
+  - /forward/jump: vp_matched                # eta=1.0 (VP-matched)
+  - /forward/blur: none                       # W = I, required by elbo_eta1
+  - /sampler/text8@sampler: sjd_text8
+  - /eval@_global_.eval: text8
+  - /training: sjd_text8
+  - _self_
+
+forward:
+  hazard:
+    p: 1.0                                    # pin linear survival explicitly (as FIXED)
+  hazard_weighting:
+    score_w_stop_gradient: false              # ELBO: full L_score differentiable w.r.t. log_w
+    prior_strength: 0.0                       # Layer-A: no Omega prior (clamp is the safety bound)
+    clip: [-3.0, 3.0]                         # Layer-A: per-element log_w clamp (w in ~[0.05, 20])
+
+training:
+  log_w_lr_multiplier: 0.1                    # ~lr/10 for the hazard parameter group
+
+task:
+  name: text8_sjd
+
+wandb:
+  run_name: sjd_text8_elbo
