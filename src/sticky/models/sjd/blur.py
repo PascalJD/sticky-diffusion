@@ -167,12 +167,25 @@ def sudoku_constraint_kernel_convex(
     Raises:
         ValueError: if sigma <= 0.
         ValueError: unless 0.0 <= rho <= 1.0.
+        ValueError: if none of include_row, include_col, include_box is True
+            (an empty-support kernel is meaningless; softmax over all-(-inf)
+            logits produces NaN which the cleanup silently zeroes, yielding a
+            sub-stochastic W = (1-rho)*I).
     """
     if sigma <= 0:
         raise ValueError(f"sigma must be positive, got {sigma}")
     if not (0.0 <= rho <= 1.0):
         raise ValueError(f"rho must be in [0.0, 1.0], got {rho}")
+    if not (include_row or include_col or include_box):
+        raise ValueError(
+            "at least one of include_row, include_col, include_box must be True; "
+            "an empty-support convex kernel is meaningless"
+        )
 
+    # KEEP-IN-SYNC with sudoku_constraint_kernel: the neighbor-mask construction
+    # below (same_row / same_col / box_exclusive, include_* dispatch) is
+    # intentionally duplicated from that function.  If the support logic there
+    # changes, update this function to match.
     N = 81
     idx = jnp.arange(N)
     rows = idx // 9
@@ -204,8 +217,9 @@ def sudoku_constraint_kernel_convex(
     logits = jnp.where(neighbor, logits, -jnp.inf)
 
     B = jax.nn.softmax(logits, axis=-1)
-    # Zero out off-support entries exactly (softmax over all-(-inf) rows can
-    # leave subnormal residue; explicit zero is cleaner).
+    # Off-support entries after softmax are exactly 0 (they received -inf
+    # logits and are never selected); the where-cleanup enforces exact-zero
+    # hygiene in case of any platform-specific floating-point edge cases.
     B = jnp.where(neighbor, B, jnp.zeros_like(B))
 
     W = (1.0 - rho) * jnp.eye(N, dtype=dtype) + rho * B
@@ -283,7 +297,8 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
         )
 
     sigma = float(blur_cfg.get("sigma", 1.0))
-    normalization = str(blur_cfg.get("normalization", "additive"))
+    raw_norm = blur_cfg.get("normalization", "additive")
+    normalization = "additive" if raw_norm is None else str(raw_norm)
 
     if normalization == "additive":
         if kind == "gaussian_1d":

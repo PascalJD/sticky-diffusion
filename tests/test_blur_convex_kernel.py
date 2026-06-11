@@ -6,6 +6,8 @@ Validates:
   T2 - rho=0 exact identity (bit-exact, not just allclose).
   T3 - include_* flags correctly trim the support.
   T4 - legacy path bit-exactness + error cases.
+  T5 - DictConfig round-trip via the yaml file.
+  T6 - empty-support guard (all include_* False raises ValueError).
 
 CPU-only, no GPU required.
 """
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from omegaconf import OmegaConf
 
 from sticky.models.sjd.blur import (
     build_blur_kernel,
@@ -246,7 +249,7 @@ def test_convex_on_gaussian_1d_raises():
         "normalization": "convex",
         "rho": 0.5,
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="gaussian_1d"):
         build_blur_kernel(cfg, seq_len=16)
 
 
@@ -268,3 +271,33 @@ def test_sigma_nonpositive_raises():
         sudoku_constraint_kernel_convex(sigma=0.0, rho=0.5)
     with pytest.raises(ValueError, match="sigma must be positive"):
         sudoku_constraint_kernel_convex(sigma=-1.0, rho=0.5)
+
+
+# ---------------------------------------------------------------------------
+# T5 — DictConfig round-trip via the yaml file
+# ---------------------------------------------------------------------------
+
+def test_dictconfig_roundtrip_yaml():
+    """OmegaConf.load the convex yaml, pass to build_blur_kernel, assert result
+    equals eye(81, float32) exactly.  The yaml has rho=0.0, so W=(1-0)*I+0*B=I."""
+    cfg = OmegaConf.load(
+        "/Users/PascalJutras/Documents/Repos/sticky-diffusion"
+        "/config/forward/blur/sudoku_constraint_convex.yaml"
+    )
+    W = np.asarray(build_blur_kernel(cfg))
+    assert np.array_equal(W, np.eye(81, dtype=np.float32)), (
+        "DictConfig round-trip (rho=0.0): result is not bit-exactly eye(81, float32)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T6 — empty-support guard
+# ---------------------------------------------------------------------------
+
+def test_all_include_false_raises():
+    """include_row=False, include_col=False, include_box=False must raise ValueError."""
+    with pytest.raises(ValueError, match="at least one of include_row"):
+        sudoku_constraint_kernel_convex(
+            sigma=1.5, rho=0.5,
+            include_row=False, include_col=False, include_box=False,
+        )
