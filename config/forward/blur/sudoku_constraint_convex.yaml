@@ -1,0 +1,8 @@
+enabled: true
+kind: sudoku_constraint
+normalization: convex     # NEW; key absent => legacy additive, bit-exact
+rho: 0.0                  # NEW; blend strength, the sweep knob
+sigma: 1.5                # shape parameter, frozen for the sweep
+include_row: true
+include_col: true
+include_box: true

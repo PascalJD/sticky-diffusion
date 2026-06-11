@@ -9,6 +9,7 @@ the un-sticking variance.
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
+    sudoku_constraint_kernel_convex(sigma, rho, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
     build_blur_kernel(blur_cfg, seq_len=None)
 """
@@ -22,6 +23,7 @@ from jax import Array
 __all__ = [
     "gaussian_position_kernel",
     "sudoku_constraint_kernel",
+    "sudoku_constraint_kernel_convex",
     "blur_means",
     "build_blur_kernel",
 ]
@@ -134,6 +136,82 @@ def sudoku_constraint_kernel(
     return W.astype(dtype)
 
 
+def sudoku_constraint_kernel_convex(
+    sigma: float,
+    rho: float,
+    include_row: bool = True,
+    include_col: bool = True,
+    include_box: bool = True,
+    dtype=jnp.float32,
+) -> Array:
+    """Convex-blend constraint-graph kernel for the flat-81 Sudoku representation.
+
+    Returns W = (1 - rho) * I + rho * B, where B is a row-stochastic matrix
+    with B_ii = 0. B is constructed from the same constraint-neighbor support
+    as sudoku_constraint_kernel, but uses softmax (without diagonal rescaling):
+
+      Logits L[i, j] = -((r_i - r_j)^2 + (c_i - c_j)^2) / (2 sigma^2)
+      L[i, j] = -inf for non-neighbors AND for i == j (diagonal excluded).
+      B = softmax(L, axis=-1)   — row-stochastic, B_ii = 0.
+
+    The convex-blend parameter rho controls the interpolation:
+      - rho=0: W == I exactly (in IEEE float; 1*I + 0*B is bitwise identity).
+      - rho=1: W == B (pure peer-averaging, zero self-weight).
+      - Any rho in [0, 1]: rows of W sum to 1.
+
+    Cell indexing and constraint groups are identical to sudoku_constraint_kernel:
+      p = 9 * r + c, with groups row / col / box-exclusive (same 3x3 box AND
+      different row AND different column). include_row/_col/_box flags toggle
+      each group individually.
+
+    Raises:
+        ValueError: if sigma <= 0.
+        ValueError: unless 0.0 <= rho <= 1.0.
+    """
+    if sigma <= 0:
+        raise ValueError(f"sigma must be positive, got {sigma}")
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError(f"rho must be in [0.0, 1.0], got {rho}")
+
+    N = 81
+    idx = jnp.arange(N)
+    rows = idx // 9
+    cols = idx % 9
+    boxes = (rows // 3) * 3 + (cols // 3)
+
+    same_row = rows[:, None] == rows[None, :]
+    same_col = cols[:, None] == cols[None, :]
+    same_box = boxes[:, None] == boxes[None, :]
+    box_exclusive = same_box & ~same_row & ~same_col
+
+    neighbor = jnp.zeros((N, N), dtype=jnp.bool_)
+    if include_row:
+        neighbor = neighbor | same_row
+    if include_col:
+        neighbor = neighbor | same_col
+    if include_box:
+        neighbor = neighbor | box_exclusive
+
+    # Exclude the diagonal from the neighbor mask — B_ii must be 0.
+    eye_mask = jnp.eye(N, dtype=jnp.bool_)
+    neighbor = neighbor & ~eye_mask
+
+    dr = (rows[:, None] - rows[None, :]).astype(dtype)
+    dc = (cols[:, None] - cols[None, :]).astype(dtype)
+    dist_sq = dr * dr + dc * dc
+    logits = -dist_sq / (2.0 * sigma * sigma)
+    # Mask diagonal and non-neighbors to -inf before softmax.
+    logits = jnp.where(neighbor, logits, -jnp.inf)
+
+    B = jax.nn.softmax(logits, axis=-1)
+    # Zero out off-support entries exactly (softmax over all-(-inf) rows can
+    # leave subnormal residue; explicit zero is cleaner).
+    B = jnp.where(neighbor, B, jnp.zeros_like(B))
+
+    W = (1.0 - rho) * jnp.eye(N, dtype=dtype) + rho * B
+    return W.astype(dtype)
+
+
 def blur_means(
     e: Array,
     kernel: Array,
@@ -175,15 +253,24 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
         blur_cfg: a dict-like (DictConfig or plain dict). Must expose
             `.get("enabled", False)` and `.get("kind", None)`. When enabled,
             kind-specific keys are read (sigma, include_self, include_row,
-            include_col, include_box).
+            include_col, include_box, normalization, rho).
         seq_len: required for kind == "gaussian_1d"; ignored otherwise.
+
+    Normalization modes (key "normalization"; default "additive" when absent):
+        "additive"  — legacy rescaled kernel (W_ii=1, rows do NOT sum to 1).
+                      Bit-exact when the key is absent.
+        "convex"    — convex blend W=(1-rho)*I + rho*B; rows sum to 1.
+                      Only supported for kind="sudoku_constraint".
+                      Controlled by "rho" (float, default 0.0).
 
     Returns:
         None if blur_cfg is None or blur_cfg["enabled"] is False, else an
         (N, N) kernel array.
 
     Raises:
-        ValueError if seq_len is required but None, or if kind is unknown.
+        ValueError if seq_len is required but None, if kind is unknown, if
+        normalization is unknown, or if convex normalization is requested for
+        an unsupported kind.
     """
     if blur_cfg is None or not bool(blur_cfg.get("enabled", False)):
         return None
@@ -196,22 +283,41 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
         )
 
     sigma = float(blur_cfg.get("sigma", 1.0))
+    normalization = str(blur_cfg.get("normalization", "additive"))
 
-    if kind == "gaussian_1d":
-        if seq_len is None:
-            raise ValueError("gaussian_1d blur requires seq_len, got None")
-        if int(seq_len) < 1:
-            raise ValueError(f"gaussian_1d blur requires seq_len >= 1, got {seq_len}")
-        return gaussian_position_kernel(
-            seq_len=int(seq_len),
+    if normalization == "additive":
+        if kind == "gaussian_1d":
+            if seq_len is None:
+                raise ValueError("gaussian_1d blur requires seq_len, got None")
+            if int(seq_len) < 1:
+                raise ValueError(f"gaussian_1d blur requires seq_len >= 1, got {seq_len}")
+            return gaussian_position_kernel(
+                seq_len=int(seq_len),
+                sigma=sigma,
+                include_self=bool(blur_cfg.get("include_self", True)),
+            )
+        if kind == "sudoku_constraint":
+            return sudoku_constraint_kernel(
+                sigma=sigma,
+                include_row=bool(blur_cfg.get("include_row", True)),
+                include_col=bool(blur_cfg.get("include_col", True)),
+                include_box=bool(blur_cfg.get("include_box", True)),
+            )
+        raise ValueError(f"Unknown blur kind: {kind!r}")
+
+    if normalization == "convex":
+        if kind != "sudoku_constraint":
+            raise ValueError(
+                f"convex normalization is only implemented for the sudoku_constraint "
+                f"kernel; got kind={kind!r}"
+            )
+        rho = float(blur_cfg.get("rho", 0.0))
+        return sudoku_constraint_kernel_convex(
             sigma=sigma,
-            include_self=bool(blur_cfg.get("include_self", True)),
-        )
-    if kind == "sudoku_constraint":
-        return sudoku_constraint_kernel(
-            sigma=sigma,
+            rho=rho,
             include_row=bool(blur_cfg.get("include_row", True)),
             include_col=bool(blur_cfg.get("include_col", True)),
             include_box=bool(blur_cfg.get("include_box", True)),
         )
-    raise ValueError(f"Unknown blur kind: {kind!r}")
+
+    raise ValueError(f"Unknown blur normalization: {normalization!r}")
