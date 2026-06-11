@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from sticky.models.common.discrete_mixture import normalize_probs
 
 from .anchors import AnchorTable, clamp_known_state
+from .blur import blur_means
 from .plugin_intensity import plugin_hazard_and_allocation
 from .sampler import make_sampling_time_grid
 from .sdes import _expand_like, alpha_sigma
@@ -162,6 +163,21 @@ def _classifier_mean(
     return mu.reshape(probs.shape[:-1] + (anchor_table.d,))
 
 
+def blur_score_mean(
+    *,
+    probs_mean: Array,
+    committed_mask: Array,
+    committed_idx: Array,
+    a_table: Array,
+    kernel: Array,
+) -> Array:
+    """Ehat = committed one-hot anchors at committed sites else classifier mean; returns W @ Ehat."""
+    safe_idx = jnp.clip(committed_idx, 0, a_table.shape[0] - 1)
+    committed_vec = a_table[safe_idx]
+    e_hat = jnp.where(committed_mask[..., None], committed_vec, probs_mean)
+    return blur_means(e_hat, kernel)
+
+
 def _step_progress(*, t: Array, T: float) -> Array:
     return jnp.clip(1.0 - (jnp.asarray(t, dtype=jnp.float32) / jnp.asarray(float(T), dtype=jnp.float32)), 0.0, 1.0)
 
@@ -187,7 +203,20 @@ def conditional_generate(
     eta: float | None = None,
     return_diagnostics: bool = False,
     tau_grid_size: int = 32,
+    blur_score: bool = False,
 ) -> Array | tuple[Array, dict[str, Array]]:
+    """Policy-driven conditional board sampler.
+
+    blur_score: gated eval-time W-aware plug-in score (default OFF). When True
+        and the jump carries a blur kernel, the classifier mean feeding the
+        continuous score is replaced by W @ Ehat, where Ehat uses the committed
+        one-hot anchor at committed sites (clues included) and the classifier
+        softmax mean at uncommitted sites. This is exact ONLY at eta=1, so a
+        ValueError is raised for any other effective eta. Requires a blur
+        kernel attached to the jump; with blur_score=True and no kernel the
+        path is a no-op. OFF (the default) is the bit-exact legacy path: any
+        attached kernel is completely ignored.
+    """
     policy = normalize_policy_name(policy)
     known_tokens = jnp.asarray(known_tokens, dtype=jnp.int32)
     known_token_mask = jnp.asarray(known_token_mask, dtype=jnp.bool_)
@@ -201,6 +230,15 @@ def conditional_generate(
     shape = tuple(int(dim) for dim in known_tokens.shape[1:])
     d = int(anchors.d)
     jump_eff = replace(jump, eta=float(eta)) if eta is not None else jump
+    blur_kernel = getattr(jump, "blur_kernel", None)
+    use_blur_score = bool(blur_score) and (blur_kernel is not None)
+    if bool(blur_score):
+        eta_eff = float(jump_eff.eta)
+        if abs(eta_eff - 1.0) > 1e-9:
+            raise ValueError(
+                "blur_score=True requires eta=1: the W-aware plug-in score is "
+                f"exact only at eta=1, got effective eta={eta_eff}."
+            )
 
     known_idx = puzzle_digits_to_clean_indices(known_tokens, known_mask=known_token_mask)
     time_grid = make_sampling_time_grid(
@@ -247,6 +285,14 @@ def conditional_generate(
         logits_score = _predict_logits(model=model, params=params, y=y, t_img=t_img)
         probs_score = normalize_probs(jax.nn.softmax(logits_score, axis=-1))
         mu = _classifier_mean(probs=probs_score, anchor_table=anchors)
+        if use_blur_score:
+            mu = blur_score_mean(
+                probs_mean=mu,
+                committed_mask=committed_mask,
+                committed_idx=committed_idx,
+                a_table=anchors.table_float,
+                kernel=blur_kernel,
+            )
 
         alpha_t, sigma_t = alpha_sigma(beta, t_img)
         alpha_t = alpha_t[:, None, None]
