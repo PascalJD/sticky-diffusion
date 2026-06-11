@@ -32,9 +32,10 @@ The support masks are built here in numpy directly from rows/cols/boxes,
 independently of the repo's kernel-construction code — that independence is
 the point. Only the (c) kernel comes from the repo. CPU-only, all RNGs seeded.
 
-Measured magnitudes (float64, d=7, 8 boards): (a) max abs err ~3e-16;
-(b) max abs err ~6e-16; affine-fit residual RMS: B16 ~4e-16,
-B20 ~6.3e-2, Gaussian ~1.2e-1.
+Measured magnitudes (float64, d=7, 8 boards): (a) max abs err ~5e-16;
+(b) max abs err ~5e-16; affine-fit residual RMS: B16 ~1.6e-15,
+B20 ~8.2e-2, Gaussian ~1.61e-1. All values are deterministic given
+the fixed seeds; any drift indicates a code change.
 """
 from __future__ import annotations
 
@@ -223,7 +224,7 @@ def test_uniform_rowcol_kernel_is_affine_noop(seed):
     board = random_valid_board(seed)
     E = _embeddings(board, a_table)
     mu = B16 @ E
-    assert np.allclose(mu, S / 8.0 - E / 8.0, atol=1e-5)
+    assert np.allclose(mu, S / 8.0 - E / 8.0, atol=1e-12, rtol=0)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +241,7 @@ def test_uniform_full_kernel_closed_form(seed):
     E = _embeddings(board, a_table)
     R, C = _box_line_sums(E)
     mu = B20 @ E
-    assert np.allclose(mu, (3.0 * S - E - R - C) / 20.0, atol=1e-5)
+    assert np.allclose(mu, (3.0 * S - E - R - C) / 20.0, atol=1e-12, rtol=0)
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +254,8 @@ def test_gaussian_kernel_not_reducible_to_affine():
     leaves a residual bounded away from zero. Paired control inside the same
     test: the identical fit on B16 is exact (RMS < 1e-6).
 
-    Measured (float64, d=7, 8 boards): Gaussian RMS ~1.2e-1, B16 RMS ~4e-16.
+    Measured (float64, d=7, 8 boards): Gaussian RMS ~1.61e-1, B16 RMS ~1.6e-15.
+    Values are deterministic given the fixed seeds; drift means the code changed.
     """
     a_table = _a_table()
     boards = [random_valid_board(s) for s in BOARD_SEEDS]
@@ -277,7 +279,8 @@ def test_b20_transmits_exactly_the_box_line_sums():
     (alpha*S + beta*E) leaves a residual > 1e-3, while the closed form
     including R and C is exact (~0) on every board.
 
-    Measured (float64, d=7, 8 boards): affine-only RMS ~6.3e-2.
+    Measured (float64, d=7, 8 boards): affine-only RMS ~8.2e-2.
+    Values are deterministic given the fixed seeds; drift means the code changed.
     """
     a_table = _a_table()
     S = a_table.sum(axis=0)
@@ -299,3 +302,35 @@ def test_b20_transmits_exactly_the_box_line_sums():
         assert resid_rms < 1e-10, (
             f"B20 closed-form residual RMS {resid_rms:.3e} should be ~0"
         )
+
+
+# ---------------------------------------------------------------------------
+# (d) Gaussian mu differs between boards even at matching-digit cells
+# ---------------------------------------------------------------------------
+
+def test_gaussian_mu_is_board_dependent():
+    """Gaussian mu vectors differ between boards even when two boards share the
+    same digit at the same cell — proving board dependence with no fit-family
+    assumption, which closes the affine-family loophole exploited in (c).
+
+    We find at least one cell where board0 and board1 have the SAME digit, then
+    assert the Gaussian mu vectors at that cell have norm-of-difference > 1e-3.
+    If the kernel were purely a function of the cell's own digit, those vectors
+    would be identical; the non-zero gap proves the kernel uses neighbourhood
+    context that differs between boards.
+    """
+    a_table = _a_table()
+    board0 = random_valid_board(0)
+    board1 = random_valid_board(1)
+    B_gauss = np.asarray(sudoku_constraint_kernel_convex(sigma=1.5, rho=1.0))
+    mu0 = B_gauss @ _embeddings(board0, a_table)  # (81, d)
+    mu1 = B_gauss @ _embeddings(board1, a_table)
+
+    same_digit_cells = np.where(board0.ravel() == board1.ravel())[0]
+    assert len(same_digit_cells) > 0, "seeds 0 and 1 share no matching-digit cell"
+
+    diffs = np.linalg.norm(mu0[same_digit_cells] - mu1[same_digit_cells], axis=1)
+    assert np.any(diffs > 1e-3), (
+        f"Gaussian mu vectors at matching-digit cells are all within 1e-3; "
+        f"max diff = {diffs.max():.3e}. Kernel may have lost board dependence."
+    )
