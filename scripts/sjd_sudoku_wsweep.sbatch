@@ -19,10 +19,13 @@
 # SUBMIT FULL SWEEP:
 #   sbatch --array=0-15 scripts/sjd_sudoku_wsweep.sbatch
 #
-# OVERRIDEABLE ENV VARS (set before sbatch or in your shell):
-#   SLURM_ACCOUNT   (default: ruqiz)
-#   SLURM_PARTITION (default: ai)
-#   SLURM_GPUS      (default: gpu:h100:2)
+# VENUE / RESOURCE OVERRIDES (use sbatch CLI flags — they take precedence over
+#   in-file #SBATCH directives; env vars like SLURM_ACCOUNT do NOT affect them):
+#   sbatch -A <account> -p <partition> --gres=gpu:h100:2 --array=0-15 scripts/sjd_sudoku_wsweep.sbatch
+#
+#   Single-GPU variant (--gres=gpu:h100:1, ~2x per-run wallclock):
+#   sbatch -A <account> -p <partition> --gres=gpu:h100:1 --array=0-15 scripts/sjd_sudoku_wsweep.sbatch
+#   16 single-GPU jobs often clear the queue faster than 16 dual-GPU jobs.
 #
 # ---------------------------------------------------------------------------
 # CALIBRATION-FIRST PROTOCOL
@@ -67,13 +70,6 @@
 #SBATCH --error=/scratch/gautschi/pjutrasd/sticky-diffusion/slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# Overrideable venue/resource knobs
-# ---------------------------------------------------------------------------
-SLURM_ACCOUNT="${SLURM_ACCOUNT:-ruqiz}"
-SLURM_PARTITION="${SLURM_PARTITION:-ai}"
-SLURM_GPUS="${SLURM_GPUS:-gpu:h100:2}"
 
 # ---------------------------------------------------------------------------
 # Path / env knobs
