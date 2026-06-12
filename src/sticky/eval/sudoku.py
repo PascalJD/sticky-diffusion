@@ -515,10 +515,11 @@ def _evaluate_board_batch_counts(
     board_exact = np.all(pred_board == solution_board, axis=1)
     board_valid = np.all(row_valid, axis=1) & np.all(col_valid, axis=1) & np.all(box_valid, axis=1)
     solve = board_exact & clue_consistent & board_valid
+    unknown_cell_correct = (pred_board == solution_board) & unknown_mask
 
-    return {
+    counts = {
         "num_examples": int(pred_board.shape[0]),
-        "unknown_cell_correct": int(np.sum((pred_board == solution_board) & unknown_mask)),
+        "unknown_cell_correct": int(np.sum(unknown_cell_correct)),
         "unknown_cell_total": int(np.sum(unknown_mask)),
         "full_cell_correct": int(np.sum(pred_board == solution_board)),
         "full_cell_total": int(pred_board.size),
@@ -532,6 +533,25 @@ def _evaluate_board_batch_counts(
         "box_total": int(box_valid.size),
         "clue_consistent_total": int(np.sum(clue_consistent)),
     }
+
+    # Clue-count-stratified buckets over the test split's clue distribution
+    # (min 20 / max 29; 24 alone holds 36.1%): lo <= 23 (24.8%), mid == 24
+    # (36.1%), hi >= 25 (39.1%). lo/hi are open-ended so hypothetical boards
+    # outside [20, 29] still land in a bucket and the partition stays exact.
+    clue_counts = clue_mask.sum(axis=1)
+    bucket_masks = (
+        ("lo", clue_counts <= 23),
+        ("mid", clue_counts == 24),
+        ("hi", clue_counts >= 25),
+    )
+    for bucket, bucket_mask in bucket_masks:
+        counts[f"num_examples_clues_{bucket}"] = int(np.sum(bucket_mask))
+        counts[f"board_exact_clues_{bucket}"] = int(np.sum(board_exact[bucket_mask]))
+        counts[f"unknown_cell_correct_clues_{bucket}"] = int(
+            np.sum(unknown_cell_correct[bucket_mask])
+        )
+        counts[f"unknown_cell_total_clues_{bucket}"] = int(np.sum(unknown_mask[bucket_mask]))
+    return counts
 
 
 def _base_totals() -> dict[str, float]:
@@ -550,6 +570,18 @@ def _base_totals() -> dict[str, float]:
         "box_valid_total": 0,
         "box_total": 0,
         "clue_consistent_total": 0,
+        "num_examples_clues_lo": 0,
+        "board_exact_clues_lo": 0,
+        "unknown_cell_correct_clues_lo": 0,
+        "unknown_cell_total_clues_lo": 0,
+        "num_examples_clues_mid": 0,
+        "board_exact_clues_mid": 0,
+        "unknown_cell_correct_clues_mid": 0,
+        "unknown_cell_total_clues_mid": 0,
+        "num_examples_clues_hi": 0,
+        "board_exact_clues_hi": 0,
+        "unknown_cell_correct_clues_hi": 0,
+        "unknown_cell_total_clues_hi": 0,
         "num_batches": 0,
         "example_step_count": 0.0,
         "masked_unknown_total_across_steps": 0.0,
@@ -596,6 +628,16 @@ def _finalize_metrics(
         f"{metric_prefix}/full_cell_acc": full_cell_acc,
         f"{metric_prefix}/board_acc_exact": board_acc_exact,
         f"{metric_prefix}/board_acc": board_acc_exact,
+        # Clue-count-stratified accuracies (lo <= 23, mid == 24, hi >= 25 clues).
+        f"{metric_prefix}/board_acc_exact_clues_lo": float(_safe_ratio(totals["board_exact_clues_lo"], totals["num_examples_clues_lo"])),
+        f"{metric_prefix}/board_acc_exact_clues_mid": float(_safe_ratio(totals["board_exact_clues_mid"], totals["num_examples_clues_mid"])),
+        f"{metric_prefix}/board_acc_exact_clues_hi": float(_safe_ratio(totals["board_exact_clues_hi"], totals["num_examples_clues_hi"])),
+        f"{metric_prefix}/cell_acc_unknown_clues_lo": float(_safe_ratio(totals["unknown_cell_correct_clues_lo"], totals["unknown_cell_total_clues_lo"])),
+        f"{metric_prefix}/cell_acc_unknown_clues_mid": float(_safe_ratio(totals["unknown_cell_correct_clues_mid"], totals["unknown_cell_total_clues_mid"])),
+        f"{metric_prefix}/cell_acc_unknown_clues_hi": float(_safe_ratio(totals["unknown_cell_correct_clues_hi"], totals["unknown_cell_total_clues_hi"])),
+        f"{metric_prefix}/num_examples_clues_lo": float(totals["num_examples_clues_lo"]),
+        f"{metric_prefix}/num_examples_clues_mid": float(totals["num_examples_clues_mid"]),
+        f"{metric_prefix}/num_examples_clues_hi": float(totals["num_examples_clues_hi"]),
         f"{metric_prefix}/row_valid_fraction": float(_safe_ratio(totals["row_valid_total"], totals["row_total"])),
         f"{metric_prefix}/col_valid_fraction": float(_safe_ratio(totals["col_valid_total"], totals["col_total"])),
         f"{metric_prefix}/box_valid_fraction": float(_safe_ratio(totals["box_valid_total"], totals["box_total"])),
@@ -715,6 +757,10 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         "kind": spec.get("kind", "sampler"),
         "policy": spec.get("policy"),
         "eta": spec.get("eta"),
+        # Effective state (requested AND a blur kernel was attached), recorded
+        # by build_sudoku_eval_logger — NOT the requested `blur_score` flag.
+        # Absent for sampler-kind specs (None -> blank CSV cell).
+        "blur_score": spec.get("blur_score_effective"),
         "n_steps": metrics.get(f"{prefix}/n_steps"),
         "nfe_total": sampling_nfe_total,
         "solve_rate": metrics.get(f"{prefix}/solve_rate"),
@@ -723,6 +769,15 @@ def _sjd_run_row(spec: dict[str, Any], metrics: dict[str, float]) -> dict[str, A
         "col_valid_fraction": metrics.get(f"{prefix}/col_valid_fraction"),
         "box_valid_fraction": metrics.get(f"{prefix}/box_valid_fraction"),
         "board_acc_exact": metrics.get(f"{prefix}/board_acc_exact"),
+        "board_acc_exact_clues_lo": metrics.get(f"{prefix}/board_acc_exact_clues_lo"),
+        "board_acc_exact_clues_mid": metrics.get(f"{prefix}/board_acc_exact_clues_mid"),
+        "board_acc_exact_clues_hi": metrics.get(f"{prefix}/board_acc_exact_clues_hi"),
+        "cell_acc_unknown_clues_lo": metrics.get(f"{prefix}/cell_acc_unknown_clues_lo"),
+        "cell_acc_unknown_clues_mid": metrics.get(f"{prefix}/cell_acc_unknown_clues_mid"),
+        "cell_acc_unknown_clues_hi": metrics.get(f"{prefix}/cell_acc_unknown_clues_hi"),
+        "num_examples_clues_lo": metrics.get(f"{prefix}/num_examples_clues_lo"),
+        "num_examples_clues_mid": metrics.get(f"{prefix}/num_examples_clues_mid"),
+        "num_examples_clues_hi": metrics.get(f"{prefix}/num_examples_clues_hi"),
         "clue_consistency_fraction": metrics.get(f"{prefix}/clue_consistency_fraction"),
         "full_cell_acc": metrics.get(f"{prefix}/full_cell_acc"),
         "avg_commits_per_step": metrics.get(f"{prefix}/avg_commits_per_step"),
@@ -944,8 +999,17 @@ def build_sudoku_eval_logger(
 
         for spec in sampler_specs:
             if spec["kind"] == "sampler":
+                # blur_score is unsupported on the sampler path (rejected at
+                # spec resolution); blur_score_effective stays absent so the
+                # CSV `blur_score` column is blank for sampler-kind runs.
                 sampler_eval_fns[spec["label"]] = _build_sjd_sampler_eval_fn(spec)
             else:
+                # Effective state: what the W-aware score actually does at
+                # sampling time (requested AND a kernel is attached), not what
+                # the spec requested. Consumed by `_sjd_run_row` (CSV column).
+                spec["blur_score_effective"] = bool(spec.get("blur_score", False)) and (
+                    getattr(task.forward.jump, "blur_kernel", None) is not None
+                )
                 if (
                     bool(spec.get("blur_score", False))
                     and getattr(task.forward.jump, "blur_kernel", None) is None
