@@ -13,9 +13,13 @@ CPU-only, no GPU required.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from omegaconf import OmegaConf
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from sticky.models.sjd.blur import (
     build_blur_kernel,
@@ -281,8 +285,7 @@ def test_dictconfig_roundtrip_yaml():
     """OmegaConf.load the convex yaml, pass to build_blur_kernel, assert result
     equals eye(81, float32) exactly.  The yaml has rho=0.0, so W=(1-0)*I+0*B=I."""
     cfg = OmegaConf.load(
-        "/Users/PascalJutras/Documents/Repos/sticky-diffusion"
-        "/config/forward/blur/sudoku_constraint_convex.yaml"
+        REPO_ROOT / "config" / "forward" / "blur" / "sudoku_constraint_convex.yaml"
     )
     W = np.asarray(build_blur_kernel(cfg))
     assert np.array_equal(W, np.eye(81, dtype=np.float32)), (
