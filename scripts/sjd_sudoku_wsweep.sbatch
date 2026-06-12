@@ -27,6 +27,21 @@
 #   sbatch -A <account> -p <partition> --gres=gpu:h100:1 --array=0-15 scripts/sjd_sudoku_wsweep.sbatch
 #   16 single-GPU jobs often clear the queue faster than 16 dual-GPU jobs.
 #
+#   NOTE: --output / --error paths below are Gautschi-specific
+#   (/scratch/gautschi/…/slurm_logs/). On other venues you MUST override them
+#   with -o/-e CLI flags, or create the equivalent directory first.
+#
+# ---------------------------------------------------------------------------
+# PRE-SUBMISSION CHECKLIST
+#   1. Stage data (see DATA STAGING section below).
+#   2. Create the SLURM log directory — SLURM will NOT create it automatically;
+#      every task will fail silently with no log if the directory is missing:
+#        mkdir -p <scratch>/slurm_logs
+#      On Gautschi the default path is:
+#        mkdir -p /scratch/gautschi/pjutrasd/sticky-diffusion/slurm_logs
+#   3. Run a calibration arm first (index 0) to confirm steps/sec and plateau.
+# ---------------------------------------------------------------------------
+#
 # ---------------------------------------------------------------------------
 # CALIBRATION-FIRST PROTOCOL
 #   Launch index 0 (rho=0.0, seed=0) alone:
@@ -39,14 +54,32 @@
 #                     form will error; set via EXTRA_OVERRIDES below)
 #     - Eval cost:    eval.sudoku_num_batches=<M>
 #                     experiment.training.eval_every_steps=<K>
+#   Check that the calibration run's steps/sec implies the full step budget
+#   fits within --time; there is NO resume path on TIMEOUT.
 #   Then submit the remaining arms:
 #     sbatch --array=1-15 scripts/sjd_sudoku_wsweep.sbatch
 #
-# DATA STAGING (run once before any submission — 16 concurrent pulls will fail):
+# ---------------------------------------------------------------------------
+# NO-REQUEUE WARNING
+#   Arms are NOT resumable. A requeued or restarted arm reuses hydra.run.dir,
+#   restarts from step 0, and crashes at the first periodic checkpoint
+#   (overwrite=False). Wipe or rename RUN_DIR before resubmitting an arm.
+#
+# DATA STAGING (run once before any submission):
 #   python tools/prepare_sudoku_data.py
+#   Concurrent pulls are unreliable (best-effort advisory lock on Lustre);
+#   stage once first.
+#   Verify staged files (resolved path on Gautschi when $SCRATCH is set;
+#   see src/sticky/data/sudoku/paths.py — resolve_data_root() uses
+#   $SCRATCH/sticky-diffusion/data/sudoku/ when $SCRATCH is set):
+#     sha256sum \
+#       /scratch/gautschi/pjutrasd/sticky-diffusion/data/sudoku/Sudoku-test-data.npy \
+#       /scratch/gautschi/pjutrasd/sticky-diffusion/data/sudoku/Sudoku-train-data.npy
 #   Expected sha256:
-#     test  13800f8c9675dfc840afa5029e1c5b1ce831d9b4c16ccd39a4acbaa1b7872c58
-#     train 82eaba71daa9d446cc125f587531b6d94c82ef9f2b13fdd16002f27086f84000
+#     13800f8c9675dfc840afa5029e1c5b1ce831d9b4c16ccd39a4acbaa1b7872c58  Sudoku-test-data.npy
+#     82eaba71daa9d446cc125f587531b6d94c82ef9f2b13fdd16002f27086f84000  Sudoku-train-data.npy
+#   (On clusters without $SCRATCH the loader falls back to repo-relative
+#    data/sudoku/ resolved against the original cwd at import time.)
 #
 # PRECISION NOTE
 #   The rho=0 arm's W=I einsum is bitwise-identical to no-blur on CPU and at
@@ -64,8 +97,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=28
 #SBATCH --gres=gpu:h100:2
+# Check calibration steps/sec: full step budget MUST fit within this limit;
+# there is no resume path on TIMEOUT.
 #SBATCH --time=6:00:00
 #SBATCH --array=0-15
+#SBATCH --no-requeue
 #SBATCH --output=/scratch/gautschi/pjutrasd/sticky-diffusion/slurm_logs/%x-%A_%a.out
 #SBATCH --error=/scratch/gautschi/pjutrasd/sticky-diffusion/slurm_logs/%x-%A_%a.err
 
@@ -113,7 +149,35 @@ NAME_TABLE=(
 # ---------------------------------------------------------------------------
 # Resolve this task's parameters
 # ---------------------------------------------------------------------------
-IDX="${SLURM_ARRAY_TASK_ID:-0}"
+
+# Assert all four lookup tables have equal lengths.
+_N_RHO=${#RHO_TABLE[@]}
+_N_SEED=${#SEED_TABLE[@]}
+_N_LEARN=${#LEARN_TABLE[@]}
+_N_NAME=${#NAME_TABLE[@]}
+if [ "${_N_RHO}" -ne "${_N_SEED}" ] || [ "${_N_RHO}" -ne "${_N_LEARN}" ] || [ "${_N_RHO}" -ne "${_N_NAME}" ]; then
+  echo "ERROR: lookup table length mismatch: RHO=${_N_RHO} SEED=${_N_SEED} LEARN=${_N_LEARN} NAME=${_N_NAME}" >&2
+  exit 1
+fi
+
+# Guard: refuse to run a real arm without SLURM_ARRAY_TASK_ID.
+# DRY_RUN=1 previews are allowed to default to index 0.
+if [ -z "${SLURM_ARRAY_TASK_ID+x}" ]; then
+  if [ "${DRY_RUN:-0}" != "1" ]; then
+    echo "ERROR: refusing to run a real arm without SLURM_ARRAY_TASK_ID;" \
+         "set DRY_RUN=1 for previews." >&2
+    exit 1
+  fi
+  IDX=0
+else
+  IDX="${SLURM_ARRAY_TASK_ID}"
+fi
+
+# Bounds check: 0 <= IDX < table length.
+if [ "${IDX}" -lt 0 ] || [ "${IDX}" -ge "${_N_RHO}" ]; then
+  echo "ERROR: SLURM_ARRAY_TASK_ID=${IDX} is out of bounds [0, $((${_N_RHO} - 1))]." >&2
+  exit 1
+fi
 
 RHO="${RHO_TABLE[$IDX]}"
 SEED="${SEED_TABLE[$IDX]}"
@@ -135,11 +199,10 @@ if [ "${LEARNABLE}" = "true" ]; then
   OVERRIDES+=( "experiment.model.anchor.learnable=true" )
 fi
 
-# Append any caller-supplied extra overrides
+# Append any caller-supplied extra overrides (glob-safe, no word-splitting).
 if [ -n "${EXTRA_OVERRIDES}" ]; then
-  # Word-split intentional: caller separates overrides with spaces
-  # shellcheck disable=SC2206
-  OVERRIDES+=( ${EXTRA_OVERRIDES} )
+  read -r -a EXTRA_ARR <<< "${EXTRA_OVERRIDES}"
+  OVERRIDES+=( "${EXTRA_ARR[@]}" )
 fi
 
 # ---------------------------------------------------------------------------
