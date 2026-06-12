@@ -210,6 +210,7 @@ def _overlay_sjd_policy_fields(dst: dict[str, Any], src: dict[str, Any]) -> None
         "logit_temperature",
         "log_ratio_clip",
         "init_std",
+        "blur_score",
     ):
         if key not in src:
             continue
@@ -327,6 +328,7 @@ def _resolve_sudoku_sjd_run_specs(
         "logit_temperature": float(cfg.sampler.get("logit_temperature", 1.0)),
         "log_ratio_clip": float(cfg.sampler.get("log_ratio_clip", 10.0)),
         "init_std": float(cfg.sampler.get("init_std", 1.0)),
+        "blur_score": False,
     }
     base_sampler = {
         "kind": "sampler",
@@ -371,6 +373,7 @@ def _resolve_sudoku_sjd_run_specs(
             spec["logit_temperature"] = float(spec["logit_temperature"])
             spec["log_ratio_clip"] = float(spec["log_ratio_clip"])
             spec["init_std"] = float(spec["init_std"])
+            spec["blur_score"] = bool(spec["blur_score"])
         elif kind == "sampler":
             spec = dict(base_sampler)
             sampler_group = entry.get("sampler")
@@ -394,6 +397,12 @@ def _resolve_sudoku_sjd_run_specs(
             raise ValueError("Each sudoku_eval_sjd_runs entry requires a non-empty label.")
         spec["label"] = label
         spec["metrics_prefix"] = f"{prefix}/{label}"
+        if spec["kind"] == "policy" and bool(spec.get("blur_score", False)):
+            if abs(float(spec["eta"]) - 1.0) > 1e-9:
+                raise ValueError(
+                    f"sudoku_eval_sjd_runs entry {label!r} sets blur_score=true with "
+                    f"eta={spec['eta']}: the W-aware plug-in score requires eta == 1.0."
+                )
         resolved_specs.append(spec)
 
     if not resolved_specs:
@@ -921,6 +930,7 @@ def build_sudoku_eval_logger(
                     init_std=float(policy_spec["init_std"]),
                     stochastic_k=bool(policy_spec.get("stochastic_k", False)),
                     eta=float(policy_spec["eta"]),
+                    blur_score=bool(policy_spec.get("blur_score", False)),
                     return_diagnostics=True,
                 )
 
@@ -930,6 +940,17 @@ def build_sudoku_eval_logger(
             if spec["kind"] == "sampler":
                 sampler_eval_fns[spec["label"]] = _build_sjd_sampler_eval_fn(spec)
             else:
+                if (
+                    bool(spec.get("blur_score", False))
+                    and getattr(task.forward.jump, "blur_kernel", None) is None
+                ):
+                    print(
+                        f"[eval:sudoku] WARNING: run {spec['label']!r} requests "
+                        "blur_score but no blur kernel is attached to the forward "
+                        "jump; the standard (W=I) score is used, so this column "
+                        "will duplicate the unblurred one.",
+                        flush=True,
+                    )
                 sampler_eval_fns[spec["label"]] = _build_sjd_policy_eval_fn(spec)
 
     def _run_eval(

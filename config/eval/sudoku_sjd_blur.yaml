@@ -1,0 +1,15 @@
+# SJD Sudoku eval grid for blur experiments: adds the W-aware-score paired column.
+defaults:
+  - sudoku_sjd
+  - _self_
+
+sudoku_eval_sjd_runs:
+  linear_topk_probability_wscore:
+    kind: policy
+    policy: linear_topk_probability
+    n_steps: 50
+    sampling_grid: uniform
+    stochastic_k: false
+    eta: 1.00        # explicit: blur_score hard-errors otherwise (do not rely on the
+                     # cfg.forward.jump.eta default)
+    blur_score: true

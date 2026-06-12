@@ -171,7 +171,13 @@ def blur_score_mean(
     a_table: Array,
     kernel: Array,
 ) -> Array:
-    """Ehat = committed one-hot anchors at committed sites else classifier mean; returns W @ Ehat."""
+    """Ehat = committed one-hot anchors at committed sites else classifier mean; returns W @ Ehat.
+
+    Shapes: probs_mean (B, N, d), committed_mask (B, N), committed_idx (B, N),
+    a_table (K, d), kernel (N, N); returns (B, N, d).
+    """
+    # The -1 uncommitted sentinel in committed_idx clips to 0 here; the bogus
+    # anchor it gathers is discarded by the committed_mask select below.
     safe_idx = jnp.clip(committed_idx, 0, a_table.shape[0] - 1)
     committed_vec = a_table[safe_idx]
     e_hat = jnp.where(committed_mask[..., None], committed_vec, probs_mean)
@@ -214,8 +220,8 @@ def conditional_generate(
         softmax mean at uncommitted sites. This is exact ONLY at eta=1, so a
         ValueError is raised for any other effective eta. Requires a blur
         kernel attached to the jump; with blur_score=True and no kernel the
-        path is a no-op. OFF (the default) is the bit-exact legacy path: any
-        attached kernel is completely ignored.
+        path is a no-op (the eta guard still applies). OFF (the default) is the
+        bit-exact legacy path: any attached kernel is completely ignored.
     """
     policy = normalize_policy_name(policy)
     known_tokens = jnp.asarray(known_tokens, dtype=jnp.int32)
@@ -230,7 +236,7 @@ def conditional_generate(
     shape = tuple(int(dim) for dim in known_tokens.shape[1:])
     d = int(anchors.d)
     jump_eff = replace(jump, eta=float(eta)) if eta is not None else jump
-    blur_kernel = getattr(jump, "blur_kernel", None)
+    blur_kernel = getattr(jump_eff, "blur_kernel", None)
     use_blur_score = bool(blur_score) and (blur_kernel is not None)
     if bool(blur_score):
         eta_eff = float(jump_eff.eta)

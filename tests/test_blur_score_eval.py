@@ -14,6 +14,8 @@ CPU-only, no GPU required.
 """
 from __future__ import annotations
 
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -248,3 +250,96 @@ def test_t9c_eta_guard_raises():
     # The guard fires even when no kernel is attached.
     with pytest.raises(ValueError, match="exact only at eta=1"):
         _run(harness=harness, blur_kernel=None, blur_score=True, eta=0.97)
+
+
+# ---------------------------------------------------------------------------
+# T7 — eval-spec plumbing regressions (_resolve_sudoku_sjd_run_specs)
+# ---------------------------------------------------------------------------
+
+_CONFIG_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "config")
+)
+
+
+def _resolve_specs(entry: dict):
+    from omegaconf import OmegaConf
+
+    from sticky.eval.sudoku import _resolve_sudoku_sjd_run_specs
+
+    cfg = OmegaConf.create({"sampler": {}})
+    eval_cfg = OmegaConf.create({"sudoku_eval_sjd_runs": {"wscore_entry": entry}})
+    specs, _, _ = _resolve_sudoku_sjd_run_specs(cfg=cfg, eval_cfg=eval_cfg, prefix="eval")
+    return specs
+
+
+def test_t7_blur_score_survives_whitelist():
+    """Regression for the closed-whitelist landmine: blur_score in a YAML entry
+    must survive into the resolved spec instead of being silently dropped."""
+    specs = _resolve_specs(
+        {
+            "kind": "policy",
+            "policy": "linear_topk_probability",
+            "n_steps": 50,
+            "sampling_grid": "uniform",
+            "stochastic_k": False,
+            "eta": 1.0,
+            "blur_score": True,
+        }
+    )
+    assert len(specs) == 1
+    assert specs[0]["label"] == "wscore_entry"
+    assert specs[0]["blur_score"] is True
+
+
+def test_t7_blur_score_eta_guard_names_entry():
+    with pytest.raises(ValueError, match="wscore_entry"):
+        _resolve_specs(
+            {
+                "kind": "policy",
+                "policy": "linear_topk_probability",
+                "eta": 0.97,
+                "blur_score": True,
+            }
+        )
+
+
+def test_t7_blur_score_defaults_false():
+    specs = _resolve_specs(
+        {
+            "kind": "policy",
+            "policy": "linear_survival",
+            "eta": 1.0,
+        }
+    )
+    assert specs[0]["blur_score"] is False
+
+
+def test_t7_blur_eval_grid_composes_with_merged_runs():
+    """config/eval/sudoku_sjd_blur.yaml composes via the real Hydra path
+    (eval=sudoku_sjd_blur on the root config, the pattern used by the eval
+    loader and test_config_resolution.py): the three sudoku_sjd entries
+    survive the merge and the wscore column is added."""
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+
+    GlobalHydra.instance().clear()
+    try:
+        with initialize_config_dir(config_dir=_CONFIG_DIR, version_base=None):
+            cfg = compose(
+                config_name="config",
+                overrides=["experiment=sudoku/sjd_sudoku", "eval=sudoku_sjd_blur"],
+            )
+        runs = cfg.eval.sudoku_eval_sjd_runs
+        assert set(runs.keys()) == {
+            "linear_survival",
+            "linear_topk_probability",
+            "predictor_only",
+            "linear_topk_probability_wscore",
+        }
+        assert bool(runs.linear_topk_probability_wscore.blur_score) is True
+        assert abs(float(runs.linear_topk_probability_wscore.eta) - 1.0) < 1e-12
+        # The pre-existing baseline column must be untouched.
+        assert str(runs.linear_survival.policy) == "linear_survival"
+        assert "blur_score" not in runs.linear_survival
+    finally:
+        GlobalHydra.instance().clear()
