@@ -201,6 +201,56 @@ def test_accumulation_into_base_totals_does_not_keyerror():
         assert totals[key] == counts[key]
 
 
+def test_chained_pipeline_two_batches_through_finalize():
+    """Full-chain regression: counts from TWO batches accumulated into
+    `_base_totals()` via the eval loop's `totals[key] += int(value)` pattern,
+    then finalized. The hi bucket is empty in BOTH batches, so the 0.0
+    zero-denominator convention must survive the whole chain."""
+    # Batch 1: board 0 = 22 clues (lo, exact); board 1 = 24 clues (mid, 1 wrong).
+    # Batch 2: board 0 = 23 clues (lo boundary, 2 wrong); board 1 = 24 (mid, exact).
+    batches = [
+        _make_batch(clue_counts=[22, 24], wrong_unknown_cells=[[], [30]]),
+        _make_batch(clue_counts=[23, 24], wrong_unknown_cells=[[40, 50], []]),
+    ]
+    totals = _base_totals()
+    for pred, sol, clue_board, clue_mask in batches:
+        counts = _evaluate_board_batch_counts(
+            pred_board=pred,
+            solution_board=sol,
+            clue_board=clue_board,
+            clue_mask=clue_mask,
+        )
+        for key, value in counts.items():
+            totals[key] += int(value)
+        totals["num_batches"] += 1
+
+    prefix = "eval/chained"
+    metrics = _finalize_metrics(
+        totals=totals,
+        metric_prefix=prefix,
+        n_steps=50,
+        checkpoint_source="live",
+    )
+
+    # lo: (22-clue exact) + (23-clue, 2 wrong): 1/2 boards exact,
+    # cells (59 + 58 - 2) / (59 + 58).
+    assert metrics[f"{prefix}/num_examples_clues_lo"] == 2.0
+    assert metrics[f"{prefix}/board_acc_exact_clues_lo"] == 1.0 / 2.0
+    assert metrics[f"{prefix}/cell_acc_unknown_clues_lo"] == 115.0 / 117.0
+    # mid: two 24-clue boards, one exact, cells (57 - 1 + 57) / (57 + 57).
+    assert metrics[f"{prefix}/num_examples_clues_mid"] == 2.0
+    assert metrics[f"{prefix}/board_acc_exact_clues_mid"] == 1.0 / 2.0
+    assert metrics[f"{prefix}/cell_acc_unknown_clues_mid"] == 113.0 / 114.0
+    # hi: empty in both batches — 0.0 convention through the full chain.
+    assert metrics[f"{prefix}/num_examples_clues_hi"] == 0.0
+    assert metrics[f"{prefix}/board_acc_exact_clues_hi"] == 0.0
+    assert metrics[f"{prefix}/cell_acc_unknown_clues_hi"] == 0.0
+    # Unstratified totals stay consistent with the bucket partition.
+    assert metrics[f"{prefix}/board_acc_exact"] == 2.0 / 4.0
+    assert metrics[f"{prefix}/cell_acc_unknown"] == (115.0 + 113.0) / (117.0 + 114.0)
+    assert metrics[f"{prefix}/num_batches"] == 2.0
+
+
 # ---------------------------------------------------------------------------
 # _finalize_metrics: exact ratios + zero-denominator convention
 # ---------------------------------------------------------------------------

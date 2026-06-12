@@ -1,0 +1,44 @@
+# W-axis sweep: convex constraint-kernel blur at eta=1 with frozen anchors.
+# Modeled on sjd_sudoku_e2e_baseline.yaml (frozen anchors, eta=1, objective=ce).
+# KEEP IN SYNC: Hydra experiments cannot inherit; any change to the shared
+# baseline body (dataset, optim, schedule, batch sizes) must be mirrored
+# across sjd_sudoku*.yaml so the only delta vs the rho=0 arm is the kernel.
+# Sweep knobs (CLI): experiment.forward.blur.rho={0.0,0.1,0.2,0.35,0.5}
+#                    experiment.training.seed={0,1,2}
+defaults:
+  - /dataset: sudoku_shah_board
+  - /model/sjd@model: sjd_sudoku_inpaint
+  - /optim: adamw_sudoku
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none           # objective=ce (elbo_eta1 rejects blur)
+  - /forward/jump: vp_matched
+  - /forward/blur: sudoku_constraint_convex   # the W(rho) kernel
+  - /sampler/sudoku@sampler: sjd_sudoku
+  - /eval@_global_.eval: sudoku_sjd_blur      # adds the paired wscore column
+  - /training: sudoku_sjd
+  - _self_
+
+task:
+  name: sjd_sudoku_inpaint
+
+dataset:
+  batch_size: 128
+  eval_batch_size: 128
+
+model:
+  anchor:
+    learnable: false        # frozen anchors; anchor seed 0 / init_std 1e-3 /
+                            # normalize_at_use are the normal_normalized defaults;
+                            # the anchor RNG ignores the training seed, so the
+                            # table is bit-identical across arms and seeds
+
+forward:
+  jump:
+    eta: 1.0
+
+training:
+  # Headline-selector checkpointing (approved switch): predictor_only is a
+  # weak signal and would bias selection against blur arms.
+  best_checkpoint_metric: eval/linear_topk_probability/solve_rate

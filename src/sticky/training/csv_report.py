@@ -21,6 +21,7 @@ SUDOKU_SJD_PROGRESS_COLUMNS = [
     "solve_rate",
     "cell_acc_unknown",
     "board_acc_exact",
+    # Clue-count buckets: lo <= 23 (fewest clues = hardest) / mid == 24 / hi >= 25; see eval/sudoku.py.
     "board_acc_exact_clues_lo",
     "board_acc_exact_clues_mid",
     "board_acc_exact_clues_hi",
