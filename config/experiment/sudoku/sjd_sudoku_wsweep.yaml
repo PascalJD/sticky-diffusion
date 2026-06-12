@@ -2,9 +2,14 @@
 # Modeled on sjd_sudoku_e2e_baseline.yaml (frozen anchors, eta=1, objective=ce).
 # KEEP IN SYNC: Hydra experiments cannot inherit; any change to the shared
 # baseline body (dataset, optim, schedule, batch sizes) must be mirrored
-# across sjd_sudoku*.yaml so the only delta vs the rho=0 arm is the kernel.
+# across sjd_sudoku*.yaml so the only delta vs sjd_sudoku_e2e_baseline runs
+# is the kernel.  (The rho=0 arm IS this config at the default rho=0.0,
+# which yields W=I and is bitwise-equivalent to no-blur on CPU.)
 # Sweep knobs (CLI): experiment.forward.blur.rho={0.0,0.1,0.2,0.35,0.5}
 #                    experiment.training.seed={0,1,2}
+#                    wandb.run_name=sjd_sudoku_wsweep_rho<R>_seed<S>
+# rho0-learn arm:    experiment.model.anchor.learnable=true
+#                    wandb.run_name=sjd_sudoku_wsweep_rho0.0_seed0_learn
 defaults:
   - /dataset: sudoku_shah_board
   - /model/sjd@model: sjd_sudoku_inpaint

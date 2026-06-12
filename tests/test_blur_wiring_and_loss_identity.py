@@ -146,9 +146,11 @@ def test_wsweep_cli_sweep_knobs_compose_and_land():
         "experiment=sudoku/sjd_sudoku_wsweep",
         "experiment.forward.blur.rho=0.2",
         "experiment.training.seed=1",
+        "wandb.run_name=sjd_sudoku_wsweep_rho0.2_seed1",
     ])
     assert abs(float(cfg.experiment.forward.blur.rho) - 0.2) < 1e-12
     assert int(cfg.experiment.training.seed) == 1
+    assert str(cfg.wandb.run_name) == "sjd_sudoku_wsweep_rho0.2_seed1"
 
 
 # ---------------------------------------------------------------------------
