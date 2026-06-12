@@ -365,6 +365,12 @@ def _resolve_sudoku_sjd_run_specs(
         "sudoku_eval_sjd_runs",
     ):
         kind = str(entry.get("kind", "sampler")).strip().lower()
+        if kind == "sampler" and "blur_score" in entry:
+            raise ValueError(
+                f"sudoku_eval_sjd_runs entry {entry_label!r} sets blur_score on a "
+                "sampler-kind entry; blur_score is only supported on policy-kind "
+                "entries (the predictor_only/sampler path is deferred)."
+            )
         if kind == "policy":
             spec = dict(base_policy)
             _overlay_sjd_policy_fields(spec, entry)

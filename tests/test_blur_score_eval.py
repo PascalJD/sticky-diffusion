@@ -330,16 +330,55 @@ def test_t7_blur_eval_grid_composes_with_merged_runs():
                 overrides=["experiment=sudoku/sjd_sudoku", "eval=sudoku_sjd_blur"],
             )
         runs = cfg.eval.sudoku_eval_sjd_runs
-        assert set(runs.keys()) == {
+        # Superset assertion: the four expected labels must all be present; extra
+        # entries (e.g. future additions to sudoku_sjd.yaml) are allowed.
+        assert {
             "linear_survival",
             "linear_topk_probability",
             "predictor_only",
             "linear_topk_probability_wscore",
-        }
+        } <= set(runs.keys())
         assert bool(runs.linear_topk_probability_wscore.blur_score) is True
         assert abs(float(runs.linear_topk_probability_wscore.eta) - 1.0) < 1e-12
+        # KEEP-IN-SYNC regression: the wscore entry must match the base
+        # `linear_topk_probability` entry on every shared sampling key so that
+        # the only ablation delta is blur_score.  If the base entry drifts
+        # (e.g. n_steps changes) and sudoku_sjd_blur.yaml is not updated, this
+        # assertion will catch it immediately.
+        base = runs.linear_topk_probability
+        wscore = runs.linear_topk_probability_wscore
+        assert str(wscore.policy) == str(base.policy)
+        assert int(wscore.n_steps) == int(base.n_steps)
+        assert str(wscore.sampling_grid) == str(base.sampling_grid)
+        assert bool(wscore.stochastic_k) == bool(base.stochastic_k)
+        assert abs(float(wscore.eta) - float(base.eta)) < 1e-9
         # The pre-existing baseline column must be untouched.
         assert str(runs.linear_survival.policy) == "linear_survival"
         assert "blur_score" not in runs.linear_survival
     finally:
         GlobalHydra.instance().clear()
+
+
+def test_t7_sampler_kind_with_blur_score_raises():
+    """A sampler-kind entry that sets blur_score must raise ValueError naming the
+    entry (not be silently dropped by the sampler whitelist)."""
+    with pytest.raises(ValueError, match="wscore_entry"):
+        _resolve_specs(
+            {
+                "kind": "sampler",
+                "blur_score": True,
+            }
+        )
+
+
+def test_t7_sampler_kind_without_blur_score_resolves():
+    """A sampler-kind entry WITHOUT blur_score must still resolve successfully
+    (existing behaviour is preserved)."""
+    specs = _resolve_specs(
+        {
+            "kind": "sampler",
+        }
+    )
+    assert len(specs) == 1
+    assert specs[0]["label"] == "wscore_entry"
+    assert specs[0]["kind"] == "sampler"

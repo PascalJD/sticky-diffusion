@@ -1,4 +1,15 @@
 # SJD Sudoku eval grid for blur experiments: adds the W-aware-score paired column.
+#
+# KEEP IN SYNC: the `linear_topk_probability_wscore` entry below intentionally
+# restates n_steps, sampling_grid, stochastic_k, and eta from the
+# `linear_topk_probability` entry in config/eval/sudoku_sjd.yaml (inherited via
+# the defaults list above).  Any change to that base entry MUST be mirrored here
+# or the paired comparison is silently confounded.
+#
+# WARNING: do NOT DRY this with OmegaConf interpolation (e.g. ${..}).  The spec
+# resolver reads entries with resolve=False and skips interpolation values,
+# causing them to silently fall back to defaults instead of picking up the
+# intended override.
 defaults:
   - sudoku_sjd
   - _self_
