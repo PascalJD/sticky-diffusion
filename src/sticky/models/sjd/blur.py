@@ -8,10 +8,11 @@ the un-sticking variance.
 
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
+    gaussian_2d_position_kernel(height, width, sigma, normalization="rowstoch", dtype=jnp.float32)
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     sudoku_constraint_kernel_convex(sigma, rho, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
-    build_blur_kernel(blur_cfg, seq_len=None)
+    build_blur_kernel(blur_cfg, seq_len=None, grid_shape=None)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from jax import Array
 
 __all__ = [
     "gaussian_position_kernel",
+    "gaussian_2d_position_kernel",
     "sudoku_constraint_kernel",
     "sudoku_constraint_kernel_convex",
     "blur_means",
@@ -226,6 +228,43 @@ def sudoku_constraint_kernel_convex(
     return W.astype(dtype)
 
 
+def gaussian_2d_position_kernel(
+    height: int,
+    width: int,
+    sigma: float,
+    normalization: str = "rowstoch",
+    dtype=jnp.float32,
+) -> Array:
+    """Full (H*W, H*W) 2D Gaussian position kernel over a flat row-major pixel grid.
+
+    Mirrors analysis/field_diag/common.gaussian_2d. Flat index p = r * width + c
+    with (r, c) in [0, H) x [0, W). Logits L[i, j] = -((r_i-r_j)^2 + (c_i-c_j)^2)
+    / (2 sigma^2), full softmax over all positions per row (no truncation):
+      - normalization="rowstoch": W = softmax(L, axis=-1); rows sum to 1
+        (convex local average over the grid, self included).
+      - normalization="additive": W = softmax(L); then W = W / diag(W) so
+        W[i, i] == 1 and rows do NOT sum to 1 (2D analogue of the 1D repo mode).
+
+    Raises ValueError on sigma <= 0 or unknown normalization.
+    """
+    if sigma <= 0:
+        raise ValueError(f"sigma must be positive, got {sigma}")
+    H, W = int(height), int(width)
+    idx = jnp.arange(H * W)
+    r = (idx // W).astype(dtype)
+    c = (idx % W).astype(dtype)
+    d2 = (r[:, None] - r[None, :]) ** 2 + (c[:, None] - c[None, :]) ** 2  # (HW, HW)
+    logits = -d2 / (2.0 * sigma * sigma)
+    K = jax.nn.softmax(logits, axis=-1)  # row-stochastic
+    if normalization == "additive":
+        K = K / jnp.diagonal(K)[:, None]
+    elif normalization != "rowstoch":
+        raise ValueError(
+            f"Unknown 2D normalization: {normalization!r} (expected 'rowstoch'/'additive')"
+        )
+    return K.astype(dtype)
+
+
 def blur_means(
     e: Array,
     kernel: Array,
@@ -233,34 +272,48 @@ def blur_means(
     """Apply a fixed site-blending matrix to per-site embeddings.
 
     Args:
-        e: shape (B, N, d) — only 1D site_shape supported in phase 1.
-            Multi-D site shapes (e.g., 2D images) raise NotImplementedError;
-            see the prompt for the ImageNet/CIFAR follow-up.
+        e: either a 1D-site field of shape (B, N, d), or a 2D image field of
+           shape (B, H, W, C, d) — in which case the kernel (N, N) with N = H*W
+           is applied over the flat row-major pixel grid PER COLOR CHANNEL.
         kernel: shape (N, N).
 
     Returns:
-        mu_bar of shape (B, N, d), where
-            mu_bar[b, i, :] = sum_j kernel[i, j] * e[b, j, :].
+        mu_bar with the same shape as `e`, where for the 1D case
+            mu_bar[b, i, :] = sum_j kernel[i, j] * e[b, j, :],
+        and for the 2D-image case the same contraction is applied over the
+        flattened H*W positions independently for each channel c and feature d.
     """
-    if e.ndim != 3:
-        raise NotImplementedError(
-            f"blur_means only supports 1D site_shape (e.ndim == 3); "
-            f"got e.shape={tuple(e.shape)} (ndim={e.ndim}). "
-            f"Multi-D site shapes are deferred."
-        )
     if kernel.ndim != 2 or kernel.shape[0] != kernel.shape[1]:
         raise ValueError(
             f"kernel must be square (N, N); got shape {tuple(kernel.shape)}"
         )
-    if kernel.shape[0] != e.shape[1]:
-        raise ValueError(
-            f"kernel.shape[0] ({kernel.shape[0]}) must equal e.shape[1] "
-            f"({e.shape[1]})"
-        )
-    return jnp.einsum("ij,bjd->bid", kernel, e)
+    if e.ndim == 3:  # (B, N, d)
+        if kernel.shape[0] != e.shape[1]:
+            raise ValueError(
+                f"kernel.shape[0] ({kernel.shape[0]}) must equal e.shape[1] "
+                f"({e.shape[1]})"
+            )
+        return jnp.einsum("ij,bjd->bid", kernel, e)
+    if e.ndim == 5:  # (B, H, W, C, d) image field
+        B, H, W, C, d = e.shape
+        if kernel.shape[0] != H * W:
+            raise ValueError(
+                f"kernel.shape[0] ({kernel.shape[0]}) must equal H*W "
+                f"({H}*{W}={H * W}) for a 2D image field"
+            )
+        e2 = e.reshape(B, H * W, C, d)
+        out = jnp.einsum("ij,bjcd->bicd", kernel, e2)
+        return out.reshape(B, H, W, C, d)
+    raise NotImplementedError(
+        f"blur_means supports e.ndim in {{3, 5}}; got e.shape={tuple(e.shape)} "
+        f"(ndim={e.ndim})."
+    )
 
 
-def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
+def build_blur_kernel(
+    blur_cfg, *, seq_len: int | None = None,
+    grid_shape: tuple[int, int] | None = None,
+) -> Array | None:
     """Dispatch a blur config to a concrete kernel.
 
     Args:
@@ -269,6 +322,7 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
             kind-specific keys are read (sigma, include_self, include_row,
             include_col, include_box, normalization, rho).
         seq_len: required for kind == "gaussian_1d"; ignored otherwise.
+        grid_shape: (H, W) required for kind == "gaussian_2d"; ignored otherwise.
 
     Normalization modes (key "normalization"; default "additive" when absent):
         "additive"  — legacy rescaled kernel (W_ii=1, rows do NOT sum to 1).
@@ -299,6 +353,22 @@ def build_blur_kernel(blur_cfg, *, seq_len: int | None = None) -> Array | None:
     sigma = float(blur_cfg.get("sigma", 1.0))
     raw_norm = blur_cfg.get("normalization", "additive")
     normalization = "additive" if raw_norm is None else str(raw_norm)
+
+    # 2D image grid Gaussian (its own additive/rowstoch normalization semantics).
+    if kind == "gaussian_2d":
+        if grid_shape is None:
+            raise ValueError("gaussian_2d blur requires grid_shape=(H, W), got None")
+        H, W = int(grid_shape[0]), int(grid_shape[1])
+        if H < 1 or W < 1:
+            raise ValueError(f"gaussian_2d blur requires H,W >= 1, got {(H, W)}")
+        if normalization not in ("additive", "rowstoch"):
+            raise ValueError(
+                f"gaussian_2d normalization must be 'additive' or 'rowstoch'; "
+                f"got {normalization!r}"
+            )
+        return gaussian_2d_position_kernel(
+            height=H, width=W, sigma=sigma, normalization=normalization,
+        )
 
     if normalization == "additive":
         if kind == "gaussian_1d":

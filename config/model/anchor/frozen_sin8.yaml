@@ -1,0 +1,15 @@
+defaults:
+  - transform: default
+  - _self_
+
+# Frozen sinusoidal pixel-value embedding for CIFAR-10 (256 values -> d=8).
+# Bit-identical to analysis/field_diag/common.image_embedding('sinusoidal'):
+# sin/cos at freqs {1,2,3,4} of v/255, NO linear term; every row-norm = 2.
+# Frozen (learnable=false) and used as-is (normalize_at_use=false) so the
+# corrupted field matches the measured diagnostics field exactly.
+# Generate the npz with `python tools/make_cifar_sin_embedding.py`.
+family: pretrained
+dim: 8
+learnable: false
+pretrained_path: data/anchors/cifar_sin8.npz
+normalize_at_use: false

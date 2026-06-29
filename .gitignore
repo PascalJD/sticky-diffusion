@@ -11,6 +11,10 @@ data/
 !src/sticky/data/cifar10_discrete.py
 .DS_Store
 __MACOSX/
+analysis/
+cluster/
+runs/
+slurm/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

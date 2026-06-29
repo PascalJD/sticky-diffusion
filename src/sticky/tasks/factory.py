@@ -102,7 +102,10 @@ def _build_forward_schedule(cfg: DictConfig):
         # at the per-task builder level, so they never reach this branch.
         data_shape = tuple(cfg.dataset.get("data_shape", ()) or ())
         seq_len = int(np.prod(data_shape)) if data_shape else None
-        kernel = build_blur_kernel(blur_cfg, seq_len=seq_len)
+        grid_shape = (
+            (int(data_shape[0]), int(data_shape[1])) if len(data_shape) >= 2 else None
+        )
+        kernel = build_blur_kernel(blur_cfg, seq_len=seq_len, grid_shape=grid_shape)
         if kernel is not None:
             schedule = schedule.with_blur(kernel)
 
@@ -218,13 +221,18 @@ def _build_openwebtext_discrete_task(cfg: DictConfig, *, task_name: str = "openw
 def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
-    # Phase 1: blur is not supported for 2D image tasks. Fail loudly if enabled.
+    # 2D image tasks support ONLY the separable 2D Gaussian grid blur
+    # (forward.blur.kind=gaussian_2d, applied per color channel over the H*W
+    # pixel grid). Any other enabled blur kind is rejected.
     blur_cfg = cfg.forward.get("blur", None)
     if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
-        raise ValueError(
-            "Non-local blur is not supported for 2D image tasks (CIFAR10/ImageNet64) "
-            "in Phase 1. Set forward.blur.enabled=false or use a sequence task."
-        )
+        kind = blur_cfg.get("kind", None)
+        if str(kind) != "gaussian_2d":
+            raise ValueError(
+                "For 2D image tasks (CIFAR10/ImageNet64), only "
+                "forward.blur.kind='gaussian_2d' is supported; got "
+                f"kind={kind!r}. Set forward.blur.enabled=false or use gaussian_2d."
+            )
 
     # CIFAR10SJDTask does not accept drop_remainder / shuffle_buffer_size;
     # strip them so the shared _tfds_image_dataset_kwargs helper can evolve
