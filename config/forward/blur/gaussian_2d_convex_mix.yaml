@@ -1,0 +1,16 @@
+# rho-decoupled convex blending kernel over the H*W pixel grid, applied per
+# color channel in the SJD training corruption (mu = W . E(x0)):
+#   W(rho, sigma) = (1 - rho) * I + rho * K_sigma,
+#   K_sigma = row-softmax(-d^2 / (2 sigma^2))   (the rowstoch kernel, self incl.)
+# Row-stochastic for any rho in [0, 1]; self-weight >= 1 - rho, decoupled from
+# the bandwidth sigma. Strictly contains the rowstoch family: rho=1 is
+# bit-identical to normalization=rowstoch at the same sigma. rho=0 is W=I and
+# is REJECTED at task-build time (use /forward/blur: none for the baseline).
+# The reverse sampler uses the matching linear W-aware score at eta=1
+# unchanged (sampler blur_score=true, the default).
+# Sweep knobs (CLI): experiment.forward.blur.rho, experiment.forward.blur.sigma
+enabled: true
+kind: gaussian_2d
+normalization: convex_mix
+rho: 0.15                 # blend strength; the sweep knob. REQUIRED (no code default).
+sigma: 1.5                # bandwidth of K_sigma (config key for sigma_W)

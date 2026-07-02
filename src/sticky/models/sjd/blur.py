@@ -9,6 +9,7 @@ the un-sticking variance.
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
     gaussian_2d_position_kernel(height, width, sigma, normalization="rowstoch", dtype=jnp.float32)
+    gaussian_2d_position_kernel_convex_mix(height, width, sigma, rho, dtype=jnp.float32)
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     sudoku_constraint_kernel_convex(sigma, rho, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
@@ -26,6 +27,7 @@ from jax import Array
 __all__ = [
     "gaussian_position_kernel",
     "gaussian_2d_position_kernel",
+    "gaussian_2d_position_kernel_convex_mix",
     "sudoku_constraint_kernel",
     "sudoku_constraint_kernel_convex",
     "blur_means",
@@ -269,6 +271,44 @@ def gaussian_2d_position_kernel(
     return K.astype(dtype)
 
 
+def gaussian_2d_position_kernel_convex_mix(
+    height: int,
+    width: int,
+    sigma: float,
+    rho: float,
+    dtype=jnp.float32,
+) -> Array:
+    """rho-decoupled convex blend over the flat H*W pixel grid.
+
+        W(rho, sigma) = (1 - rho) * I + rho * K_sigma,
+
+    where K_sigma = gaussian_2d_position_kernel(..., normalization="rowstoch")
+    is the full row-softmax Gaussian (self included). Properties:
+      - rows sum to 1 for any rho in [0, 1] (convex combination of two
+        row-stochastic matrices);
+      - self-weight W[i, i] = (1 - rho) + rho * K[i, i] >= 1 - rho, decoupling
+        the self-weight floor from the bandwidth sigma;
+      - rho=1: W == K_sigma bitwise (0*I + 1*K is exact IEEE arithmetic on the
+        non-negative finite K), so the family strictly contains rowstoch;
+      - rho=0: W == I exactly. Builder-level identity only — training configs
+        reject rho=0 at task-build time (see tasks/factory); the baseline is
+        forward/blur=none.
+
+    Raises ValueError on sigma <= 0 or rho outside [0, 1].
+    """
+    if sigma <= 0:
+        raise ValueError(f"sigma must be positive, got {sigma}")
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError(f"rho must be in [0.0, 1.0], got {rho}")
+    K = gaussian_2d_position_kernel(
+        height=height, width=width, sigma=sigma, normalization="rowstoch",
+        dtype=dtype,
+    )
+    N = K.shape[0]
+    W = (1.0 - rho) * jnp.eye(N, dtype=dtype) + rho * K
+    return W.astype(dtype)
+
+
 def blur_means(
     e: Array,
     kernel: Array,
@@ -382,11 +422,17 @@ def build_blur_kernel(
         grid_shape: (H, W) required for kind == "gaussian_2d"; ignored otherwise.
 
     Normalization modes (key "normalization"; default "additive" when absent):
-        "additive"  — legacy rescaled kernel (W_ii=1, rows do NOT sum to 1).
-                      Bit-exact when the key is absent.
-        "convex"    — convex blend W=(1-rho)*I + rho*B; rows sum to 1.
-                      Only supported for kind="sudoku_constraint".
-                      Controlled by "rho" (float, default 0.0).
+        "additive"   — legacy rescaled kernel (W_ii=1, rows do NOT sum to 1).
+                       Bit-exact when the key is absent.
+        "convex"     — convex blend W=(1-rho)*I + rho*B; rows sum to 1.
+                       Only supported for kind="sudoku_constraint".
+                       Controlled by "rho" (float, default 0.0).
+        "convex_mix" — rho-decoupled convex blend W=(1-rho)*I + rho*K_sigma
+                       over the flat H*W grid (K_sigma = the rowstoch kernel,
+                       self included); rows sum to 1, self-weight >= 1-rho.
+                       Only supported for kind="gaussian_2d". Requires an
+                       EXPLICIT "rho" key (no default — a silently-defaulted
+                       rho=0 would be an accidental W=I arm).
 
     Returns:
         None if blur_cfg is None or blur_cfg["enabled"] is False, else an
@@ -418,13 +464,24 @@ def build_blur_kernel(
         H, W = int(grid_shape[0]), int(grid_shape[1])
         if H < 1 or W < 1:
             raise ValueError(f"gaussian_2d blur requires H,W >= 1, got {(H, W)}")
-        if normalization not in ("additive", "rowstoch"):
-            raise ValueError(
-                f"gaussian_2d normalization must be 'additive' or 'rowstoch'; "
-                f"got {normalization!r}"
+        if normalization in ("additive", "rowstoch"):
+            return gaussian_2d_position_kernel(
+                height=H, width=W, sigma=sigma, normalization=normalization,
             )
-        return gaussian_2d_position_kernel(
-            height=H, width=W, sigma=sigma, normalization=normalization,
+        if normalization == "convex_mix":
+            rho = blur_cfg.get("rho", None)
+            if rho is None:
+                raise ValueError(
+                    "gaussian_2d normalization='convex_mix' requires an "
+                    "explicit 'rho' key (rho=0 is W=I — use blur=none for "
+                    "the baseline)"
+                )
+            return gaussian_2d_position_kernel_convex_mix(
+                height=H, width=W, sigma=sigma, rho=float(rho),
+            )
+        raise ValueError(
+            f"gaussian_2d normalization must be 'additive', 'rowstoch' or "
+            f"'convex_mix'; got {normalization!r}"
         )
 
     if normalization == "additive":
@@ -460,6 +517,12 @@ def build_blur_kernel(
             include_row=bool(blur_cfg.get("include_row", True)),
             include_col=bool(blur_cfg.get("include_col", True)),
             include_box=bool(blur_cfg.get("include_box", True)),
+        )
+
+    if normalization == "convex_mix":
+        raise ValueError(
+            f"convex_mix normalization is only implemented for the gaussian_2d "
+            f"kernel; got kind={kind!r}"
         )
 
     raise ValueError(f"Unknown blur normalization: {normalization!r}")

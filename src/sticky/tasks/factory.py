@@ -218,21 +218,40 @@ def _build_openwebtext_discrete_task(cfg: DictConfig, *, task_name: str = "openw
     )
 
 
+def _validate_image_blur_cfg(blur_cfg) -> None:
+    """Task-build-time validation of forward.blur for 2D image tasks.
+
+    - 2D image tasks support ONLY the separable 2D Gaussian grid blur
+      (forward.blur.kind=gaussian_2d, applied per color channel over the H*W
+      pixel grid). Any other enabled blur kind is rejected.
+    - normalization='convex_mix' training configs require rho in (0, 1].
+      rho=0 is W=I (builder-level identity kept for gate tests only); the
+      baseline arm is forward/blur=none, and a rho=0 "blur" arm would
+      silently duplicate it.
+    """
+    if blur_cfg is None or not bool(blur_cfg.get("enabled", False)):
+        return
+    kind = blur_cfg.get("kind", None)
+    if str(kind) != "gaussian_2d":
+        raise ValueError(
+            "For 2D image tasks (CIFAR10/ImageNet64), only "
+            "forward.blur.kind='gaussian_2d' is supported; got "
+            f"kind={kind!r}. Set forward.blur.enabled=false or use gaussian_2d."
+        )
+    if str(blur_cfg.get("normalization", "additive")) == "convex_mix":
+        rho = blur_cfg.get("rho", None)
+        if rho is None or not (0.0 < float(rho) <= 1.0):
+            raise ValueError(
+                "convex_mix training configs require rho in (0, 1]; got "
+                f"rho={rho!r}. rho=0 is W=I — use forward/blur=none for the "
+                "baseline arm."
+            )
+
+
 def _build_tfds_sjd_task(cfg: DictConfig, *, task_name: str):
     from sticky.tasks.cifar10_sjd import CIFAR10SJDTask
 
-    # 2D image tasks support ONLY the separable 2D Gaussian grid blur
-    # (forward.blur.kind=gaussian_2d, applied per color channel over the H*W
-    # pixel grid). Any other enabled blur kind is rejected.
-    blur_cfg = cfg.forward.get("blur", None)
-    if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
-        kind = blur_cfg.get("kind", None)
-        if str(kind) != "gaussian_2d":
-            raise ValueError(
-                "For 2D image tasks (CIFAR10/ImageNet64), only "
-                "forward.blur.kind='gaussian_2d' is supported; got "
-                f"kind={kind!r}. Set forward.blur.enabled=false or use gaussian_2d."
-            )
+    _validate_image_blur_cfg(cfg.forward.get("blur", None))
 
     # CIFAR10SJDTask does not accept drop_remainder / shuffle_buffer_size;
     # strip them so the shared _tfds_image_dataset_kwargs helper can evolve
