@@ -6,7 +6,7 @@ plug-in reverse hazard to stick uncommitted sites to anchors.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Tuple
 
 import jax
@@ -60,6 +60,12 @@ class SamplerConfig:
     #   lock-in. Both are no-ops at logit_temperature == 1.0.
     symmetric_temperature: bool = False
     ancestral_final_commit: bool = False
+    # blur_score: use the W-aware classifier-induced score when the jump
+    # carries a blur kernel (exact only at eta=1; ValueError otherwise).
+    # False = legacy pre-fix behavior: any attached kernel is stripped at
+    # reverse_sample entry, giving the bit-exact old (biased) W=I score.
+    # No-op either way when jump.blur_kernel is None.
+    blur_score: bool = True
 
 
 @struct.dataclass
@@ -129,6 +135,20 @@ def reverse_sample(
     d = int(a_table.shape[1])
     if float(cfg.logit_temperature) <= 0.0:
         raise ValueError(f"logit_temperature must be > 0, got {cfg.logit_temperature}")
+    # --- W-aware score gating (blur fix). Strip first, then guard: the
+    # blur_score=False legacy A/B arm is legal at any eta and must not raise.
+    if getattr(jump, "blur_kernel", None) is not None:
+        if not bool(cfg.blur_score):
+            # Legacy A/B path: strip W so every downstream consumer
+            # (score, hazard, allocation) sees exactly the pre-fix jump.
+            jump = replace(jump, blur_kernel=None)
+        elif abs(float(jump.eta) - 1.0) > 1e-9:
+            raise ValueError(
+                "reverse_sample with jump.blur_kernel requires eta=1 (the "
+                "W-aware plug-in score is exact only at eta=1); got "
+                f"eta={float(jump.eta)}. Sample with eta=1 or set sampler "
+                "blur_score=false to force the legacy W=I score."
+            )
     time_grid = make_sampling_time_grid(
         T=float(cfg.T),
         n_steps=int(cfg.n_steps),
@@ -175,6 +195,8 @@ def reverse_sample(
         logits: Array,
         y_state: Array,
         t_img_state: Array,
+        committed_state: Array,
+        k_idx_state: Array,
     ) -> tuple[Array, Array]:
         score = classifier_induced_score(
             y=y_state,
@@ -186,6 +208,8 @@ def reverse_sample(
             jump=jump,
             tau_grid_size=int(cfg.tau_grid_size),
             posterior_temperature=score_posterior_temperature,
+            committed=committed_state,
+            committed_idx=k_idx_state,
         ) * float(cfg.score_scale)
         bt = _expand_like(beta(t_img_state), y_state)
         return score, bt
@@ -221,7 +245,7 @@ def reverse_sample(
         logits_score, _ = apply_model(params, y_for_model, t_img)
         if cfg.metrics_count_nfe:
             nfe_total = nfe_total + 1.0
-        score, bt = _predictive_stats(logits_score, y_for_model, t_img)
+        score, bt = _predictive_stats(logits_score, y_for_model, t_img, committed, k_idx)
         drift = (+0.5 * bt) * y + bt * score
 
         m = (~committed)[..., None].astype(jnp.float32)

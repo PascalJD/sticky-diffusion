@@ -158,11 +158,13 @@ def _extract_forward_config_metadata(cfg: DictConfig) -> Dict[str, Any]:
             "forward_hazard_target": None,
             "forward_jump_target": None,
             "jump_eta": None,
+            "forward_blur": None,
         }
 
     beta_cfg = forward_cfg.get("beta", None)
     hazard_cfg = forward_cfg.get("hazard", None)
     jump_cfg = forward_cfg.get("jump", None)
+    blur_cfg = forward_cfg.get("blur", None)
     return {
         "forward_beta_target": (
             str(beta_cfg.get("_target_", "")) if beta_cfg is not None else None
@@ -175,6 +177,13 @@ def _extract_forward_config_metadata(cfg: DictConfig) -> Dict[str, Any]:
         ),
         "jump_eta": (
             _maybe_float(jump_cfg.get("eta", None)) if jump_cfg is not None else None
+        ),
+        # The campaign's sweep axes (enabled/kind/sigma/normalization/...), the
+        # natural join key for collect_results.py.
+        "forward_blur": (
+            OmegaConf.to_container(blur_cfg, resolve=True)
+            if blur_cfg is not None
+            else None
         ),
     }
 
@@ -876,6 +885,16 @@ def run_offline_checkpoint_eval(
     )
     forward_meta = _extract_forward_config_metadata(effective_cfg)
 
+    # G3 evidence: fingerprint the blur kernel actually attached to the task's
+    # forward jump (the same array the patched sampler builders prefer via
+    # _attach_blur_kernel). Backend-sensitive: compare within one job/backend.
+    from sticky.models.sjd.blur import kernel_fingerprint
+
+    _task_fwd = getattr(task, "forward", None)
+    attached_blur_kernel = (
+        getattr(_task_fwd, "blur_kernel", None) if _task_fwd is not None else None
+    )
+
     payload = {
         "timestamp_utc": now_utc_iso(),
         "experiment_config": {
@@ -888,6 +907,16 @@ def run_offline_checkpoint_eval(
             "forward_hazard_target": forward_meta["forward_hazard_target"],
             "forward_jump_target": forward_meta["forward_jump_target"],
             "jump_eta": forward_meta["jump_eta"],
+            "forward_blur": forward_meta["forward_blur"],
+            "forward_blur_kernel_fingerprint": kernel_fingerprint(attached_blur_kernel),
+            "forward_blur_kernel_shape": (
+                None
+                if attached_blur_kernel is None
+                else [int(s) for s in attached_blur_kernel.shape]
+            ),
+            "sampler_blur_score": bool(
+                effective_cfg.sampler.get("blur_score", True)
+            ),
             "sampler_logit_temperature": effective_logit_temperature,
             "sampler_n_steps": int(sample_timesteps),
             "training_seed": int(effective_cfg.training.seed),

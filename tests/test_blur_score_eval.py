@@ -359,16 +359,26 @@ def test_t7_blur_eval_grid_composes_with_merged_runs():
         GlobalHydra.instance().clear()
 
 
-def test_t7_sampler_kind_with_blur_score_raises():
-    """A sampler-kind entry that sets blur_score must raise ValueError naming the
-    entry (not be silently dropped by the sampler whitelist)."""
-    with pytest.raises(ValueError, match="wscore_entry"):
-        _resolve_specs(
-            {
-                "kind": "sampler",
-                "blur_score": True,
-            }
-        )
+def test_t7_sampler_kind_blur_score_survives_into_spec():
+    """Sampler-kind entries now accept blur_score (the reverse_sample path is
+    W-aware): the flag must survive the sampler whitelist into the resolved
+    spec instead of raising or being silently dropped."""
+    specs = _resolve_specs(
+        {
+            "kind": "sampler",
+            "blur_score": False,
+        }
+    )
+    assert len(specs) == 1
+    assert specs[0]["label"] == "wscore_entry"
+    assert specs[0]["blur_score"] is False
+
+
+def test_t7_sampler_kind_blur_score_defaults_true():
+    """Sampler-kind specs default to the W-aware score (blur_score=True); the
+    kernel-attached check happens at sampling time inside reverse_sample."""
+    specs = _resolve_specs({"kind": "sampler"})
+    assert specs[0]["blur_score"] is True
 
 
 def test_t7_sampler_kind_without_blur_score_resolves():

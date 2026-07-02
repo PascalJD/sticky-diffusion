@@ -235,6 +235,7 @@ def _overlay_sjd_sampler_fields(dst: dict[str, Any], src: dict[str, Any]) -> Non
         "force_classify_at_end",
         "refresh_logits_after_em_step",
         "metrics_count_nfe",
+        "blur_score",
     ):
         if key not in src:
             continue
@@ -351,6 +352,11 @@ def _resolve_sudoku_sjd_run_specs(
             cfg.sampler.get("refresh_logits_after_em_step", False)
         ),
         "metrics_count_nfe": bool(cfg.sampler.get("metrics_count_nfe", True)),
+        # W-aware score on the reverse_sample path (default ON; no-op unless a
+        # blur kernel is attached to the forward jump; hard-errors at eta!=1
+        # inside reverse_sample — set blur_score: false to force the legacy
+        # W=I score, e.g. for eta!=1 blur configs or A/B comparisons).
+        "blur_score": bool(cfg.sampler.get("blur_score", True)),
     }
 
     primary_label = str(
@@ -365,12 +371,6 @@ def _resolve_sudoku_sjd_run_specs(
         "sudoku_eval_sjd_runs",
     ):
         kind = str(entry.get("kind", "sampler")).strip().lower()
-        if kind == "sampler" and "blur_score" in entry:
-            raise ValueError(
-                f"sudoku_eval_sjd_runs entry {entry_label!r} sets blur_score on a "
-                "sampler-kind entry; blur_score is only supported on policy-kind "
-                "entries (the predictor_only/sampler path is deferred)."
-            )
         if kind == "policy":
             spec = dict(base_policy)
             _overlay_sjd_policy_fields(spec, entry)
@@ -947,6 +947,7 @@ def build_sudoku_eval_logger(
                 refresh_logits_after_em_step=bool(sampler_spec["refresh_logits_after_em_step"]),
                 metrics_count_nfe=bool(sampler_spec["metrics_count_nfe"]),
                 tau_grid_size=int(sampler_spec.get("tau_grid_size", 32)),
+                blur_score=bool(sampler_spec.get("blur_score", True)),
             )
 
             @jax.jit
@@ -999,9 +1000,12 @@ def build_sudoku_eval_logger(
 
         for spec in sampler_specs:
             if spec["kind"] == "sampler":
-                # blur_score is unsupported on the sampler path (rejected at
-                # spec resolution); blur_score_effective stays absent so the
-                # CSV `blur_score` column is blank for sampler-kind runs.
+                # Effective state mirrors the policy rows: the reverse_sample
+                # path is W-aware when blur_score is requested (default True)
+                # AND a kernel is attached to the forward jump.
+                spec["blur_score_effective"] = bool(
+                    spec.get("blur_score", True)
+                ) and (getattr(task.forward.jump, "blur_kernel", None) is not None)
                 sampler_eval_fns[spec["label"]] = _build_sjd_sampler_eval_fn(spec)
             else:
                 # Effective state: what the W-aware score actually does at

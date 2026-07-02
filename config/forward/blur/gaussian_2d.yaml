@@ -1,7 +1,9 @@
 # Separable 2D Gaussian blending kernel over the H*W pixel grid, applied per
-# color channel in the SJD training corruption (mu = W . E(x0)). The sampler
-# does NOT use W (training-only corruption). normalization: rowstoch (rows sum
-# to 1, convex local average) or additive (W[i,i]=1, rows do NOT sum to 1).
+# color channel in the SJD training corruption (mu = W . E(x0)). The reverse
+# sampler uses the matching W-aware score at eta=1 (sampler blur_score=true,
+# the default; set sampler.blur_score=false for the legacy W=I score).
+# normalization: rowstoch (rows sum to 1, convex local average) or additive
+# (W[i,i]=1, rows do NOT sum to 1).
 enabled: true
 kind: gaussian_2d
 sigma: 1.0

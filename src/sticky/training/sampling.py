@@ -42,6 +42,46 @@ def _build_non_sjd_sampling_fns(
     return sample_images_jit, sample_images_fid_jit
 
 
+def _attach_blur_kernel(jump, *, cfg: DictConfig, task: Any):
+    """Attach the training-time site-blending W to a freshly instantiated
+    sampler jump.
+
+    Prefers the exact array already on ``task.forward`` (bit-identical to what
+    the training corruption used — built by tasks/factory._build_forward_schedule);
+    falls back to rebuilding from ``cfg.forward.blur`` with the same builder for
+    duck-typed tasks without a forward schedule. Returns ``jump`` unchanged
+    (same object) when no blur is configured — the blur=none path stays a
+    strict bypass.
+    """
+    import dataclasses
+
+    kernel = None
+    fwd = getattr(task, "forward", None)
+    if fwd is not None:
+        kernel = getattr(fwd, "blur_kernel", None)
+    if kernel is None:
+        forward_cfg = cfg.get("forward", None)
+        blur_cfg = forward_cfg.get("blur", None) if forward_cfg is not None else None
+        if blur_cfg is not None and bool(blur_cfg.get("enabled", False)):
+            import numpy as np
+
+            from sticky.models.sjd.blur import build_blur_kernel
+
+            data_shape = tuple(task.spec.data_shape)
+            seq_len = int(np.prod(data_shape)) if data_shape else None
+            grid_shape = (
+                (int(data_shape[0]), int(data_shape[1]))
+                if len(data_shape) >= 2
+                else None
+            )
+            kernel = build_blur_kernel(
+                blur_cfg, seq_len=seq_len, grid_shape=grid_shape
+            )
+    if kernel is None:
+        return jump
+    return dataclasses.replace(jump, blur_kernel=kernel)
+
+
 def build_sampling_fns(
     *,
     cfg: DictConfig,
@@ -156,6 +196,7 @@ def build_sampling_fns(
             beta = hydra.utils.instantiate(cfg.forward.beta)
         hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
         jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
+        jump = _attach_blur_kernel(jump, cfg=cfg, task=task)
         anchor_log_w = getattr(task, "anchor_log_w", None)
         learn_log_w = bool(getattr(task, "learn_log_w", False))
 
@@ -240,6 +281,9 @@ def _base_sampler_spec_from_cfg(cfg_sampler, *, sample_timesteps: int) -> dict:
         "ancestral_final_commit": bool(
             cfg_sampler.get("ancestral_final_commit", False)
         ),
+        # W-aware score toggle (default ON; only takes effect when the jump
+        # carries a blur kernel; False = legacy biased W=I score for A/B).
+        "blur_score": bool(cfg_sampler.get("blur_score", True)),
     }
 
 
@@ -266,6 +310,7 @@ def _sjd_sampler_cfg_from_dict(spec: dict) -> "SamplerConfig":
         tau_grid_size=int(spec.get("tau_grid_size", 32)),
         symmetric_temperature=bool(spec.get("symmetric_temperature", False)),
         ancestral_final_commit=bool(spec.get("ancestral_final_commit", False)),
+        blur_score=bool(spec.get("blur_score", True)),
     )
 
 
@@ -300,6 +345,7 @@ def build_multi_fid_sampling_fns(
         beta = hydra.utils.instantiate(cfg.forward.beta)
     hazard = hydra.utils.instantiate(cfg.forward.hazard, beta=beta)
     jump = hydra.utils.instantiate(cfg.forward.jump, beta=beta)
+    jump = _attach_blur_kernel(jump, cfg=cfg, task=task)
     anchor_log_w = getattr(task, "anchor_log_w", None)
 
     # Base sampler spec from the experiment config.

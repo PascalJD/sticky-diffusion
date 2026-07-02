@@ -95,6 +95,7 @@ def write_run_context(
     params: Any,
     metrics_dir: Path,
     checkpoint_dir: Path,
+    forward_blur: Any = None,
 ):
     if jax.process_index() != 0:
         return
@@ -116,6 +117,10 @@ def write_run_context(
             "eval": _resolved_cfg_dict(eval_cfg),
         },
     }
+    if forward_blur is not None:
+        # Blur/W provenance (config + kernel fingerprint), see blur.py
+        # kernel_fingerprint. Optional so older callers stay valid.
+        payload["forward_blur"] = forward_blur
 
     (run_dir / "run_context.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",

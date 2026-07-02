@@ -8,6 +8,7 @@ from jax.scipy.special import logsumexp
 
 from sticky.rng import PRNGKey
 
+from .blur import blurred_posterior_mean
 from .convolution import mixture_component_logpdf, mixture_component_mean_std
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
@@ -200,10 +201,12 @@ def _squared_distance_all_anchors(
     return dist2_flat.reshape((B,) + site_shape + (L,))
 
 
-# TODO(phase-2): mean-field plug-in for blur_kernel != None.
-# This inference path currently assumes W = I (per-site anchors).
-# When jump.blur_kernel is not None, mixture log-pdf must marginalize
-# over the blurred-mean structure; deferred to a later prompt.
+# NOTE(blur): this log-pdf assumes W = I (per-site anchor means). This is
+# harmless for the plug-in hazard/allocation at eta=1: the jump kernel r and
+# every mixture component share mean and variance there, so the density
+# factors cancel in the r/p ratio and the (mis)specified mean drops out —
+# exactly as it does for the true W-blurred densities (cf. vp_matched.yaml
+# "eta=1 cancels state dependency"). eta < 1 with W != I is rejected upstream.
 def vp_jump_logpdf_all_anchors(
     y: Array, t: Array, a_table: Array, jump: VPMatchedGaussianJump
 ) -> Array:
@@ -236,10 +239,12 @@ def vp_jump_logpdf_all_anchors(
     )
 
 
-# TODO(phase-2): mean-field plug-in for blur_kernel != None.
-# This inference path currently assumes W = I (per-site anchors).
-# When jump.blur_kernel is not None, mixture log-pdf must marginalize
-# over the blurred-mean structure; deferred to a later prompt.
+# NOTE(blur): this log-pdf assumes W = I (per-site anchor means). This is
+# harmless for the plug-in hazard/allocation at eta=1: the jump kernel r and
+# every mixture component share mean and variance there, so the density
+# factors cancel in the r/p ratio and the (mis)specified mean drops out —
+# exactly as it does for the true W-blurred densities (cf. vp_matched.yaml
+# "eta=1 cancels state dependency"). eta < 1 with W != I is rejected upstream.
 def mixture_logpdf_all_anchors(
     y: Array,
     t: Array,
@@ -328,10 +333,12 @@ def mixture_logpdf_all_anchors(
     return m_final + jnp.log(l_final)
 
 
-# TODO(phase-2): mean-field plug-in for blur_kernel != None.
-# This inference path currently assumes W = I (per-site anchors).
-# When jump.blur_kernel is not None, mixture log-pdf must marginalize
-# over the blurred-mean structure; deferred to a later prompt.
+# NOTE(blur): this log-pdf assumes W = I (per-site anchor means). This is
+# harmless for the plug-in hazard/allocation at eta=1: the jump kernel r and
+# every mixture component share mean and variance there, so the density
+# factors cancel in the r/p ratio and the (mis)specified mean drops out —
+# exactly as it does for the true W-blurred densities (cf. vp_matched.yaml
+# "eta=1 cancels state dependency"). eta < 1 with W != I is rejected upstream.
 def mixture_logpdf(
     y: Array,
     anchor: Array,
@@ -408,10 +415,11 @@ def mixture_logpdf(
     return m_final + jnp.log(l_final)
 
 
-# TODO(phase-2): mean-field plug-in for blur_kernel != None.
-# This inference path currently assumes W = I (per-site anchors).
-# When jump.blur_kernel is not None, mixture log-pdf must marginalize
-# over the blurred-mean structure; deferred to a later prompt.
+# blur_kernel != None: resolved for eta=1 via the W-aware branch inside the
+# function below (score uses mu = W @ Ehat with committed-site delta override).
+# eta < 1 with W != I remains out of scope and raises ValueError (the
+# tau-mixture weights couple to the blurred mean; needs the quadrature
+# generalization).
 def classifier_induced_score(
     y: Array,
     t: Array,
@@ -423,6 +431,8 @@ def classifier_induced_score(
     jump: VPMatchedGaussianJump,
     tau_grid_size: int = 32,
     posterior_temperature: float = 1.0,
+    committed: Array | None = None,
+    committed_idx: Array | None = None,
 ) -> Array:
     """Classifier-induced score nabla log p_t(y) on X_A (Appendix C.3).
 
@@ -441,6 +451,23 @@ def classifier_induced_score(
     its logit_temperature here so temperature acts symmetrically on the drift
     and the discrete-jump allocation (sampling-strategy only; the score is no
     longer the exact marginal score when temperature != 1.0).
+
+    W-aware branch: when ``jump.blur_kernel`` is not None the forward
+    corruption blended anchors through W (``sample_pair`` line ~111), so the
+    exact marginal score at eta=1 is
+
+        s_i = -(y_i - alpha_t (W Ehat)_i) / max(sigma_t^2, std_floor^2),
+
+    with Ehat_j the (tempered) classifier posterior mean at uncommitted sites
+    and the committed anchor's embedding (a delta; the posterior collapses) at
+    committed sites. ``committed``/``committed_idx`` (bool / int32 with -1 at
+    uncommitted sites, shape ``(B,) + site_shape``) supply that override; both
+    None means all-uncommitted. They are ignored when ``jump.blur_kernel`` is
+    None, and the kernel-None path is bit-exact with the pre-W code (the
+    branch is a trace-time Python check adding zero ops). eta != 1 with a
+    kernel raises ValueError. Note the eta=1 quadrature limit of the legacy
+    path is v = max(sigma_t^2, std_floor^2) with e = n/l equal to 1/v only
+    algebraically (ULP-level scan rounding); the W branch uses the closed form.
 
     Output shape equals `y.shape`.
     """
@@ -474,6 +501,55 @@ def classifier_induced_score(
     alpha_t, sigma_t = alpha_sigma(beta, t)
     alpha_t = alpha_t.astype(jnp.float32)
     sigma_t = sigma_t.astype(jnp.float32)
+
+    # --- W-aware plug-in score (exact at eta=1; forward blur, Section 4.4). ---
+    # Trace-time Python check: with blur_kernel=None this adds zero ops and the
+    # legacy quadrature path below is textually untouched (bit-exact bypass).
+    blur_kernel = getattr(jump, "blur_kernel", None)
+    if blur_kernel is not None:
+        eta_blur = float(jump.eta)
+        if abs(eta_blur - 1.0) > 1e-9:
+            raise ValueError(
+                "classifier_induced_score with jump.blur_kernel is "
+                f"exact only at eta=1; got eta={eta_blur}. Either sample with "
+                "eta=1 or set sampler blur_score=false to force the legacy "
+                "W=I score."
+            )
+        if (committed is None) != (committed_idx is None):
+            raise ValueError(
+                "committed and committed_idx must both be provided or both be None."
+            )
+        m_flat = jnp.einsum("bsl,ld->bsd", probs_flat, a_table)  # (B, S, d)
+        if committed is None:
+            committed_site = jnp.zeros((B,) + tuple(site_shape), dtype=bool)
+            committed_idx_site = -jnp.ones(
+                (B,) + tuple(site_shape), dtype=jnp.int32
+            )
+        else:
+            committed_site = jnp.asarray(committed, dtype=bool).reshape(
+                (B,) + tuple(site_shape)
+            )
+            committed_idx_site = jnp.asarray(
+                committed_idx, dtype=jnp.int32
+            ).reshape((B,) + tuple(site_shape))
+        mu = blurred_posterior_mean(
+            probs_mean=m_flat.reshape(y.shape),
+            committed_mask=committed_site,
+            committed_idx=committed_idx_site,
+            a_table=a_table,
+            kernel=blur_kernel,
+        )  # same shape as y
+        # v = max(sigma_t^2, std_floor^2): the exact eta=1 limit of the legacy
+        # tau-quadrature (deficit == 0.0 at eta=1.0 in float) — deliberately
+        # NOT board_sampling's 1e-12 floor.
+        v_b = jnp.maximum(
+            jnp.square(sigma_t),
+            jnp.square(jnp.asarray(float(jump.std_floor), dtype=jnp.float32)),
+        )  # (B,)
+        score_flat = -(1.0 / v_b)[:, None, None] * (
+            y_flat - alpha_t[:, None, None] * mu.reshape((B, S, d))
+        )
+        return score_flat.reshape(y.shape)
 
     eta = float(jump.eta)
     std_floor = float(jump.std_floor)

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from sticky.models.common.discrete_mixture import normalize_probs
 
 from .anchors import AnchorTable, clamp_known_state
-from .blur import blur_means
+from .blur import blurred_posterior_mean
 from .plugin_intensity import plugin_hazard_and_allocation
 from .sampler import make_sampling_time_grid
 from .sdes import _expand_like, alpha_sigma
@@ -173,15 +173,18 @@ def blur_score_mean(
 ) -> Array:
     """Ehat = committed one-hot anchors at committed sites else classifier mean; returns W @ Ehat.
 
-    Shapes: probs_mean (B, N, d), committed_mask (B, N), committed_idx (B, N),
-    a_table (K, d), kernel (N, N); returns (B, N, d).
+    Thin alias of :func:`sticky.models.sjd.blur.blurred_posterior_mean` (the
+    single shared implementation, shape-generic over the (B, N, d) and
+    (B, H, W, C, d) layouts accepted by blur_means). Kept as a re-export for
+    existing callers/tests.
     """
-    # The -1 uncommitted sentinel in committed_idx clips to 0 here; the bogus
-    # anchor it gathers is discarded by the committed_mask select below.
-    safe_idx = jnp.clip(committed_idx, 0, a_table.shape[0] - 1)
-    committed_vec = a_table[safe_idx]
-    e_hat = jnp.where(committed_mask[..., None], committed_vec, probs_mean)
-    return blur_means(e_hat, kernel)
+    return blurred_posterior_mean(
+        probs_mean=probs_mean,
+        committed_mask=committed_mask,
+        committed_idx=committed_idx,
+        a_table=a_table,
+        kernel=kernel,
+    )
 
 
 def _step_progress(*, t: Array, T: float) -> Array:

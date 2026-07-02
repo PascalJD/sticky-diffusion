@@ -12,6 +12,8 @@ Public API:
     sudoku_constraint_kernel(sigma, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     sudoku_constraint_kernel_convex(sigma, rho, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
+    blurred_posterior_mean(probs_mean, committed_mask, committed_idx, a_table, kernel)
+    kernel_fingerprint(kernel)
     build_blur_kernel(blur_cfg, seq_len=None, grid_shape=None)
 """
 
@@ -27,6 +29,8 @@ __all__ = [
     "sudoku_constraint_kernel",
     "sudoku_constraint_kernel_convex",
     "blur_means",
+    "blurred_posterior_mean",
+    "kernel_fingerprint",
     "build_blur_kernel",
 ]
 
@@ -308,6 +312,59 @@ def blur_means(
         f"blur_means supports e.ndim in {{3, 5}}; got e.shape={tuple(e.shape)} "
         f"(ndim={e.ndim})."
     )
+
+
+def blurred_posterior_mean(
+    *,
+    probs_mean: Array,
+    committed_mask: Array,
+    committed_idx: Array,
+    a_table: Array,
+    kernel: Array,
+) -> Array:
+    """Ehat = committed one-hot anchor embedding at committed sites, else the
+    classifier posterior mean; returns blur_means(Ehat, kernel) = W @ Ehat.
+
+    Shape-generic: probs_mean is (..., d) with committed_mask/committed_idx of
+    shape probs_mean.shape[:-1]; supports the (B, N, d) and (B, H, W, C, d)
+    layouts accepted by blur_means. The -1 uncommitted sentinel in
+    committed_idx clips to 0 here; the bogus gathered anchor is discarded by
+    the committed_mask select below.
+
+    CALLER INVARIANT (not enforced — jit-compatible code cannot raise on
+    traced values): every site with committed_mask=True must carry a VALID
+    committed_idx >= 0. An inconsistent (True, -1) site silently blends
+    anchor 0 into all its W-neighbors' means. The reverse sampler guarantees
+    this invariant (committed sites always receive k_idx on commit /
+    clamp_known_state); direct callers must too.
+    """
+    safe_idx = jnp.clip(committed_idx, 0, a_table.shape[0] - 1)
+    committed_vec = a_table[safe_idx]
+    e_hat = jnp.where(committed_mask[..., None], committed_vec, probs_mean)
+    return blur_means(e_hat, kernel)
+
+
+def kernel_fingerprint(kernel: Array | None) -> str | None:
+    """sha256 hex of a 'float32:<shape>' header + row-major float32 bytes.
+
+    None -> None. NOTE: hashes the kernel bytes as materialized on the current
+    JAX backend; softmax/exp bit patterns may differ across backends, so
+    fingerprints must only be compared between values produced on the same
+    platform (rebuild-and-compare inside the same job).
+    """
+    if kernel is None:
+        return None
+    import hashlib
+
+    import numpy as np
+
+    arr = np.ascontiguousarray(
+        np.asarray(jax.device_get(kernel), dtype=np.float32)
+    )
+    h = hashlib.sha256()
+    h.update(f"float32:{tuple(arr.shape)}".encode("utf-8"))
+    h.update(arr.tobytes())
+    return h.hexdigest()
 
 
 def build_blur_kernel(

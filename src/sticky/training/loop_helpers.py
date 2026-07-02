@@ -311,6 +311,34 @@ def build_loop_context(
 
     rng = make_rng(int(cfg.training.seed))
     state, tx = init_state_fn(cfg, model, rng)
+    forward_blur_meta = None
+    try:
+        from omegaconf import OmegaConf as _OmegaConf
+
+        from sticky.models.sjd.blur import kernel_fingerprint as _kernel_fp
+
+        _fwd = getattr(task, "forward", None)
+        _kernel = getattr(_fwd, "blur_kernel", None) if _fwd is not None else None
+        _blur_cfg = (
+            cfg.forward.get("blur", None)
+            if cfg.get("forward", None) is not None
+            else None
+        )
+        if _blur_cfg is not None or _kernel is not None:
+            forward_blur_meta = {
+                "config": (
+                    _OmegaConf.to_container(_blur_cfg, resolve=True)
+                    if _blur_cfg is not None
+                    else None
+                ),
+                "kernel_fingerprint": _kernel_fp(_kernel),
+                "kernel_shape": (
+                    None if _kernel is None else [int(s) for s in _kernel.shape]
+                ),
+            }
+    except Exception:
+        # Provenance must never break training startup.
+        forward_blur_meta = None
     write_run_context_fn(
         run_dir=run_output_dir,
         experiment_cfg=cfg,
@@ -318,6 +346,7 @@ def build_loop_context(
         params=state.params,
         metrics_dir=metrics_dir,
         checkpoint_dir=checkpoint_dir,
+        forward_blur=forward_blur_meta,
     )
     lr_schedule = make_lr_schedule_fn(cfg)
     train_iter, _ = task.make_dataloaders(seed=int(cfg.training.seed))
