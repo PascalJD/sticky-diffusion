@@ -74,6 +74,17 @@ def q_t_sample(
     site_axes = (1,) * (x0_anchor.ndim - 1)
     alpha_b = alpha_t.reshape((-1,) + site_axes)
     sigma_b = sigma_t.reshape((-1,) + site_axes)
+    if (
+        getattr(jump, "blur_kernel", None) is not None
+        and str(getattr(jump, "blur_space", "embedding")) == "value"
+    ):
+        # apply_blur below would silently blend EMBEDDINGS — the wrong center
+        # for a value-space forward (mu = E(B v) needs raw X_0 values, which
+        # this function never receives). Reject instead of mis-training.
+        raise ValueError(
+            "elbo_eta1 (q_t_sample) does not support blur_space='value'; "
+            "use the CE objective or blur_space='embedding'."
+        )
     anchor_blurred = jump.apply_blur(x0_anchor)  # identity at W=I (enforced upstream)
     eps = jax.random.normal(key, shape=x0_anchor.shape, dtype=jnp.float32)
     return alpha_b * anchor_blurred + sigma_b * eps

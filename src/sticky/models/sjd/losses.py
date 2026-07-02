@@ -87,6 +87,9 @@ def ce_allocation_loss(
     x_t, never_unstuck_mask = sample_pair(
         key_vp, x0_anchor, t_img, beta, hazard, jump,
         log_w_per_site=log_w_per_site,
+        # Raw values of X_0: consumed only when the jump carries a blur
+        # kernel with blur_space="value" (mu = E(B v)); a no-op otherwise.
+        x0_idx=x0_idx,
     )
 
     # never_unstuck_mask is the canonical commit mask: an independent

@@ -43,22 +43,27 @@ def _build_non_sjd_sampling_fns(
 
 
 def _attach_blur_kernel(jump, *, cfg: DictConfig, task: Any):
-    """Attach the training-time site-blending W to a freshly instantiated
-    sampler jump.
+    """Attach the training-time site-blending W (and the space it acts in)
+    to a freshly instantiated sampler jump.
 
     Prefers the exact array already on ``task.forward`` (bit-identical to what
     the training corruption used — built by tasks/factory._build_forward_schedule);
     falls back to rebuilding from ``cfg.forward.blur`` with the same builder for
-    duck-typed tasks without a forward schedule. Returns ``jump`` unchanged
-    (same object) when no blur is configured — the blur=none path stays a
-    strict bypass.
+    duck-typed tasks without a forward schedule. ``blur_space`` is sourced the
+    same dual way (schedule property first, then the config key) so the
+    sampler's score matches the training corruption's blur space. Returns
+    ``jump`` unchanged (same object) when no blur is configured — the
+    blur=none path stays a strict bypass.
     """
     import dataclasses
 
     kernel = None
+    blur_space = "embedding"
     fwd = getattr(task, "forward", None)
     if fwd is not None:
         kernel = getattr(fwd, "blur_kernel", None)
+        if kernel is not None:
+            blur_space = str(getattr(fwd, "blur_space", "embedding"))
     if kernel is None:
         forward_cfg = cfg.get("forward", None)
         blur_cfg = forward_cfg.get("blur", None) if forward_cfg is not None else None
@@ -77,9 +82,10 @@ def _attach_blur_kernel(jump, *, cfg: DictConfig, task: Any):
             kernel = build_blur_kernel(
                 blur_cfg, seq_len=seq_len, grid_shape=grid_shape
             )
+            blur_space = str(blur_cfg.get("blur_space", "embedding") or "embedding")
     if kernel is None:
         return jump
-    return dataclasses.replace(jump, blur_kernel=kernel)
+    return dataclasses.replace(jump, blur_kernel=kernel, blur_space=blur_space)
 
 
 def build_sampling_fns(

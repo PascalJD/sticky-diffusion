@@ -8,7 +8,13 @@ from jax.scipy.special import logsumexp
 
 from sticky.rng import PRNGKey
 
-from .blur import blurred_posterior_mean
+from .blur import (
+    SIN8_VALUE_PERIOD,
+    blur_values,
+    blurred_posterior_mean,
+    blurred_value_center,
+    sinusoidal_value_embedding,
+)
 from .convolution import mixture_component_logpdf, mixture_component_mean_std
 from .hazard import HazardSchedule
 from .jump import VPMatchedGaussianJump
@@ -25,6 +31,7 @@ def sample_pair(
     hazard: HazardSchedule,
     jump: VPMatchedGaussianJump,
     log_w_per_site: Array | None = None,
+    x0_idx: Array | None = None,
 ) -> Tuple[Array, Array]:
     """Draw a SJD-corrupted pair (X_t, never_unstuck_mask) per Algorithm 1.
 
@@ -44,6 +51,11 @@ def sample_pair(
         flux identity S_a(t) = S(t)^{w(a)} and tau is drawn from the truncated
         weighted density. When None, behavior is bit-identical to the
         anchor-agnostic baseline.
+    x0_idx : optional shape (B, *site_shape) integer values of X_0. REQUIRED
+        when the jump carries a blur kernel with blur_space="value" (the
+        unstick mean is E((B v)) with v = x0_idx, evaluated at the CONTINUOUS
+        blurred values); ignored otherwise (passing it on the embedding /
+        no-blur path is a no-op and keeps those paths bit-exact).
 
     Returns
     -------
@@ -108,8 +120,39 @@ def sample_pair(
         u_eff_baseline = -jnp.expm1(-B_target)
         tau = hazard.inv_cdf(u_eff_baseline)
 
+    # Un-stick center mu(X_0). Trace-time Python branch (blur_space is a
+    # plain str field): the embedding/no-blur path below is the pre-existing
+    # expression, textually untouched — bit-exact legacy behavior.
+    blur_space = str(getattr(jump, "blur_space", "embedding"))
+    if getattr(jump, "blur_kernel", None) is not None and blur_space == "value":
+        if x0_idx is None:
+            raise ValueError(
+                "sample_pair with blur_space='value' requires x0_idx (the raw "
+                "integer values of X_0); got None."
+            )
+        d = int(x0_anchor.shape[-1])
+        if d % 2 != 0:
+            raise ValueError(
+                f"blur_space='value' requires an even anchor dim (sin/cos "
+                f"pairs at freqs 1..d/2); got d={d}."
+            )
+        v0 = jnp.asarray(x0_idx, dtype=jnp.float32)
+        if v0.shape != (B,) + site_shape:
+            raise ValueError(
+                f"x0_idx must have shape {(B,) + site_shape}, got {v0.shape}"
+            )
+        # mu = E((B v)): blur raw values (row-stochastic B keeps Bv inside
+        # [0, 255] by convexity — validated at task-build time), then evaluate
+        # the continuous sinusoidal embedding. No rounding / quantization.
+        blurred_center = sinusoidal_value_embedding(
+            blur_values(v0, jump.blur_kernel),
+            num_freqs=d // 2,
+            period=SIN8_VALUE_PERIOD,
+        )
+    else:
+        blurred_center = jump.apply_blur(x0_anchor)  # identity when blur_kernel is None
     mean, std = mixture_component_mean_std(
-        anchor=jump.apply_blur(x0_anchor),  # CHANGED: identity when blur_kernel is None
+        anchor=blurred_center,
         t=t_b,
         tau=tau,
         beta=beta,
@@ -416,7 +459,8 @@ def mixture_logpdf(
 
 
 # blur_kernel != None: resolved for eta=1 via the W-aware branch inside the
-# function below (score uses mu = W @ Ehat with committed-site delta override).
+# function below (score uses mu = W @ Ehat with committed-site delta override
+# in embedding space, or the plug-in mu = E(B vhat) in value space).
 # eta < 1 with W != I remains out of scope and raises ValueError (the
 # tau-mixture weights couple to the blurred mean; needs the quadrature
 # generalization).
@@ -469,6 +513,20 @@ def classifier_induced_score(
     path is v = max(sigma_t^2, std_floor^2) with e = n/l equal to 1/v only
     algebraically (ULP-level scan rounding); the W branch uses the closed form.
 
+    Value-space branch (``jump.blur_space == "value"``): the forward blended
+    RAW values, mu_i = E((B v)_i). The exact induced mean E[E((B v)_i) | y]
+    is intractable (E is nonlinear), so the drift uses the PLUG-IN
+
+        vhat_j = sum_a P_theta^(j)(a | y) * a      (delta at committed sites),
+        muhat_i = E((B vhat)_i),
+        s_i = -(y_i - alpha_t muhat_i) / max(sigma_t^2, std_floor^2).
+
+    Approximation quality is gated offline (G4: plug-in vs mean-field
+    Monte-Carlo). Same eta=1 requirement and committed/committed_idx
+    semantics as the embedding branch (committed_idx doubles as the
+    committed VALUE — anchor index == pixel value under the frozen sin8
+    contract, enforced at task-build time).
+
     Output shape equals `y.shape`.
     """
     y = jnp.asarray(y, dtype=jnp.float32)
@@ -519,7 +577,6 @@ def classifier_induced_score(
             raise ValueError(
                 "committed and committed_idx must both be provided or both be None."
             )
-        m_flat = jnp.einsum("bsl,ld->bsd", probs_flat, a_table)  # (B, S, d)
         if committed is None:
             committed_site = jnp.zeros((B,) + tuple(site_shape), dtype=bool)
             committed_idx_site = -jnp.ones(
@@ -532,13 +589,43 @@ def classifier_induced_score(
             committed_idx_site = jnp.asarray(
                 committed_idx, dtype=jnp.int32
             ).reshape((B,) + tuple(site_shape))
-        mu = blurred_posterior_mean(
-            probs_mean=m_flat.reshape(y.shape),
-            committed_mask=committed_site,
-            committed_idx=committed_idx_site,
-            a_table=a_table,
-            kernel=blur_kernel,
-        )  # same shape as y
+        blur_space = str(getattr(jump, "blur_space", "embedding"))
+        if blur_space == "value":
+            # Plug-in value-space center: vhat = posterior-mean VALUE
+            # (anchor index == pixel value; L must be the 256-value 8-bit
+            # grid so the arange below IS the value grid), delta at
+            # committed sites, then muhat = E((B vhat)).
+            if L != 256:
+                raise ValueError(
+                    f"blur_space='value' requires the 256-value pixel grid "
+                    f"(anchor index == value); got L={L}."
+                )
+            if d % 2 != 0:
+                raise ValueError(
+                    f"blur_space='value' requires an even anchor dim "
+                    f"(sin/cos pairs at freqs 1..d/2); got d={d}."
+                )
+            value_grid = jnp.arange(L, dtype=jnp.float32)  # (L,)
+            v_mean = jnp.einsum("bsl,l->bs", probs_flat, value_grid).reshape(
+                (B,) + tuple(site_shape)
+            )
+            mu = blurred_value_center(
+                values_mean=v_mean,
+                committed_mask=committed_site,
+                committed_idx=committed_idx_site,
+                kernel=blur_kernel,
+                num_freqs=d // 2,
+                period=SIN8_VALUE_PERIOD,
+            )  # same shape as y
+        else:
+            m_flat = jnp.einsum("bsl,ld->bsd", probs_flat, a_table)  # (B, S, d)
+            mu = blurred_posterior_mean(
+                probs_mean=m_flat.reshape(y.shape),
+                committed_mask=committed_site,
+                committed_idx=committed_idx_site,
+                a_table=a_table,
+                kernel=blur_kernel,
+            )  # same shape as y
         # v = max(sigma_t^2, std_floor^2): the exact eta=1 limit of the legacy
         # tau-quadrature (deficit == 0.0 at eta=1.0 in float) — deliberately
         # NOT board_sampling's 1e-12 floor.

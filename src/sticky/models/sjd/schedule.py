@@ -34,7 +34,20 @@ class ForwardSchedule:
         """
         return getattr(self.jump, "blur_kernel", None)
 
-    def with_blur(self, blur_kernel: Any) -> "ForwardSchedule":
-        """Return a copy with the blur kernel attached to the jump."""
-        new_jump = dataclasses.replace(self.jump, blur_kernel=blur_kernel)
+    @property
+    def blur_space(self) -> str:
+        """Where the blur kernel acts: "embedding" (mu = W E(X0)) or "value"
+        (mu = E(B v)). Stored on the jump; "embedding" when absent. Inert
+        when blur_kernel is None.
+        """
+        return str(getattr(self.jump, "blur_space", "embedding"))
+
+    def with_blur(
+        self, blur_kernel: Any, blur_space: str = "embedding"
+    ) -> "ForwardSchedule":
+        """Return a copy with the blur kernel (and the space it acts in)
+        attached to the jump."""
+        new_jump = dataclasses.replace(
+            self.jump, blur_kernel=blur_kernel, blur_space=str(blur_space)
+        )
         return dataclasses.replace(self, jump=new_jump)

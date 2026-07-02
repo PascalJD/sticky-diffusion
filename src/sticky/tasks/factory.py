@@ -74,12 +74,106 @@ def _sudoku_board_dataset_kwargs(cfg: DictConfig) -> dict[str, Any]:
     }
 
 
+def _validate_value_space_blur(cfg: DictConfig, blur_cfg) -> None:
+    """Build-time contract checks for blur_space='value' (embed-the-blur).
+
+    The value-space corruption mu = E(B v) is only meaningful under the
+    frozen sin8 CIFAR contract, checked here so misconfiguration fails at
+    task build instead of silently training the wrong forward:
+      - kind='gaussian_2d' with normalization='rowstoch': row-stochastic B is
+        what guarantees (B v) in [0, 255] (convex combination of pixel
+        values); additive / convex_mix rows are out of the campaign scope.
+      - vocab_size == 256 and anchor dim == 8: anchor index == 8-bit pixel
+        value, embedding = sin/cos at freqs {1..4} of v/255.
+      - the anchor table must BE that embedding: family='pretrained',
+        frozen (learnable=false), used as-is (normalize_at_use=false,
+        identity transform), and the loaded npz must match
+        sinusoidal_value_embedding(arange(256)) to float32 accuracy — the
+        continuous E evaluated in-graph and the table the model embeds /
+        commits with must be the same function.
+    """
+    import numpy as np_  # local alias; keep module-level np for other helpers
+
+    kind = str(blur_cfg.get("kind", None))
+    normalization = str(blur_cfg.get("normalization", "additive"))
+    if kind != "gaussian_2d" or normalization != "rowstoch":
+        raise ValueError(
+            "blur_space='value' requires kind='gaussian_2d' with "
+            f"normalization='rowstoch'; got kind={kind!r}, "
+            f"normalization={normalization!r}."
+        )
+    vocab_size = int(cfg.dataset.get("vocab_size", -1))
+    if vocab_size != 256:
+        raise ValueError(
+            f"blur_space='value' requires dataset.vocab_size=256 (anchor "
+            f"index == 8-bit pixel value); got {vocab_size}."
+        )
+    anchor_cfg = cfg.get("model", {}).get("anchor", None)
+    if anchor_cfg is None:
+        raise ValueError(
+            "blur_space='value' requires model.anchor (frozen sin8) config."
+        )
+    family = str(anchor_cfg.get("family", None))
+    learnable = bool(anchor_cfg.get("learnable", True))
+    normalize_at_use = bool(anchor_cfg.get("normalize_at_use", False))
+    dim = int(anchor_cfg.get("dim", -1))
+    if family != "pretrained" or learnable or normalize_at_use or dim != 8:
+        raise ValueError(
+            "blur_space='value' requires the frozen sin8 anchor "
+            "(family='pretrained', learnable=false, normalize_at_use=false, "
+            f"dim=8); got family={family!r}, learnable={learnable}, "
+            f"normalize_at_use={normalize_at_use}, dim={dim}."
+        )
+    transform_cfg = anchor_cfg.get("transform", None)
+    if transform_cfg is not None:
+        t_center = bool(transform_cfg.get("center_columns", False))
+        t_whiten = bool(transform_cfg.get("whiten", False))
+        t_eq = bool(transform_cfg.get("equalize_row_norms", False))
+        t_scale = float(transform_cfg.get("scale", 1.0))
+        if t_center or t_whiten or t_eq or t_scale != 1.0:
+            raise ValueError(
+                "blur_space='value' requires the identity anchor transform "
+                "(center_columns/whiten/equalize_row_norms false, scale 1.0); "
+                f"got center_columns={t_center}, whiten={t_whiten}, "
+                f"equalize_row_norms={t_eq}, scale={t_scale}."
+            )
+    pretrained_path = anchor_cfg.get("pretrained_path", None)
+    if pretrained_path is None:
+        raise ValueError("blur_space='value' requires anchor.pretrained_path.")
+    from sticky.models.sjd.blur import sinusoidal_value_embedding
+    from sticky.models.sjd.pretrained_anchors import load_pretrained_anchor_table
+
+    table = np_.asarray(
+        load_pretrained_anchor_table(
+            path=str(pretrained_path), vocab_size=256, anchor_dim=8,
+        ),
+        dtype=np_.float32,
+    )
+    formula = np_.asarray(
+        sinusoidal_value_embedding(np_.arange(256, dtype=np_.float32)),
+        dtype=np_.float32,
+    )
+    max_dev = float(np_.max(np_.abs(table - formula)))
+    # Table generated in float64 then cast; in-graph E is float32, whose
+    # angle rounding at freq 4 gives ~2e-6 agreement. 1e-5 rejects any
+    # *different* embedding (wrong freqs, order, or period change the
+    # columns at O(1)) without float32 flakiness.
+    if max_dev > 1e-5:
+        raise ValueError(
+            f"blur_space='value' anchor table {pretrained_path!r} does not "
+            f"match sinusoidal_value_embedding(arange(256)) "
+            f"(max|table-formula|={max_dev:.3e} > 1e-5). The continuous E "
+            "used for E(B v) must be the same function the model embeds with."
+        )
+
+
 def _build_forward_schedule(cfg: DictConfig):
     """Build a ForwardSchedule from the forward config section.
 
     Handles beta/hazard/jump instantiation and optional blur attachment via
-    ForwardSchedule.with_blur(kernel).  T is sourced from the sampler config
-    (consistent with the prior flat-dict approach) and stored in the schedule.
+    ForwardSchedule.with_blur(kernel, blur_space).  T is sourced from the
+    sampler config (consistent with the prior flat-dict approach) and stored
+    in the schedule.
     """
     from sticky.models.sjd.schedule import ForwardSchedule
 
@@ -107,7 +201,15 @@ def _build_forward_schedule(cfg: DictConfig):
         )
         kernel = build_blur_kernel(blur_cfg, seq_len=seq_len, grid_shape=grid_shape)
         if kernel is not None:
-            schedule = schedule.with_blur(kernel)
+            blur_space = str(blur_cfg.get("blur_space", "embedding") or "embedding")
+            if blur_space not in ("embedding", "value"):
+                raise ValueError(
+                    f"forward.blur.blur_space must be 'embedding' or 'value'; "
+                    f"got {blur_space!r}."
+                )
+            if blur_space == "value":
+                _validate_value_space_blur(cfg, blur_cfg)
+            schedule = schedule.with_blur(kernel, blur_space=blur_space)
 
     return schedule
 

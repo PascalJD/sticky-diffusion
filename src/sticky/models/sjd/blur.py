@@ -6,6 +6,23 @@ where mu_i(X_0) = (W @ E(X_0))_i. Convolution closure of the VP-matched
 sticky-jump kernel is preserved because the blur only changes the mean, not
 the un-sticking variance.
 
+Two blur SPACES are supported (config key ``blur_space``, jump field of the
+same name; default "embedding" == the legacy behavior above):
+  - "embedding": mu_i(X_0) = (W @ E(X_0))_i — blend the embedded anchors.
+    Blending sin/cos embeddings is NOT the embedding of a blend, so ||mu||
+    collapses below the norm-2 embedding curve wherever W-neighbors disagree
+    (textured regions), destroying the high-frequency embedding bands.
+  - "value": mu_i(X_0) = E((B v)_i) — blend the RAW pixel values v in
+    [0, 255] with the same row-stochastic position kernel B, then evaluate
+    the CONTINUOUS sinusoidal embedding at the blurred value (no rounding).
+    Row-stochasticity + v in [0, 255] gives (B v) in [0, 255] by convexity,
+    and ||E(v)|| == 2 for EVERY real v, so mu stays on the norm-2 embedding
+    curve by construction — a coarse-to-fine corruption expressed as an SJD
+    unstick kernel. Restricted to the frozen sin8 CIFAR contract
+    (kind=gaussian_2d + normalization=rowstoch + the cifar_sin8.npz anchor
+    table); enforced at task-build time by
+    tasks/factory._validate_value_space_blur.
+
 Public API:
     gaussian_position_kernel(seq_len, sigma, include_self=True, dtype=jnp.float32)
     gaussian_2d_position_kernel(height, width, sigma, normalization="rowstoch", dtype=jnp.float32)
@@ -14,6 +31,9 @@ Public API:
     sudoku_constraint_kernel_convex(sigma, rho, include_row=True, include_col=True, include_box=True, dtype=jnp.float32)
     blur_means(e, kernel)
     blurred_posterior_mean(probs_mean, committed_mask, committed_idx, a_table, kernel)
+    sinusoidal_value_embedding(values, num_freqs=4, period=255.0)
+    blur_values(values, kernel)
+    blurred_value_center(values_mean, committed_mask, committed_idx, kernel, num_freqs, period)
     kernel_fingerprint(kernel)
     build_blur_kernel(blur_cfg, seq_len=None, grid_shape=None)
 """
@@ -32,9 +52,18 @@ __all__ = [
     "sudoku_constraint_kernel_convex",
     "blur_means",
     "blurred_posterior_mean",
+    "sinusoidal_value_embedding",
+    "blur_values",
+    "blurred_value_center",
     "kernel_fingerprint",
     "build_blur_kernel",
 ]
+
+# Period of the frozen sin8 CIFAR pixel embedding: features are sin/cos at
+# integer freqs {1..d/2} of v/255, so E is 255-periodic in v. NOTE this means
+# E(0) == E(255) — black and white alias in the embedded state (true for the
+# baseline table too, not introduced by value-space blur).
+SIN8_VALUE_PERIOD = 255.0
 
 
 def gaussian_position_kernel(
@@ -382,6 +411,104 @@ def blurred_posterior_mean(
     committed_vec = a_table[safe_idx]
     e_hat = jnp.where(committed_mask[..., None], committed_vec, probs_mean)
     return blur_means(e_hat, kernel)
+
+
+def sinusoidal_value_embedding(
+    values: Array,
+    *,
+    num_freqs: int = 4,
+    period: float = SIN8_VALUE_PERIOD,
+) -> Array:
+    """Continuous sinusoidal pixel embedding E(v), defined for REAL v.
+
+    E(v) = [sin(2 pi f v / period), cos(2 pi f v / period)] interleaved for
+    f = 1..num_freqs — the same column construction and ORDER as the frozen
+    cifar_sin8.npz table (make_cifar_sin_embedding.py / gen_cifar_sin8.py:
+    for f in (1,..,F): append sin, append cos), evaluated at continuous v
+    instead of the integer grid. ||E(v)||_2 == sqrt(num_freqs) for every real
+    v (num_freqs=4 -> 2), so blurred values embed ONTO the embedding curve.
+
+    Computed in float32 (the table was generated in float64 then cast, so
+    table rows and E(integer v) agree to ~1e-7, not bitwise).
+
+    Args:
+        values: real-valued array, any shape (...,).
+        num_freqs: number of integer frequencies (embedding dim = 2*num_freqs).
+        period: value-space period (255.0 for the 8-bit pixel contract).
+
+    Returns:
+        shape values.shape + (2 * num_freqs,), float32.
+    """
+    if num_freqs < 1:
+        raise ValueError(f"num_freqs must be >= 1, got {num_freqs}")
+    if not (float(period) > 0.0):
+        raise ValueError(f"period must be positive, got {period}")
+    v = jnp.asarray(values, dtype=jnp.float32)
+    freqs = jnp.arange(1, num_freqs + 1, dtype=jnp.float32)  # (F,)
+    ang = (2.0 * jnp.pi / jnp.asarray(float(period), dtype=jnp.float32)) * (
+        v[..., None] * freqs
+    )  # (..., F)
+    sc = jnp.stack([jnp.sin(ang), jnp.cos(ang)], axis=-1)  # (..., F, 2)
+    return sc.reshape(v.shape + (2 * num_freqs,))
+
+
+def blur_values(
+    values: Array,
+    kernel: Array,
+) -> Array:
+    """Apply a site-blending matrix to a per-site SCALAR value field.
+
+    Same position contraction as :func:`blur_means` (the trailing feature
+    axis is a singleton): accepts a 1D-site field (B, N) or a 2D image field
+    (B, H, W, C) — the (N, N) kernel with N = H*W acts over the flat
+    row-major pixel grid per color channel. Returns float32 with the input
+    shape. Row-stochastic kernels keep the output inside the convex hull of
+    the input values ((B v) in [0, 255] for 8-bit pixel values).
+    """
+    v = jnp.asarray(values, dtype=jnp.float32)
+    return blur_means(v[..., None], kernel)[..., 0]
+
+
+def blurred_value_center(
+    *,
+    values_mean: Array,
+    committed_mask: Array,
+    committed_idx: Array,
+    kernel: Array,
+    num_freqs: int,
+    period: float = SIN8_VALUE_PERIOD,
+) -> Array:
+    """Value-space analogue of :func:`blurred_posterior_mean`: vhat = the
+    committed VALUE at committed sites (the posterior is a delta there), else
+    the per-site posterior-mean value; returns E((B vhat)) — blur the raw
+    values, then embed the CONTINUOUS blurred values.
+
+    This is the eta=1 plug-in for the exact induced mean E[E((B v)_i) | y]
+    (intractable because E is nonlinear): the outer classifier expectation is
+    moved inside E through B. Gate G4 (plug-in vs mean-field Monte-Carlo)
+    bounds the approximation error before any arm relies on it.
+
+    Args:
+        values_mean: (B, *site_shape) float posterior-mean values
+            (sum_a P(a|y) * a over the 0..V-1 value grid).
+        committed_mask / committed_idx: as in blurred_posterior_mean; the -1
+            uncommitted sentinel is masked out by committed_mask (the cast
+            float -1.0 never survives the where).
+        kernel: (N, N) row-stochastic position kernel.
+        num_freqs: embedding frequencies (= anchor_dim // 2).
+        period: value-space period (255.0 for the 8-bit pixel contract).
+
+    Returns:
+        shape values_mean.shape + (2 * num_freqs,), float32.
+    """
+    v_hat = jnp.where(
+        committed_mask,
+        jnp.asarray(committed_idx, dtype=jnp.float32),
+        jnp.asarray(values_mean, dtype=jnp.float32),
+    )
+    return sinusoidal_value_embedding(
+        blur_values(v_hat, kernel), num_freqs=int(num_freqs), period=period,
+    )
 
 
 def kernel_fingerprint(kernel: Array | None) -> str | None:

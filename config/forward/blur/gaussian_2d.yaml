@@ -1,10 +1,16 @@
 # Separable 2D Gaussian blending kernel over the H*W pixel grid, applied per
-# color channel in the SJD training corruption (mu = W . E(x0)). The reverse
-# sampler uses the matching W-aware score at eta=1 (sampler blur_score=true,
-# the default; set sampler.blur_score=false for the legacy W=I score).
+# color channel in the SJD training corruption. The reverse sampler uses the
+# matching W-aware score at eta=1 (sampler blur_score=true, the default; set
+# sampler.blur_score=false for the legacy W=I score).
 # normalization: rowstoch (rows sum to 1, convex local average) or additive
 # (W[i,i]=1, rows do NOT sum to 1).
+# blur_space: where the kernel acts —
+#   embedding (default, legacy): mu = W . E(x0), blend anchor embeddings;
+#   value: mu = E(B v), blend RAW pixel values then embed the continuous
+#     blurred values (norm-preserving; requires rowstoch + the frozen sin8
+#     anchor — validated at task build).
 enabled: true
 kind: gaussian_2d
 sigma: 1.0
 normalization: rowstoch
+blur_space: embedding

@@ -37,6 +37,13 @@ class VPMatchedGaussianJump:
     std_floor: float = 1e-3
     clip: float | None = None
     blur_kernel: Array | None = None   # (N, N) site-blending matrix; None == identity.
+    # Where blur_kernel acts (inert when blur_kernel is None):
+    #   "embedding" — mu = W @ E(X0), the legacy anchor-embedding blend;
+    #   "value"     — mu = E(B v), blend raw pixel values then embed the
+    #                 continuous blur (frozen sin8 CIFAR contract; validated
+    #                 at task-build time). Consumers: corruption.sample_pair
+    #                 and corruption.classifier_induced_score.
+    blur_space: str = "embedding"
 
     def _mean_std(self, anchor: Array, t: Array) -> tuple[Array, Array]:
         t = jnp.asarray(t, dtype=jnp.float32)
@@ -66,11 +73,17 @@ class VPMatchedGaussianJump:
         return -(logZ + 0.5 * m)
 
     def apply_blur(self, anchor_field: Array) -> Array:
-        """Apply the configured blur kernel to a per-site anchor field.
+        """Apply the configured blur kernel to a per-site anchor EMBEDDING field.
 
         When blur_kernel is None this returns the input object unchanged
         (Python identity), guaranteeing bit-exact backward compatibility
         for the no-blur path. Otherwise dispatches to blur_means.
+
+        NOTE: this is the blur_space="embedding" application only. Consumers
+        that honor blur_space="value" (sample_pair, classifier_induced_score)
+        branch BEFORE calling this; callers that cannot support value space
+        must reject jumps with blur_space="value" + a kernel instead of
+        silently blending embeddings (see sjd_elbo_loss.q_t_sample).
         """
         if self.blur_kernel is None:
             return anchor_field
