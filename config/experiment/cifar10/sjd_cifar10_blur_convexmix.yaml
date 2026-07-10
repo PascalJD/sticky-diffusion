@@ -1,0 +1,26 @@
+# CIFAR-10 SJD with the rho-decoupled convex blending kernel ENABLED (sweep arm).
+# Identical to sjd_cifar10_blur.yaml except the forward.blur group selects
+# gaussian_2d_convex_mix (W = (1-rho)*I + rho*K_sigma).
+# Sweep rho / sigma / seed as plain value overrides on top of this:
+#   experiment.forward.blur.rho=<rho>
+#   experiment.forward.blur.sigma=<sigma_W>
+# rho=1 is bit-identical to the rowstoch arm at the same sigma; rho=0 is
+# rejected at task-build time (the W=I baseline is the unmodified
+# sjd_cifar10_sin8.yaml, forward/blur=none).
+defaults:
+  - /dataset: cifar10_discrete
+  - /model/sjd@model: sjd_cifar10_sin8
+  - /optim: adamw_cifar10
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
+  - /forward/jump: vp_matched
+  - /forward/blur: gaussian_2d_convex_mix
+  - /sampler/cifar10@sampler: sjd_cifar10
+  - /eval@_global_.eval: cifar10
+  - /training: sjd_cifar10
+  - _self_
+
+task:
+  name: sjd_cifar10

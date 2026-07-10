@@ -1,0 +1,20 @@
+# CIFAR-10 SJD W=I BASELINE for the blur campaign: frozen sin8 anchor, blur=none.
+# Identical to sjd_cifar10.yaml except the model uses the frozen sin8 (d=8) anchor.
+# This is the control arm (sigma_W = 0); blur arms use sjd_cifar10_blur.yaml.
+defaults:
+  - /dataset: cifar10_discrete
+  - /model/sjd@model: sjd_cifar10_sin8
+  - /optim: adamw_cifar10
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
+  - /forward/jump: vp_matched
+  - /forward/blur: none
+  - /sampler/cifar10@sampler: sjd_cifar10
+  - /eval@_global_.eval: cifar10
+  - /training: sjd_cifar10
+  - _self_
+
+task:
+  name: sjd_cifar10

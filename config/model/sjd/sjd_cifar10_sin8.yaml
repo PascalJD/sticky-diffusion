@@ -1,0 +1,19 @@
+defaults:
+  - /model/backbone@_here_: adm_unet
+  - /model/anchor@anchor: frozen_sin8     # frozen sinusoidal d=8 pixel embedding (campaign HOLD-FIXED)
+  - _self_
+
+# SJD model for the CIFAR-10 blur campaign: identical to sjd_cifar10 except the
+# anchor is the FROZEN sin8 (d=8) embedding instead of learnable normal_normalized
+# (d=64). The 2D-Gaussian blur blends these per-pixel embeddings spatially, and
+# gate-3's field fingerprint is defined for this embedding.
+name: sjd
+
+num_heads: 12
+use_attn_dropout: true
+mlp_type: swiglu
+depth_scaled_init: true
+cond_type: adaln_zero
+time_features: t
+model_sharding: false
+use_noisy_input_bias: false

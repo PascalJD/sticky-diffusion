@@ -1,0 +1,23 @@
+# CIFAR-10 SJD with the 2D-Gaussian blending kernel ENABLED (sweep arm).
+# Identical to sjd_cifar10.yaml except the forward.blur group selects gaussian_2d.
+# Sweep sigma / normalization / seed as plain value overrides on top of this:
+#   experiment.forward.blur.sigma=<sigma_W>
+#   experiment.forward.blur.normalization=<rowstoch|additive>
+# The W=I baseline uses the unmodified sjd_cifar10.yaml (forward/blur=none).
+defaults:
+  - /dataset: cifar10_discrete
+  - /model/sjd@model: sjd_cifar10_sin8
+  - /optim: adamw_cifar10
+  - /runtime: default
+  - /forward/beta: vp_linear
+  - /forward/hazard: poly_alpha
+  - /forward/hazard_weighting: none
+  - /forward/jump: vp_matched
+  - /forward/blur: gaussian_2d
+  - /sampler/cifar10@sampler: sjd_cifar10
+  - /eval@_global_.eval: cifar10
+  - /training: sjd_cifar10
+  - _self_
+
+task:
+  name: sjd_cifar10
